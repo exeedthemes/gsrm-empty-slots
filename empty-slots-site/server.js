@@ -916,7 +916,7 @@ function parseSodGroups(html, flightDate) {
         required: Number((requiredCell.match(/Required\s*:\s*(\d+)/i) || [])[1] || 0),
         start: stripSla(cells[3] || ""),
         release: stripSla(cells[4] || ""),
-        duration: cells[5] || "",
+        duration: (cells[5] || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim(),
         staff: [],
         flightDate,
       };

@@ -70,7 +70,7 @@
       <label><span>Airlines</span><input id="gsrm-airlines" type="text" placeholder="All airlines, or BA, IB, UX"></label>
       <div class="actions">
         <button id="gsrm-run" class="primary">Run scan</button>
-        <button id="gsrm-download" disabled>Download JSON + CSV</button>
+        <button id="gsrm-download" disabled>Download CSV</button>
         <span id="gsrm-status" class="status">Ready.</span>
       </div>
       <div class="table-wrap">
@@ -87,7 +87,6 @@
   $("#gsrm-close").onclick = () => app.remove();
   $("#gsrm-run").onclick = run;
   $("#gsrm-download").onclick = () => {
-    download("gsrm-empty-sod-slots.json", JSON.stringify(latestRows, null, 2), "application/json");
     downloadCsv(latestRows);
   };
 
@@ -202,7 +201,7 @@
       const requiredCell = cells.find((cell) => /Required\s*:/i.test(cell));
       if (requiredCell) {
         if (current) groups.push(finishGroup(current));
-        current = { sla: cells[0] || "", type: cells[1] || "", movement: (requiredCell.split(/Required\s*:/i)[0] || "").trim(), required: Number((requiredCell.match(/Required\s*:\s*(\d+)/i) || [])[1] || 0), start: stripSla(cells[3] || ""), release: stripSla(cells[4] || ""), duration: cells[5] || "", staff: [], flightDate };
+        current = { sla: cells[0] || "", type: cells[1] || "", movement: (requiredCell.split(/Required\s*:/i)[0] || "").trim(), required: Number((requiredCell.match(/Required\s*:\s*(\d+)/i) || [])[1] || 0), start: stripSla(cells[3] || ""), release: stripSla(cells[4] || ""), duration: (cells[5] || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim(), staff: [], flightDate };
       } else if (current && /^[A-Z]{3}\s+-\s+/.test(cells[2] || "")) {
         current.staff.push(cells[2]);
       }

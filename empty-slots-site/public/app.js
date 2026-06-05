@@ -194,9 +194,19 @@ function renderRows(rows) {
     const displayStart = getDisplayTime(row.date, row.start_utc, useLocal);
     const displayRelease = getDisplayTime(row.date, row.release_utc, useLocal);
 
-    // Fallback duration calculation if row.duration is not provided
+    // Fallback or format duration calculation
     let duration = row.duration || "";
-    if (!duration && row.start_utc && row.release_utc) {
+    if (duration) {
+      duration = duration.replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim();
+    }
+    if (duration && duration.includes(":")) {
+      const match = duration.trim().match(/^(\d+):(\d+)$/);
+      if (match) {
+        const hrs = parseInt(match[1], 10);
+        const mins = parseInt(match[2], 10);
+        duration = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+      }
+    } else if (!duration && row.start_utc && row.release_utc) {
       const startObj = parseUtcTime(row.date, row.start_utc);
       const releaseObj = parseUtcTime(row.date, row.release_utc);
       if (startObj && releaseObj) {
@@ -365,13 +375,39 @@ function downloadCsv(rows) {
         if (header === "release_local") {
           return csvCell(getDisplayTime(row.date, row.release_utc, true));
         }
+        if (header === "duration") {
+          let duration = row.duration || "";
+          if (duration) {
+            duration = duration.replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim();
+          }
+          if (duration && duration.includes(":")) {
+            const match = duration.trim().match(/^(\d+):(\d+)$/);
+            if (match) {
+              const hrs = parseInt(match[1], 10);
+              const mins = parseInt(match[2], 10);
+              duration = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+            }
+          } else if (!duration && row.start_utc && row.release_utc) {
+            const startObj = parseUtcTime(row.date, row.start_utc);
+            const releaseObj = parseUtcTime(row.date, row.release_utc);
+            if (startObj && releaseObj) {
+              const diffMs = releaseObj - startObj;
+              if (diffMs > 0) {
+                const diffMins = Math.round(diffMs / (1000 * 60));
+                const hrs = Math.floor(diffMins / 60);
+                const mins = diffMins % 60;
+                duration = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+              }
+            }
+          }
+          return csvCell(duration);
+        }
         return csvCell(row[header]);
       });
       return line.join(",");
     }),
   ].join("\n");
   downloadBlob("gsrm-empty-sod-slots.csv", csv, "text/csv;charset=utf-8");
-  downloadBlob("gsrm-empty-sod-slots.json", JSON.stringify(rows, null, 2), "application/json;charset=utf-8");
 }
 
 function downloadBlob(filename, content, type) {
