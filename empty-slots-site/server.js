@@ -351,12 +351,15 @@ function normalizePayload(payload) {
   if (!startTime || !endTime) throw new Error("Invalid time window.");
 
   const days = Array.isArray(payload.days) ? payload.days.map(Number) : [];
-  const publicHolidays = new Set(
-    String(payload.publicHolidays || "")
-      .split(/[\s,;]+/)
-      .map((date) => date.trim())
-      .filter(Boolean)
-  );
+  const publicHolidays = parseHolidayDates(payload.publicHolidays);
+  const includePublicHolidays = Boolean(payload.includePublicHolidays);
+
+  if (includePublicHolidays) {
+    for (let year = startDate.getUTCFullYear(); year <= endDate.getUTCFullYear(); year += 1) {
+      for (const holiday of germanBavarianHolidayDates(year)) publicHolidays.add(holiday);
+    }
+  }
+
   const airlines = normalizeAirlines(payload.airlines);
 
   return {
@@ -367,10 +370,66 @@ function normalizePayload(payload) {
     startTime,
     endTime,
     days,
-    includePublicHolidays: Boolean(payload.includePublicHolidays),
+    includePublicHolidays,
     publicHolidays,
     airlines,
   };
+}
+
+function parseHolidayDates(value) {
+  return new Set(
+    String(value || "")
+      .split(/[\s,;]+/)
+      .map((date) => date.trim())
+      .filter(Boolean)
+  );
+}
+
+function germanBavarianHolidayDates(year) {
+  const easter = easterSunday(year);
+  return [
+    dateIso(year, 1, 1),
+    dateIso(year, 1, 6),
+    addDaysIso(easter, -2),
+    addDaysIso(easter, 1),
+    dateIso(year, 5, 1),
+    addDaysIso(easter, 39),
+    addDaysIso(easter, 50),
+    addDaysIso(easter, 60),
+    dateIso(year, 8, 15),
+    dateIso(year, 10, 3),
+    dateIso(year, 11, 1),
+    dateIso(year, 12, 25),
+    dateIso(year, 12, 26),
+  ];
+}
+
+function easterSunday(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function addDaysIso(date, days) {
+  const copy = new Date(date);
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return formatIsoDate(copy);
+}
+
+function dateIso(year, month, day) {
+  return formatIsoDate(new Date(Date.UTC(year, month - 1, day)));
 }
 
 function selectedDates(config) {

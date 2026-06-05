@@ -90,11 +90,12 @@ function readForm() {
     days: data.getAll("days"),
     includePublicHolidays: data.get("includePublicHolidays") === "on",
     publicHolidays: data.get("publicHolidays"),
-    airlines: data.get("airlines") || "",
+    airlines: data.getAll("airlines").filter(Boolean),
   };
 }
 
-function populateAirlines(airlines, selected = "") {
+function populateAirlines(airlines, selected = []) {
+  const selectedValues = new Set(Array.isArray(selected) ? selected : [selected].filter(Boolean));
   const options = ["", ...airlines.filter(Boolean)];
   airlinesSelect.innerHTML = "";
 
@@ -105,7 +106,9 @@ function populateAirlines(airlines, selected = "") {
     airlinesSelect.appendChild(option);
   }
 
-  airlinesSelect.value = options.includes(selected) ? selected : "";
+  for (const option of airlinesSelect.options) {
+    option.selected = selectedValues.size ? selectedValues.has(option.value) : option.value === "";
+  }
 }
 
 function renderRows(rows) {

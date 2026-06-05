@@ -65,15 +65,15 @@
               <span>Include public holidays</span>
             </label>
             <label class="holiday-dates">
-              <span>Holiday dates</span>
-              <input id="publicHolidays" name="publicHolidays" type="text" placeholder="2026-01-01, 2026-12-25">
+              <span>Extra holiday dates</span>
+              <input id="publicHolidays" name="publicHolidays" type="text" placeholder="Optional: 2026-08-08">
             </label>
           </div>
 
           <label class="airline-filter">
             <span>Airlines</span>
             <div class="airline-select-row">
-              <select id="airlines" name="airlines">
+              <select id="airlines" name="airlines" multiple size="6">
                 <option value="">All airlines</option>
               </select>
               <button id="airlinesBtn" class="secondary-btn" type="button">Refresh</button>

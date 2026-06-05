@@ -99,6 +99,15 @@ select {
   background: #fff;
 }
 
+select[multiple] {
+  height: 132px;
+  padding: 6px;
+}
+
+select[multiple] option {
+  padding: 5px 8px;
+}
+
 .day-picker {
   display: flex;
   flex-wrap: wrap;
