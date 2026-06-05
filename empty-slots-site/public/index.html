@@ -4,6 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>GSRM Empty SOD Slots</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -70,15 +73,30 @@
             </label>
           </div>
 
-          <label class="airline-filter">
-            <span>Airlines</span>
-            <div class="airline-select-row">
-              <select id="airlines" name="airlines" multiple size="6">
-                <option value="">All airlines</option>
+          <div class="filter-grid">
+            <label class="filter-control">
+              <span>Airlines</span>
+              <div class="filter-select-row">
+                <select id="airlines" name="airlines" multiple size="6">
+                  <option value="">All airlines</option>
+                </select>
+                <button id="airlinesBtn" class="secondary-btn" type="button">Refresh</button>
+              </div>
+            </label>
+            <label class="filter-control">
+              <span>SLA</span>
+              <select id="slas" name="slas" multiple size="6">
+                <option value="">All SLAs</option>
+                <option value="CKIN">CKIN</option>
+                <option value="GATE">GATE</option>
+                <option value="LOFO">LOFO</option>
+                <option value="QH-CKI">QH-CKI</option>
+                <option value="QH-GATE">QH-GATE</option>
+                <option value="ASVC">ASVC</option>
+                <option value="SECS">SECS</option>
               </select>
-              <button id="airlinesBtn" class="secondary-btn" type="button">Refresh</button>
-            </div>
-          </label>
+            </label>
+          </div>
         </form>
       </section>
 
@@ -98,8 +116,87 @@
         <button id="csvBtn" class="secondary-btn" type="button" disabled>Download JSON + CSV</button>
       </section>
 
+      <section id="progressPanel" class="progress-panel" aria-live="polite" hidden>
+        <div class="progress-main">
+          <div>
+            <span class="progress-label">Date</span>
+            <strong id="progressDate">-</strong>
+          </div>
+          <div>
+            <span class="progress-label">Flight</span>
+            <strong id="progressFlight">-</strong>
+          </div>
+          <div>
+            <span class="progress-label">Elapsed</span>
+            <strong id="progressElapsed">0s</strong>
+          </div>
+        </div>
+        <div class="progress-track">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+        <div id="progressText" class="progress-text">Starting...</div>
+        <div id="progressDates" class="progress-dates"></div>
+      </section>
+
       <section class="panel table-panel">
         <div id="message" class="message">Ready.</div>
+        
+        <div class="table-filter-bar">
+          <div class="filter-search-wrap">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input id="resultsSearch" type="text" placeholder="Filter output results (flight, route, date...)" class="search-input">
+          </div>
+          
+          <div class="filter-selects">
+            <div class="filter-group">
+              <label for="resultsSlaFilter">SLA</label>
+              <select id="resultsSlaFilter">
+                <option value="">All SLAs</option>
+              </select>
+            </div>
+            
+            <div class="filter-group">
+              <label for="resultsDirectionFilter">Direction</label>
+              <select id="resultsDirectionFilter">
+                <option value="">All</option>
+                <option value="Arrival">ARR</option>
+                <option value="Departure">DEP</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label for="resultsMissingFilter">Min Missing</label>
+              <select id="resultsMissingFilter">
+                <option value="">Any</option>
+                <option value="1">1+</option>
+                <option value="2">2+</option>
+                <option value="3">3+</option>
+                <option value="4">4+</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label for="resultsStartTimeFilter">From UTC</label>
+              <input id="resultsStartTimeFilter" type="time" class="filter-time-input">
+            </div>
+            
+            <div class="filter-group">
+              <label for="resultsEndTimeFilter">To UTC</label>
+              <input id="resultsEndTimeFilter" type="time" class="filter-time-input">
+            </div>
+
+            <div class="filter-group toggle-group">
+              <label class="toggle-label">
+                <input id="resultsLocalTimeToggle" type="checkbox">
+                <span>Local Time</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="table-wrap">
           <table>
             <thead>
@@ -111,8 +208,8 @@
                 <th>Required</th>
                 <th>Assigned</th>
                 <th>Missing</th>
-                <th>Start UTC</th>
-                <th>Release UTC</th>
+                <th id="thStart">Start UTC</th>
+                <th id="thRelease">Release UTC</th>
               </tr>
             </thead>
             <tbody id="resultsBody">

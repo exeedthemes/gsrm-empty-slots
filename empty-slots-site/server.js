@@ -6,8 +6,29 @@ const { chromium } = require("playwright");
 const PORT = Number(process.env.PORT || 4173);
 const BASE_URL = "https://gsrm.avbis.online";
 const PUBLIC_DIR = path.join(__dirname, "public");
-const FLIGHT_CONCURRENCY = Number(process.env.FLIGHT_CONCURRENCY || 1);
+const FLIGHT_CONCURRENCY = positiveInteger(process.env.FLIGHT_CONCURRENCY, 3);
 const REQUEST_RETRIES = Number(process.env.REQUEST_RETRIES || 4);
+const SESSION_IDLE_MS = positiveInteger(process.env.SESSION_IDLE_MS, 15 * 60 * 1000);
+const SCAN_PROGRESS_TTL_MS = positiveInteger(process.env.SCAN_PROGRESS_TTL_MS, 30 * 60 * 1000);
+
+let authSession = null;
+let authSessionPromise = null;
+let authSessionIdleTimer = null;
+const scanProgress = new Map();
+
+// In-memory cache for handling airport IDs
+const airportCache = new Map();
+
+function getCachedAirportId(flightId) {
+  return airportCache.get(flightId);
+}
+
+function cacheAirportId(flightId, airportId) {
+  if (airportCache.size > 2000) {
+    airportCache.clear();
+  }
+  airportCache.set(flightId, airportId);
+}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -29,6 +50,12 @@ const server = http.createServer(async (req, res) => {
       const payload = await readJson(req);
       const result = await extractAirlines(payload);
       sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === "GET" && req.url.startsWith("/api/progress")) {
+      const scanId = new URL(req.url, `http://localhost:${PORT}`).searchParams.get("scanId");
+      sendJson(res, 200, getScanProgress(scanId));
       return;
     }
 
@@ -60,31 +87,69 @@ server.listen(PORT, () => {
 async function extractEmptySlots(payload) {
   const config = normalizePayload(payload);
   const dates = selectedDates(config);
+  const scanId = normalizeScanId(payload.scanId) || `scan-${Date.now().toString(36)}`;
 
   if (!dates.length) {
     return { rows: [], errors: [], scannedFlights: 0, scannedDates: [], airlines: [] };
   }
 
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  startScanProgress(scanId, dates);
+  console.log(`[${scanId}] Starting scan for ${dates.length} date(s).`);
+  const session = await acquireAuthenticatedSession(config.email, config.password);
+  const { context } = session;
 
   try {
-    await login(page, config.email, config.password);
-
     const rows = [];
     const errors = [];
     const airlines = new Set();
+    const slas = new Set();
     let scannedFlights = 0;
+
+    const firstDate = formatAvbisDate(dates[0]);
+    updateScanProgress(scanId, { stage: "loading", message: `Loading Flight Comms for ${firstDate}...` });
+    const firstFlightCommsHtml = await fetchFlightCommsHtml(context, firstDate);
+    const csrf = extractCsrf(firstFlightCommsHtml);
 
     for (const date of dates) {
       const avbisDate = formatAvbisDate(date);
-      const result = await extractDateViaHttp(context, avbisDate, date, config);
+      const startedAt = Date.now();
+      updateScanProgress(scanId, {
+        stage: "date",
+        currentDate: avbisDate,
+        currentDateStartedAt: startedAt,
+        currentFlight: "",
+        currentDirection: "",
+        currentFlightIndex: 0,
+        currentFlightTotal: 0,
+        message: `Loading ${avbisDate}...`,
+      });
+      console.log(`[${scanId}] Loading ${avbisDate}...`);
+      const result = await extractDateViaHttp(
+        context,
+        avbisDate,
+        date,
+        config,
+        csrf,
+        avbisDate === firstDate ? firstFlightCommsHtml : "",
+        (patch) => updateScanProgress(scanId, patch)
+      );
 
       scannedFlights += result.scannedFlights;
       rows.push(...result.rows);
       errors.push(...result.errors);
       for (const airline of result.airlines) airlines.add(airline);
+      for (const sla of result.slas) slas.add(sla);
+      completeProgressDate(scanId, {
+        date: avbisDate,
+        scannedFlights: result.scannedFlights,
+        rows: result.rows.length,
+        errors: result.errors.length,
+        elapsedMs: Date.now() - startedAt,
+      });
+      console.log(
+        `[${scanId}] ${avbisDate}: scanned ${result.scannedFlights} flight(s), found ${result.rows.length} empty slot group(s), ` +
+        `${result.errors.length} error(s), ${Math.round((Date.now() - startedAt) / 1000)}s.`
+      );
     }
 
     rows.sort((a, b) => {
@@ -92,39 +157,45 @@ async function extractEmptySlots(payload) {
       return byStart || a.flight.localeCompare(b.flight);
     });
 
-    return {
+    const response = {
       rows,
       errors,
       scannedFlights,
       scannedDates: dates.map(formatIsoDate),
       airlines: [...airlines].sort(),
+      slas: [...slas].sort(),
     };
+    finishScanProgress(scanId, response);
+    return response;
+  } catch (error) {
+    failScanProgress(scanId, error);
+    throw error;
   } finally {
-    await browser.close();
+    releaseAuthSession(session);
   }
 }
 
 async function extractAirlines(payload) {
   const config = normalizePayload({ ...payload, airlines: "" });
   const dates = selectedDates(config);
+  const scanId = `airlines-${Date.now().toString(36)}`;
 
   if (!dates.length) {
     return { airlines: [], scannedDates: [], scannedFlights: 0 };
   }
 
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  console.log(`[${scanId}] Loading airlines for ${dates.length} date(s).`);
+  const session = await acquireAuthenticatedSession(config.email, config.password);
+  const { context } = session;
 
   try {
-    await login(page, config.email, config.password);
-
     const airlines = new Set();
     let scannedFlights = 0;
 
     for (const date of dates) {
       const avbisDate = formatAvbisDate(date);
       const flights = await fetchFlightLinks(context, avbisDate);
+      console.log(`[${scanId}] ${avbisDate}: loaded ${flights.length} visible flight(s).`);
       scannedFlights += flights.length;
       for (const flight of flights) {
         const code = airlineCodeFromFlight(flight);
@@ -138,44 +209,192 @@ async function extractAirlines(payload) {
       scannedFlights,
     };
   } finally {
-    await browser.close();
+    releaseAuthSession(session);
   }
 }
 
-async function extractDateViaHttp(context, avbisDate, date, config) {
-  const html = await fetchFlightCommsHtml(context, avbisDate);
-  const csrf = extractCsrf(html);
-  const visibleFlights = await fetchFlightLinks(context, avbisDate);
+async function acquireAuthenticatedSession(email, password) {
+  const sessionKey = `${email}\0${password}`;
+
+  while (true) {
+    if (authSession?.sessionKey === sessionKey && !authSession.closing) {
+      clearAuthSessionTimer();
+      authSession.active += 1;
+      return authSession;
+    }
+
+    if (authSessionPromise) {
+      const creatingSession = authSessionPromise;
+      await creatingSession.promise.catch(() => null);
+      continue;
+    }
+
+    const previousSession = authSession;
+    if (previousSession) {
+      authSession = null;
+      if (previousSession.active > 0) {
+        previousSession.closeWhenIdle = true;
+      } else {
+        await closeSession(previousSession);
+      }
+    }
+
+    const promise = createAuthenticatedSession(sessionKey, email, password);
+    authSessionPromise = { sessionKey, promise };
+
+    try {
+      const session = await promise;
+      if (!session.closing) {
+        clearAuthSessionTimer();
+        session.active += 1;
+        return session;
+      }
+    } finally {
+      if (authSessionPromise?.promise === promise) authSessionPromise = null;
+    }
+  }
+}
+
+async function createAuthenticatedSession(sessionKey, email, password) {
+  await closeAuthSession();
+
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await login(page, email, password);
+    authSession = { browser, context, sessionKey, active: 0, closeWhenIdle: false, closing: false };
+    return authSession;
+  } catch (error) {
+    await browser.close().catch(() => {});
+    throw error;
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+function releaseAuthSession(session) {
+  session.active = Math.max(0, session.active - 1);
+  if (session.active > 0) return;
+
+  if (session.closeWhenIdle || authSession !== session) {
+    closeSession(session).catch(() => {});
+    return;
+  }
+
+  touchAuthSession(session);
+}
+
+function touchAuthSession(session = authSession) {
+  if (!session || session.active > 0 || session.closing || authSession !== session) return;
+  if (authSessionIdleTimer) clearTimeout(authSessionIdleTimer);
+  authSessionIdleTimer = setTimeout(() => {
+    closeAuthSession().catch(() => {});
+  }, SESSION_IDLE_MS);
+  authSessionIdleTimer.unref?.();
+}
+
+function clearAuthSessionTimer() {
+  if (authSessionIdleTimer) clearTimeout(authSessionIdleTimer);
+  authSessionIdleTimer = null;
+}
+
+async function closeAuthSession() {
+  clearAuthSessionTimer();
+
+  const session = authSession;
+  authSession = null;
+  if (!session) return;
+  if (session.active > 0) {
+    session.closeWhenIdle = true;
+    return;
+  }
+  await closeSession(session);
+}
+
+async function closeSession(session) {
+  if (session.closing) return;
+  session.closing = true;
+  if (authSession === session) authSession = null;
+  await session.browser.close().catch(() => {});
+}
+
+async function extractDateViaHttp(context, avbisDate, date, config, csrf, fallbackHtml = "", onProgress = () => {}) {
+  const visibleFlights = await fetchFlightLinks(context, avbisDate, fallbackHtml);
   const airlines = [...new Set(visibleFlights.map(airlineCodeFromFlight).filter(Boolean))];
   const flights = visibleFlights.filter((flight) => airlineMatches(flight, config.airlines));
   const periodStart = dateWithTime(date, config.startTime);
   const periodEnd = dateWithTime(date, config.endTime);
+  onProgress({
+    currentFlightTotal: flights.length,
+    message: `${avbisDate}: scanning ${flights.length} flight(s)...`,
+  });
 
-  const results = await mapLimit(flights, FLIGHT_CONCURRENCY, (flight) =>
-    extractFlightSodRows(context, flight, avbisDate, csrf, periodStart, periodEnd)
+  const results = await mapLimit(flights, FLIGHT_CONCURRENCY, (flight, index) =>
+    extractFlightSodRowsWithProgress(context, flight, avbisDate, csrf, periodStart, periodEnd, config.slas, index, flights.length, onProgress)
   );
+  const failedIndexes = results
+    .map((result, index) => result.errors.length ? index : -1)
+    .filter((index) => index >= 0);
+
+  if (failedIndexes.length > 0) {
+    await mapLimit(failedIndexes, FLIGHT_CONCURRENCY, async (index) => {
+      const flight = flights[index];
+      const meta = parseFlightText(flight.text);
+      onProgress({
+        currentFlight: meta.flight,
+        currentDirection: meta.direction,
+        currentFlightIndex: index + 1,
+        retrying: true,
+        message: `${avbisDate}: retrying ${formatFlightLabel(meta)}...`,
+      });
+      const retryResult = await extractFlightSodRows(context, flight, avbisDate, csrf, periodStart, periodEnd, config.slas);
+      if (!retryResult.errors.length) results[index] = retryResult;
+    });
+  }
+
   const rows = results.flatMap((result) => result.rows);
   const errors = results.flatMap((result) => result.errors);
+  const slas = [...new Set(results.flatMap((result) => result.slas))].sort();
 
-  return { rows, errors, scannedFlights: flights.length, airlines };
+  return { rows, errors, scannedFlights: flights.length, airlines, slas };
 }
 
-async function extractFlightSodRows(context, flight, avbisDate, csrf, periodStart, periodEnd) {
+async function extractFlightSodRowsWithProgress(context, flight, avbisDate, csrf, periodStart, periodEnd, selectedSlas, index, total, onProgress) {
+  const meta = parseFlightText(flight.text);
+  onProgress({
+    currentFlight: meta.flight,
+    currentDirection: meta.direction,
+    currentFlightIndex: index + 1,
+    currentFlightTotal: total,
+    retrying: false,
+    message: `${avbisDate}: scanning ${formatFlightLabel(meta)} (${index + 1}/${total})...`,
+  });
+  return extractFlightSodRows(context, flight, avbisDate, csrf, periodStart, periodEnd, selectedSlas);
+}
+
+async function extractFlightSodRows(context, flight, avbisDate, csrf, periodStart, periodEnd, selectedSlas = []) {
   const meta = parseFlightText(flight.text);
 
   try {
-    const airportResponse = await requestGetWithRetry(context, `${BASE_URL}/api/flight-watch/get-handling-airport?flight_id=${flight.id}`, {
-      headers: { Accept: "application/json", "X-CSRF-TOKEN": csrf },
-      timeout: 15000,
-    });
-    const airport = await airportResponse.json().catch(() => null);
-    if (!airportResponse.ok() || !airport?.status || !airport?.airport_id) {
-      throw new Error(`handling airport HTTP ${airportResponse.status()}`);
+    let airportId = getCachedAirportId(flight.id);
+    if (!airportId) {
+      const airportResponse = await requestGetWithRetry(context, `${BASE_URL}/api/flight-watch/get-handling-airport?flight_id=${flight.id}`, {
+        headers: { Accept: "application/json", "X-CSRF-TOKEN": csrf },
+        timeout: 15000,
+      });
+      const airport = await airportResponse.json().catch(() => null);
+      if (!airportResponse.ok() || !airport?.status || !airport?.airport_id) {
+        throw new Error(`handling airport HTTP ${airportResponse.status()}`);
+      }
+      airportId = airport.airport_id;
+      cacheAirportId(flight.id, airportId);
     }
 
     const params = new URLSearchParams({
       flight_id: flight.id,
-      airport_id: String(airport.airport_id),
+      airport_id: String(airportId),
       date: avbisDate,
     });
     const sodResponse = await requestGetWithRetry(context, `${BASE_URL}/flight-comm/get_sod_form?${params.toString()}`, {
@@ -185,8 +404,11 @@ async function extractFlightSodRows(context, flight, avbisDate, csrf, periodStar
     const sodHtml = await sodResponse.text();
     if (!sodResponse.ok()) throw new Error(`SOD HTTP ${sodResponse.status()}`);
 
-    const rows = parseSodGroups(sodHtml, avbisDate)
+    const groups = parseSodGroups(sodHtml, avbisDate);
+    const slas = [...new Set(groups.map((group) => group.sla).filter(Boolean))].sort();
+    const rows = groups
       .filter((group) => group.missing > 0 && overlaps(group.startDate, group.releaseDate, periodStart, periodEnd))
+      .filter((group) => slaMatches(group.sla, selectedSlas))
       .map((group) => ({
         date: avbisDate,
         flight_id: flight.id,
@@ -206,10 +428,11 @@ async function extractFlightSodRows(context, flight, avbisDate, csrf, periodStar
         duration: group.duration,
       }));
 
-    return { rows, errors: [] };
+    return { rows, errors: [], slas };
   } catch (error) {
     return {
       rows: [],
+      slas: [],
       errors: [{
         date: avbisDate,
         flight_id: flight.id,
@@ -238,17 +461,22 @@ async function mapLimit(items, limit, mapper) {
   return results;
 }
 
-async function fetchFlightLinks(context, avbisDate) {
+async function fetchFlightLinks(context, avbisDate, fallbackHtml = "") {
   const data = await fetchFlightCommsData(context, avbisDate).catch(() => null);
   const flights = extractFlightLinksFromData(data);
   if (flights.length) return flights;
-  return extractFlightLinks(await fetchFlightCommsHtml(context, avbisDate));
+  return extractFlightLinks(fallbackHtml || await fetchFlightCommsHtml(context, avbisDate));
+}
+
+function positiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
 }
 
 async function fetchFlightCommsData(context, avbisDate) {
   const response = await requestGetWithRetry(context, `${BASE_URL}/flight-comms-data-new?date=${encodeURIComponent(avbisDate)}`, {
     headers: { Accept: "application/json" },
-    timeout: 30000,
+    timeout: 15000,
   });
 
   if (!response.ok()) {
@@ -290,7 +518,7 @@ function classText(html, className) {
 async function fetchFlightCommsHtml(context, avbisDate) {
   const pageResponse = await requestGetWithRetry(context, `${BASE_URL}/flight-comms?date=${encodeURIComponent(avbisDate)}`, {
     headers: { Accept: "text/html" },
-    timeout: 30000,
+    timeout: 15000,
   });
 
   if (!pageResponse.ok()) {
@@ -300,27 +528,162 @@ async function fetchFlightCommsHtml(context, avbisDate) {
   return pageResponse.text();
 }
 
-async function requestGetWithRetry(context, url, options) {
+async function requestGetWithRetry(context, url, options = {}) {
   let lastResponse = null;
+  let lastError = null;
 
   for (let attempt = 0; attempt <= REQUEST_RETRIES; attempt += 1) {
-    if (attempt > 0) await sleep(2000 * attempt);
-    lastResponse = await context.request.get(url, options);
-    if (lastResponse.status() !== 429) return lastResponse;
+    if (attempt > 0) await sleep(requestRetryDelay(lastResponse, attempt));
+
+    try {
+      lastResponse = await context.request.get(url, options);
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+
+    if (!isRetryableStatus(lastResponse.status())) return lastResponse;
   }
 
+  if (!lastResponse && lastError) throw lastError;
   return lastResponse;
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function requestRetryDelay(response, attempt) {
+  const retryAfter = Number(response?.headers()?.["retry-after"]);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return retryAfter * 1000;
+  return Math.min(15000, 1000 * attempt * attempt);
 }
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normalizeScanId(value) {
+  const scanId = String(value || "").trim();
+  return /^[a-zA-Z0-9_-]{8,80}$/.test(scanId) ? scanId : "";
+}
+
+function startScanProgress(scanId, dates) {
+  cleanupScanProgress();
+  const now = Date.now();
+  scanProgress.set(scanId, {
+    scanId,
+    stage: "starting",
+    message: `Starting scan for ${dates.length} date(s)...`,
+    startedAt: now,
+    updatedAt: now,
+    elapsedMs: 0,
+    totalDates: dates.length,
+    completedDates: 0,
+    currentDate: "",
+    currentDateStartedAt: 0,
+    currentFlight: "",
+    currentDirection: "",
+    currentFlightIndex: 0,
+    currentFlightTotal: 0,
+    scannedFlights: 0,
+    foundRows: 0,
+    errors: 0,
+    dateSummaries: [],
+    done: false,
+  });
+}
+
+function updateScanProgress(scanId, patch) {
+  const progress = scanProgress.get(scanId);
+  if (!progress) return;
+  const now = Date.now();
+  Object.assign(progress, patch, {
+    updatedAt: now,
+    elapsedMs: now - progress.startedAt,
+  });
+}
+
+function completeProgressDate(scanId, summary) {
+  const progress = scanProgress.get(scanId);
+  if (!progress) return;
+  const now = Date.now();
+  progress.completedDates += 1;
+  progress.scannedFlights += summary.scannedFlights;
+  progress.foundRows += summary.rows;
+  progress.errors += summary.errors;
+  progress.dateSummaries.push(summary);
+  progress.updatedAt = now;
+  progress.elapsedMs = now - progress.startedAt;
+  progress.message = `${summary.date}: scanned ${summary.scannedFlights} flight(s), found ${summary.rows} empty slot group(s) in ${formatDuration(summary.elapsedMs)}.`;
+}
+
+function finishScanProgress(scanId, result) {
+  const progress = scanProgress.get(scanId);
+  if (!progress) return;
+  const now = Date.now();
+  progress.stage = "done";
+  progress.done = true;
+  progress.completedDates = progress.totalDates;
+  progress.scannedFlights = result.scannedFlights;
+  progress.foundRows = result.rows.length;
+  progress.errors = result.errors.length;
+  progress.updatedAt = now;
+  progress.elapsedMs = now - progress.startedAt;
+  progress.message = `Done in ${formatDuration(progress.elapsedMs)}. ${result.rows.length} empty slot group(s), ${result.scannedFlights} flight(s), ${result.errors.length} endpoint error(s).`;
+}
+
+function failScanProgress(scanId, error) {
+  const progress = scanProgress.get(scanId);
+  if (!progress) return;
+  const now = Date.now();
+  progress.stage = "error";
+  progress.done = true;
+  progress.updatedAt = now;
+  progress.elapsedMs = now - progress.startedAt;
+  progress.message = error.message || String(error);
+}
+
+function getScanProgress(scanId) {
+  cleanupScanProgress();
+  const progress = normalizeScanId(scanId) ? scanProgress.get(scanId) : null;
+  if (!progress) return { found: false };
+  return {
+    found: true,
+    ...progress,
+    elapsedLabel: formatDuration(progress.elapsedMs),
+    currentDateElapsedLabel: progress.currentDateStartedAt ? formatDuration(Date.now() - progress.currentDateStartedAt) : "",
+    dateSummaries: progress.dateSummaries.map((summary) => ({
+      ...summary,
+      elapsedLabel: formatDuration(summary.elapsedMs),
+    })),
+  };
+}
+
+function cleanupScanProgress() {
+  const now = Date.now();
+  for (const [scanId, progress] of scanProgress) {
+    if (now - progress.updatedAt > SCAN_PROGRESS_TTL_MS) scanProgress.delete(scanId);
+  }
+}
+
+function formatFlightLabel(meta) {
+  return [meta.flight, meta.direction].filter(Boolean).join(" ");
+}
+
+function formatDuration(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes ? `${minutes}m ${String(remainder).padStart(2, "0")}s` : `${remainder}s`;
+}
+
 async function login(page, email, password) {
-  await page.goto(`${BASE_URL}/login`, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await gotoWithRetry(page, `${BASE_URL}/login`);
   await page.waitForTimeout(1000);
   if (!page.url().includes("/login")) return;
 
+  await page.getByPlaceholder("Email").waitFor({ state: "visible", timeout: 30000 });
   await page.getByPlaceholder("Email").fill(email);
   await page.getByPlaceholder("Password").fill(password);
 
@@ -338,6 +701,23 @@ async function login(page, email, password) {
   if (page.url().includes("/login")) {
     throw new Error("Login did not complete. Check the credentials.");
   }
+}
+
+async function gotoWithRetry(page, url) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= REQUEST_RETRIES; attempt += 1) {
+    if (attempt > 0) await sleep(2000 * attempt);
+
+    try {
+      return await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    } catch (error) {
+      lastError = error;
+      console.warn(`Navigation to ${url} failed on attempt ${attempt + 1}: ${error.message.split("\n")[0]}`);
+    }
+  }
+
+  throw lastError;
 }
 
 function normalizePayload(payload) {
@@ -360,7 +740,8 @@ function normalizePayload(payload) {
     }
   }
 
-  const airlines = normalizeAirlines(payload.airlines);
+  const airlines = normalizeCodes(payload.airlines, /^all(?:\s+airlines?)?$/i);
+  const slas = normalizeCodes(payload.slas, /^all(?:\s+slas?)?$/i);
 
   return {
     email: String(payload.email),
@@ -373,6 +754,7 @@ function normalizePayload(payload) {
     includePublicHolidays,
     publicHolidays,
     airlines,
+    slas,
   };
 }
 
@@ -479,13 +861,17 @@ function airlineMatches(flight, airlines) {
   return airlines.includes(airlineCodeFromFlight(flight));
 }
 
-function normalizeAirlines(value) {
-  const text = String(value || "").trim();
-  if (!text || /^all(?:\s+airlines?)?$/i.test(text)) return [];
-  return text
-    .split(/[\s,;]+/)
+function slaMatches(sla, slas) {
+  if (!slas.length) return true;
+  return slas.includes(String(sla || "").trim().toUpperCase());
+}
+
+function normalizeCodes(value, allPattern) {
+  const values = Array.isArray(value) ? value : String(value || "").split(/[\s,;]+/);
+  return values
+    .flatMap((item) => String(item || "").split(/[\s,;]+/))
     .map((code) => code.trim().toUpperCase())
-    .filter(Boolean);
+    .filter((code) => code && !allPattern.test(code));
 }
 
 function airlineCodeFromFlight(flight) {
@@ -588,8 +974,12 @@ function parseFlightText(text) {
   const route = parts[1] || "";
   const aircraft = parts[2] || "";
   const rest = parts.slice(3).join(" | ");
-  const scheduledMatch = rest.match(/\b(STA|STD)\s*(\d{2}\s+\d{2}:\d{2})/);
-  const direction = scheduledMatch?.[1] === "STA" ? "Arrival" : scheduledMatch?.[1] === "STD" ? "Departure" : "";
+  const scheduledMatch = rest.match(/\b(STA|STD)\s*((?:\d{2}\s+)?\d{2}:\d{2})/);
+  const direction = scheduledMatch?.[1] === "STA"
+    ? "Arrival"
+    : scheduledMatch?.[1] === "STD"
+      ? "Departure"
+      : directionFromRoute(route);
 
   return {
     flight,
@@ -598,6 +988,13 @@ function parseFlightText(text) {
     direction,
     scheduled: scheduledMatch ? `${scheduledMatch[1]} ${scheduledMatch[2]}` : "",
   };
+}
+
+function directionFromRoute(route) {
+  const airports = String(route || "").toUpperCase().split("-").map((part) => part.trim()).filter(Boolean);
+  if (airports[0] === "MUC") return "Departure";
+  if (airports[airports.length - 1] === "MUC") return "Arrival";
+  return "";
 }
 
 function parseSodUtc(value, flightDate) {
