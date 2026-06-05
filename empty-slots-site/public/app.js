@@ -178,7 +178,7 @@ function renderRows(rows) {
 
   if (!rows.length) {
     const tr = document.createElement("tr");
-    tr.innerHTML = '<td colspan="9" class="empty">No empty slots found.</td>';
+    tr.innerHTML = '<td colspan="10" class="empty">No empty slots found.</td>';
     resultsBody.appendChild(tr);
     return;
   }
@@ -194,6 +194,22 @@ function renderRows(rows) {
     const displayStart = getDisplayTime(row.date, row.start_utc, useLocal);
     const displayRelease = getDisplayTime(row.date, row.release_utc, useLocal);
 
+    // Fallback duration calculation if row.duration is not provided
+    let duration = row.duration || "";
+    if (!duration && row.start_utc && row.release_utc) {
+      const startObj = parseUtcTime(row.date, row.start_utc);
+      const releaseObj = parseUtcTime(row.date, row.release_utc);
+      if (startObj && releaseObj) {
+        const diffMs = releaseObj - startObj;
+        if (diffMs > 0) {
+          const diffMins = Math.round(diffMs / (1000 * 60));
+          const hrs = Math.floor(diffMins / 60);
+          const mins = diffMins % 60;
+          duration = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+        }
+      }
+    }
+
     tr.innerHTML = `
       <td>${escapeHtml(row.date)}</td>
       <td>${escapeHtml(row.flight)} <span class="muted">${escapeHtml(row.direction || "")}</span></td>
@@ -204,6 +220,7 @@ function renderRows(rows) {
       <td class="missing">${escapeHtml(row.missing)}</td>
       <td>${escapeHtml(displayStart)}</td>
       <td>${escapeHtml(displayRelease)}</td>
+      <td>${escapeHtml(duration)}</td>
     `;
     resultsBody.appendChild(tr);
   }
