@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node empty-slots-site/server.js",
     "check": "node --check empty-slots-site/server.js && node --check empty-slots-site/public/app.js",
-    "share": "npx localtunnel --port 4173"
+    "share": "npx localtunnel --port 4173",
+    "share:ngrok": "npx ngrok http 4173"
   },
   "dependencies": {
     "playwright": "^1.52.0"
