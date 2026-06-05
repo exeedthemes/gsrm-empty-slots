@@ -1,0 +1,12 @@
+{
+  "name": "gsrm-empty-slots",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node empty-slots-site/server.js",
+    "check": "node --check empty-slots-site/server.js && node --check empty-slots-site/public/app.js"
+  },
+  "dependencies": {
+    "playwright": "^1.52.0"
+  }
+}

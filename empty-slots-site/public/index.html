@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GSRM Empty SOD Slots</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="panel controls-panel">
+        <div class="title-row">
+          <div>
+            <h1>Empty SOD Slots</h1>
+            <p>Flight Comms staff coverage scanner</p>
+          </div>
+          <button id="runBtn" class="primary-btn" type="button">Run</button>
+        </div>
+
+        <form id="scanForm" autocomplete="off">
+          <div class="grid two">
+            <label>
+              <span>Email</span>
+              <input id="email" name="email" type="email" required>
+            </label>
+            <label>
+              <span>Password</span>
+              <input id="password" name="password" type="password" required>
+            </label>
+          </div>
+
+          <div class="grid four">
+            <label>
+              <span>Start date</span>
+              <input id="startDate" name="startDate" type="date" value="2026-06-04" required>
+            </label>
+            <label>
+              <span>End date</span>
+              <input id="endDate" name="endDate" type="date" value="2026-06-04" required>
+            </label>
+            <label>
+              <span>From UTC</span>
+              <input id="startTime" name="startTime" type="time" value="00:00" required>
+            </label>
+            <label>
+              <span>To UTC</span>
+              <input id="endTime" name="endTime" type="time" value="23:59" required>
+            </label>
+          </div>
+
+          <fieldset class="day-picker">
+            <legend>Days</legend>
+            <label><input type="checkbox" name="days" value="1" checked><span>Mon</span></label>
+            <label><input type="checkbox" name="days" value="2" checked><span>Tue</span></label>
+            <label><input type="checkbox" name="days" value="3" checked><span>Wed</span></label>
+            <label><input type="checkbox" name="days" value="4" checked><span>Thu</span></label>
+            <label><input type="checkbox" name="days" value="5" checked><span>Fri</span></label>
+            <label><input type="checkbox" name="days" value="6"><span>Sat</span></label>
+            <label><input type="checkbox" name="days" value="0"><span>Sun</span></label>
+          </fieldset>
+
+          <div class="holiday-row">
+            <label class="holiday-toggle">
+              <input id="includePublicHolidays" name="includePublicHolidays" type="checkbox">
+              <span>Include public holidays</span>
+            </label>
+            <label class="holiday-dates">
+              <span>Holiday dates</span>
+              <input id="publicHolidays" name="publicHolidays" type="text" placeholder="2026-01-01, 2026-12-25">
+            </label>
+          </div>
+
+          <label class="airline-filter">
+            <span>Airlines</span>
+            <div class="airline-select-row">
+              <select id="airlines" name="airlines">
+                <option value="">All airlines</option>
+              </select>
+              <button id="airlinesBtn" class="secondary-btn" type="button">Refresh</button>
+            </div>
+          </label>
+        </form>
+      </section>
+
+      <section class="status-strip" aria-live="polite">
+        <div>
+          <span class="metric" id="resultCount">0</span>
+          <span>empty slot groups</span>
+        </div>
+        <div>
+          <span class="metric" id="flightCount">0</span>
+          <span>flights scanned</span>
+        </div>
+        <div>
+          <span class="metric" id="dateCount">0</span>
+          <span>dates scanned</span>
+        </div>
+        <button id="csvBtn" class="secondary-btn" type="button" disabled>Download JSON + CSV</button>
+      </section>
+
+      <section class="panel table-panel">
+        <div id="message" class="message">Ready.</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Flight</th>
+                <th>Route</th>
+                <th>SLA</th>
+                <th>Required</th>
+                <th>Assigned</th>
+                <th>Missing</th>
+                <th>Start UTC</th>
+                <th>Release UTC</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr><td colspan="9" class="empty">No scan run yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
