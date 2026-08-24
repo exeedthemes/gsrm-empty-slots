@@ -60,12 +60,12 @@
         <label><input type="checkbox" name="gsrm-day" value="3" checked><span>Wed</span></label>
         <label><input type="checkbox" name="gsrm-day" value="4" checked><span>Thu</span></label>
         <label><input type="checkbox" name="gsrm-day" value="5" checked><span>Fri</span></label>
-        <label><input type="checkbox" name="gsrm-day" value="6"><span>Sat</span></label>
-        <label><input type="checkbox" name="gsrm-day" value="0"><span>Sun</span></label>
+        <label><input type="checkbox" name="gsrm-day" value="6" checked><span>Sat</span></label>
+        <label><input type="checkbox" name="gsrm-day" value="0" checked><span>Sun</span></label>
       </fieldset>
       <div class="row">
-        <label class="toggle"><input id="gsrm-include-holidays" type="checkbox"><span>Public holidays</span></label>
-        <label><span>Holiday dates</span><input id="gsrm-holidays" type="text" placeholder="2026-01-01, 2026-12-25"></label>
+        <label class="toggle"><input id="gsrm-mode" type="checkbox"><span>Find replacements</span></label>
+        <label><span>My Initials / Name</span><input id="gsrm-initials" type="text" placeholder="e.g. ABC or Vithanage" value="Vithanage"></label>
       </div>
       <label><span>Airlines</span><input id="gsrm-airlines" type="text" placeholder="All airlines, or BA, IB, UX"></label>
       <div class="actions">
@@ -87,7 +87,12 @@
   $("#gsrm-close").onclick = () => app.remove();
   $("#gsrm-run").onclick = run;
   $("#gsrm-download").onclick = () => {
-    downloadCsv(latestRows);
+    const isReplacements = $("#gsrm-mode").checked;
+    if (isReplacements) {
+      downloadReplacementsCsv(latestRows);
+    } else {
+      downloadCsv(latestRows);
+    }
   };
 
   async function run() {
@@ -115,9 +120,8 @@
           const params = new URLSearchParams({ flight_id: flight.id, airport_id: String(airport.airport_id), date: avbisDate });
           const sod = await getText(`/flight-comm/get_sod_form?${params.toString()}`, csrf);
           for (const group of parseSodGroups(sod, avbisDate)) {
-            if (group.missing <= 0) continue;
             if (!overlaps(group.startDate, group.releaseDate, periodStart, periodEnd)) continue;
-            latestRows.push({ date: avbisDate, flight_id: flight.id, ...meta, sla: group.sla, type: group.type, movement: group.movement, required: group.required, assigned: group.assigned, missing: group.missing, start_utc: group.start, release_utc: group.release, duration: group.duration });
+            latestRows.push({ date: avbisDate, flight_id: flight.id, ...meta, sla: group.sla, type: group.type, movement: group.movement, required: group.required, assigned: group.assigned, missing: group.missing, start_utc: group.start, release_utc: group.release, duration: group.duration, staff: group.staff });
           }
         }
       }
@@ -140,15 +144,101 @@
       endDate: parseIsoDate($("#gsrm-end-date").value),
       startTime: parseTime($("#gsrm-start-time").value),
       endTime: parseTime($("#gsrm-end-time").value),
-      days: [...document.querySelectorAll('input[name="gsrm-day"]:checked')].map((el) => Number(el.value)),
-      includePublicHolidays: $("#gsrm-include-holidays").checked,
-      publicHolidays: new Set($("#gsrm-holidays").value.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean)),
+      days: [...app.querySelectorAll('input[name="gsrm-day"]:checked')].map((el) => Number(el.value)),
+      includePublicHolidays: $("#gsrm-include-holidays")?.checked || false,
+      publicHolidays: new Set(($("#gsrm-holidays")?.value || "").split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean)),
       airlines: $("#gsrm-airlines").value.split(/[\s,;]+/).map((x) => x.trim().toUpperCase()).filter(Boolean),
     };
   }
 
   function render(rows) {
-    $("#gsrm-results").innerHTML = rows.length ? rows.map((row) => `
+    const isReplacements = $("#gsrm-mode").checked;
+    const initials = $("#gsrm-initials").value.trim().toUpperCase();
+
+    if (isReplacements && initials) {
+      const myDuties = rows.filter(row => row.staff && row.staff.some(s => matchStaff(s, initials)));
+
+      if (!myDuties.length) {
+        $("#gsrm-results").innerHTML = `<tr><td colspan="9" style="text-align:center;color:#637082">No duties found for "${esc(initials)}" in the scanned range.</td></tr>`;
+        return;
+      }
+
+      const staffSet = new Set();
+      rows.forEach(r => {
+        if (r.staff) r.staff.forEach(s => staffSet.add(s.trim()));
+      });
+
+      $("#gsrm-results").innerHTML = myDuties.map((duty) => {
+        const dutyStart = parseSodUtc(duty.start_utc, duty.date);
+        const dutyRelease = parseSodUtc(duty.release_utc, duty.date);
+
+        const candidates = [];
+        if (dutyStart && dutyRelease) {
+          [...staffSet].forEach(candStr => {
+            const match = candStr.match(/^([A-Z0-9]+)\s+-\s+(.+)$/i);
+            if (!match) return;
+            const candInitials = match[1].toUpperCase();
+            const candName = match[2];
+            if (matchStaff(candStr, initials)) return;
+
+            const shifts = rows.filter(r => r.staff && r.staff.some(s => s.trim().toUpperCase().startsWith(candInitials + " -")));
+            let overlapsShift = false;
+            for (const shift of shifts) {
+              const start = parseSodUtc(shift.start_utc, shift.date);
+              const release = parseSodUtc(shift.release_utc, shift.date);
+              if (start && release && start < dutyRelease && release > dutyStart) {
+                overlapsShift = true;
+                break;
+              }
+            }
+            if (overlapsShift) return;
+
+            const shiftsOnSameDay = shifts.filter(s => s.date === duty.date);
+            const isWorkingOnDay = shiftsOnSameDay.length > 0;
+            const slaExperience = shifts.filter(s => s.sla === duty.sla).length;
+
+            let adjacentType = false;
+            for (const shift of shiftsOnSameDay) {
+              const start = parseSodUtc(shift.start_utc, shift.date);
+              const release = parseSodUtc(shift.release_utc, shift.date);
+              if (start && release) {
+                if (Math.abs(dutyStart - release) <= 30 * 60 * 1000 || Math.abs(start - dutyRelease) <= 30 * 60 * 1000) {
+                  adjacentType = true;
+                }
+              }
+            }
+
+            let score = 0;
+            if (isWorkingOnDay) score += 5;
+            if (slaExperience > 0) score += 3;
+            if (adjacentType) score += 2;
+
+            candidates.push({ initials: candInitials, name: candName, score });
+          });
+        }
+
+        candidates.sort((a, b) => b.score - a.score);
+        const candListHtml = candidates.length
+          ? candidates.map(c => `<span title="${esc(c.name)}" style="background:${c.score >= 8 ? '#dff1ed' : c.score >= 5 ? '#fff9e6' : '#f3f6f8'};color:${c.score >= 8 ? '#0f5a54' : c.score >= 5 ? '#8a6d1c' : '#555'};padding:2px 5px;border-radius:4px;font-size:11px;font-weight:bold;margin-right:4px">${c.initials} (${c.score})</span>`).join("")
+          : `<span style="color:#637082">None (out of ${staffSet.size} staff)</span>`;
+
+        return `
+          <tr>
+            <td>${esc(duty.date)}</td>
+            <td>${esc(duty.flight)} ${esc(duty.direction)}</td>
+            <td>${esc(duty.route)}</td>
+            <td><span style="background:#f1f5f9;padding:2px 6px;border-radius:4px;font-weight:600">${esc(duty.sla)}</span></td>
+            <td>${esc(duty.start_utc)}</td>
+            <td>${esc(duty.release_utc)}</td>
+            <td colspan="3">${candListHtml}</td>
+          </tr>
+        `;
+      }).join("");
+      return;
+    }
+
+    const activeRows = rows.filter(row => row.missing > 0);
+    $("#gsrm-results").innerHTML = activeRows.length ? activeRows.map((row) => `
       <tr><td>${esc(row.date)}</td><td>${esc(row.flight)} ${esc(row.direction)}</td><td>${esc(row.route)}</td><td>${esc(row.sla)}</td><td>${row.required}</td><td>${row.assigned}</td><td>${row.missing}</td><td>${esc(row.start_utc)}</td><td>${esc(row.release_utc)}</td></tr>
     `).join("") : '<tr><td colspan="9">No empty slots found.</td></tr>';
   }
@@ -202,8 +292,9 @@
       if (requiredCell) {
         if (current) groups.push(finishGroup(current));
         current = { sla: cells[0] || "", type: cells[1] || "", movement: (requiredCell.split(/Required\s*:/i)[0] || "").trim(), required: Number((requiredCell.match(/Required\s*:\s*(\d+)/i) || [])[1] || 0), start: stripSla(cells[3] || ""), release: stripSla(cells[4] || ""), duration: (cells[5] || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim(), staff: [], flightDate };
-      } else if (current && /^[A-Z]{3}\s+-\s+/.test(cells[2] || "")) {
-        current.staff.push(cells[2]);
+      } else if (current) {
+        const staffCell = cells.find(cell => /^[A-Z0-9]{2,10}\s+-\s+/i.test((cell || "").trim()));
+        if (staffCell) current.staff.push(staffCell.trim());
       }
     }
     if (current) groups.push(finishGroup(current));
@@ -280,8 +371,103 @@
   function download(name, body, type) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([body], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
   function downloadCsv(rows) {
     const headers = ["date", "flight_id", "flight", "direction", "route", "aircraft", "scheduled_utc", "sla", "type", "movement", "required", "assigned", "missing", "start_utc", "release_utc", "duration"];
-    const csv = [headers.join(","), ...rows.map((r) => headers.map((h) => csvCell(r[h])).join(","))].join("\n");
+    const activeRows = rows.filter(r => r.missing > 0);
+    const csv = [headers.join(","), ...activeRows.map((r) => headers.map((h) => csvCell(r[h])).join(","))].join("\n");
     download("gsrm-empty-sod-slots.csv", csv, "text/csv");
   }
+  function downloadReplacementsCsv(rows) {
+    const initials = $("#gsrm-initials").value.trim().toUpperCase();
+    if (!initials) return;
+
+    const myDuties = rows.filter(row => row.staff && row.staff.some(s => matchStaff(s, initials)));
+    const staffSet = new Set();
+    rows.forEach(r => {
+      if (r.staff) r.staff.forEach(s => staffSet.add(s.trim()));
+    });
+
+    const csvHeaders = ["Date", "Flight", "Direction", "Route", "SLA", "Start UTC", "Release UTC", "Duration", "Num Candidates", "Top Candidates"];
+    const csvRows = [csvHeaders.join(",")];
+
+    for (const duty of myDuties) {
+      const dutyStart = parseSodUtc(duty.start_utc, duty.date);
+      const dutyRelease = parseSodUtc(duty.release_utc, duty.date);
+
+      const candidates = [];
+      if (dutyStart && dutyRelease) {
+        [...staffSet].forEach(candStr => {
+          const match = candStr.match(/^([A-Z0-9]+)\s+-\s+(.+)$/i);
+          if (!match) return;
+          const candInitials = match[1].toUpperCase();
+          const candName = match[2];
+          if (matchStaff(candStr, initials)) return;
+
+          const shifts = rows.filter(r => r.staff && r.staff.some(s => s.trim().toUpperCase().startsWith(candInitials + " -")));
+          let overlapsShift = false;
+          for (const shift of shifts) {
+            const start = parseSodUtc(shift.start_utc, shift.date);
+            const release = parseSodUtc(shift.release_utc, shift.date);
+            if (start && release && start < dutyRelease && release > dutyStart) {
+              overlapsShift = true;
+              break;
+            }
+          }
+          if (overlapsShift) return;
+
+          const shiftsOnSameDay = shifts.filter(s => s.date === duty.date);
+          const isWorkingOnDay = shiftsOnSameDay.length > 0;
+          const slaExperience = shifts.filter(s => s.sla === duty.sla).length;
+
+          let adjacentType = false;
+          for (const shift of shiftsOnSameDay) {
+            const start = parseSodUtc(shift.start_utc, shift.date);
+            const release = parseSodUtc(shift.release_utc, shift.date);
+            if (start && release) {
+              if (Math.abs(dutyStart - release) <= 30 * 60 * 1000 || Math.abs(start - dutyRelease) <= 30 * 60 * 1000) {
+                adjacentType = true;
+              }
+            }
+          }
+
+          let score = 0;
+          if (isWorkingOnDay) score += 5;
+          if (slaExperience > 0) score += 3;
+          if (adjacentType) score += 2;
+
+          candidates.push({ initials: candInitials, name: candName, score });
+        });
+      }
+
+      candidates.sort((a, b) => b.score - a.score);
+      const topCandidatesStr = candidates.slice(0, 3).map(c => `${c.initials} (${c.score}/10)`).join(" | ");
+
+      csvRows.push([
+        csvCell(duty.date),
+        csvCell(duty.flight),
+        csvCell(duty.direction),
+        csvCell(duty.route),
+        csvCell(duty.sla),
+        csvCell(duty.start_utc),
+        csvCell(duty.release_utc),
+        csvCell(duty.duration || ""),
+        csvCell(candidates.length),
+        csvCell(topCandidatesStr)
+      ].join(","));
+    }
+
+    download(`gsrm-duty-replacements-${initials}.csv`, csvRows.join("\n"), "text/csv");
+  }
   function csvCell(v) { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }
+  function matchStaff(staffStr, searchInput) {
+    if (!staffStr || !searchInput) return false;
+    const target = String(staffStr).trim().toUpperCase();
+    const query = String(searchInput).trim().toUpperCase();
+    if (target.startsWith(query + " -")) return true;
+    const match = target.match(/^([A-Z0-9]+)\s+-\s+(.+)$/i);
+    if (match) {
+      const initials = match[1].toUpperCase();
+      const name = match[2].toUpperCase();
+      if (initials === query || name.includes(query)) return true;
+    }
+    return false;
+  }
 })();

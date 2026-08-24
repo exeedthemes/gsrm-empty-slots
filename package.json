@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node empty-slots-site/server.js",
-    "check": "node --check empty-slots-site/server.js && node --check empty-slots-site/public/app.js",
+    "check": "node --check empty-slots-site/server.js && node --check empty-slots-site/public/app.js && node --check empty-slots-site/public/staff-utils.js && node --check empty-slots-site/public/operations-utils.js && node --check empty-slots-site/public/holiday-utils.js && node --test empty-slots-site/server.test.js empty-slots-site/staff-utils.test.js empty-slots-site/operations-utils.test.js empty-slots-site/holiday-utils.test.js",
     "share": "npx localtunnel --port 4173",
     "share:ngrok": "npx ngrok http 4173"
   },

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/styles.css?v=20260819-7">
   </head>
   <body>
     <main class="app-shell">
@@ -16,9 +16,27 @@
           <div>
             <h1>Empty SOD Slots</h1>
             <p>Flight Comms staff coverage scanner</p>
+            <div id="connectionState" class="connection-state disconnected" aria-live="polite">
+              <span class="connection-dot"></span>
+              <strong>Not connected to AVBIS</strong>
+            </div>
           </div>
-          <button id="runBtn" class="primary-btn" type="button">Run</button>
+          <div class="title-actions">
+            <button id="setupToggleBtn" class="secondary-btn" type="button" aria-expanded="true" aria-controls="scanForm">Hide setup</button>
+            <button id="refreshScanBtn" class="secondary-btn" type="button" title="Bypass the local cache and fetch the selected dates again from AVBIS">Refresh range</button>
+            <button id="runBtn" class="primary-btn" type="button" title="Reuse recently scanned dates and fetch only dates missing from the local cache">Run</button>
+          </div>
         </div>
+
+        <nav class="tab-switcher" aria-label="Workspace views">
+          <button type="button" id="tabGaps" class="active">Empty Slots</button>
+          <button type="button" id="tabReplacements">Replacements</button>
+          <button type="button" id="tabRoster">Roster</button>
+          <button type="button" id="tabInsights">Insights</button>
+          <button type="button" id="tabHistory">History</button>
+        </nav>
+
+        <div id="setupSummary" class="setup-summary" hidden aria-live="polite"></div>
 
         <form id="scanForm" autocomplete="off">
           <div class="grid two">
@@ -31,15 +49,34 @@
               <input id="password" name="password" type="password" required>
             </label>
           </div>
+          <div class="connection-actions">
+            <button id="connectBtn" class="secondary-btn" type="button">Connect to AVBIS</button>
+            <span id="connectionHint">Authenticate once, then configure and run scans separately.</span>
+          </div>
+
+          <div class="period-picker scan-period-picker">
+            <label>
+              <span>Scan period</span>
+              <select id="scanPeriodMode">
+                <option value="custom">Custom date range</option>
+                <option value="month">Full calendar month</option>
+              </select>
+            </label>
+            <label id="scanMonthField" hidden>
+              <span>Month</span>
+              <input id="scanMonth" type="month">
+            </label>
+            <span class="period-help">Full month selects every day, including Saturdays and Sundays.</span>
+          </div>
 
           <div class="grid four">
             <label>
               <span>Start date</span>
-              <input id="startDate" name="startDate" type="date" value="2026-06-04" required>
+              <input id="startDate" name="startDate" type="date" required>
             </label>
             <label>
               <span>End date</span>
-              <input id="endDate" name="endDate" type="date" value="2026-06-04" required>
+              <input id="endDate" name="endDate" type="date" required>
             </label>
             <label>
               <span>From UTC</span>
@@ -58,20 +95,28 @@
             <label><input type="checkbox" name="days" value="3" checked><span>Wed</span></label>
             <label><input type="checkbox" name="days" value="4" checked><span>Thu</span></label>
             <label><input type="checkbox" name="days" value="5" checked><span>Fri</span></label>
-            <label><input type="checkbox" name="days" value="6"><span>Sat</span></label>
-            <label><input type="checkbox" name="days" value="0"><span>Sun</span></label>
+            <label><input type="checkbox" name="days" value="6" checked><span>Sat</span></label>
+            <label><input type="checkbox" name="days" value="0" checked><span>Sun</span></label>
           </fieldset>
 
           <div class="holiday-row">
             <label class="holiday-toggle">
               <input id="includePublicHolidays" name="includePublicHolidays" type="checkbox">
-              <span>Include public holidays</span>
+              <span>Include Germany + Bavaria holidays</span>
             </label>
             <label class="holiday-dates">
               <span>Extra holiday dates</span>
               <input id="publicHolidays" name="publicHolidays" type="text" placeholder="Optional: 2026-08-08">
             </label>
           </div>
+
+          <section class="holiday-preview" aria-labelledby="holidayPreviewTitle">
+            <div class="holiday-preview-heading">
+              <span id="holidayPreviewTitle">Public holidays for selected month</span>
+              <span class="holiday-preview-note">Assumption Day depends on the municipality.</span>
+            </div>
+            <div id="holidayPreviewList" class="holiday-preview-list" aria-live="polite"></div>
+          </section>
 
           <div class="filter-grid">
             <label class="filter-control">
@@ -97,23 +142,42 @@
               </select>
             </label>
           </div>
+
+          <div id="replacementFields" class="grid two replacement-fields" style="display: none;">
+            <label>
+              <span>Staff member to replace</span>
+              <input id="myInitials" name="myInitials" type="text" list="staffOptions" placeholder="Type a staff name">
+            </label>
+            <label>
+              <span>Maximum gap from another duty</span>
+              <div class="duration-input">
+                <input id="maxDutyGap" name="maxDutyGap" type="number" value="2" min="0" step="0.25" inputmode="decimal" aria-label="Maximum duty gap">
+                <select id="maxDutyGapUnit" name="maxDutyGapUnit" aria-label="Maximum duty gap unit">
+                  <option value="minutes">Minutes</option>
+                  <option value="hours" selected>Hours</option>
+                </select>
+              </div>
+            </label>
+          </div>
+
+          <datalist id="staffOptions"></datalist>
         </form>
       </section>
 
-      <section class="status-strip" aria-live="polite">
-        <div>
-          <span class="metric" id="resultCount">0</span>
-          <span>empty slot groups</span>
+      <section class="status-strip contextual-toolbar" aria-live="polite">
+        <div class="context-heading">
+          <strong id="contextTitle">Empty Slots</strong>
+          <span id="contextHint">Coverage gaps in the current scan</span>
         </div>
-        <div>
-          <span class="metric" id="flightCount">0</span>
-          <span>flights scanned</span>
+        <div class="context-metrics">
+          <div><span class="metric" id="resultCount">0</span><span id="resultCountLabel">empty slot groups</span></div>
+          <div><span class="metric" id="flightCount">0</span><span>flights scanned</span></div>
+          <div><span class="metric" id="dateCount">0</span><span>dates scanned</span></div>
         </div>
-        <div>
-          <span class="metric" id="dateCount">0</span>
-          <span>dates scanned</span>
+        <div class="context-actions">
+          <button id="csvBtn" class="secondary-btn" type="button" disabled>Download CSV</button>
+          <button id="opsCsvBtn" class="secondary-btn" type="button" disabled>Action CSV</button>
         </div>
-        <button id="csvBtn" class="secondary-btn" type="button" disabled>Download CSV</button>
       </section>
 
       <section id="progressPanel" class="progress-panel" aria-live="polite" hidden>
@@ -134,14 +198,17 @@
         <div class="progress-track">
           <div id="progressBar" class="progress-bar"></div>
         </div>
-        <div id="progressText" class="progress-text">Starting...</div>
+        <div class="progress-status-row">
+          <div id="progressText" class="progress-text">Starting...</div>
+          <button id="cancelScanBtn" class="danger-btn" type="button" hidden>Cancel scan</button>
+        </div>
         <div id="progressDates" class="progress-dates"></div>
       </section>
 
       <section class="panel table-panel">
         <div id="message" class="message">Ready.</div>
         
-        <div class="table-filter-bar">
+        <div class="table-filter-bar" id="tableFilterBar">
           <div class="filter-search-wrap">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="8"></circle>
@@ -151,6 +218,11 @@
           </div>
           
           <div class="filter-selects">
+            <div class="filter-group" id="replacementDateFilterGroup" hidden>
+              <label for="resultsDateFilter">Date</label>
+              <input id="resultsDateFilter" type="date" class="filter-date-input">
+            </div>
+
             <div class="filter-group">
               <label for="resultsSlaFilter">SLA</label>
               <select id="resultsSlaFilter">
@@ -167,7 +239,7 @@
               </select>
             </div>
 
-            <div class="filter-group">
+            <div class="filter-group" id="resultsMissingFilterGroup">
               <label for="resultsMissingFilter">Min Missing</label>
               <select id="resultsMissingFilter">
                 <option value="">Any</option>
@@ -194,10 +266,12 @@
                 <span>Local Time</span>
               </label>
             </div>
+
+            <button id="resultsClearFilters" class="filter-clear-btn" type="button">Clear</button>
           </div>
         </div>
 
-        <div class="table-wrap">
+        <div class="table-wrap" id="gapsTableWrap">
           <table>
             <thead>
               <tr>
@@ -211,15 +285,301 @@
                 <th id="thStart">Start UTC</th>
                 <th id="thRelease">Release UTC</th>
                 <th>Duration</th>
+                <th>Plan</th>
               </tr>
             </thead>
             <tbody id="resultsBody">
-              <tr><td colspan="10" class="empty">No scan run yet.</td></tr>
+              <tr><td colspan="11" class="empty">No scan run yet.</td></tr>
             </tbody>
           </table>
         </div>
+
+        <div id="gapPlanner" class="gap-planner" hidden>
+          <div class="gap-planner-head">
+            <div><span>Coverage planner</span><strong id="gapPlannerTitle">Select an empty slot</strong></div>
+            <button id="gapPlannerClose" class="secondary-btn" type="button">Close</button>
+          </div>
+          <div id="gapPlannerDetails"></div>
+          <div class="action-fields">
+            <label><span>Status</span><select id="gapActionStatus"><option>Open</option><option>Contacted</option><option>Covered</option></select></label>
+            <label><span>Planning notes</span><input id="gapActionNotes" type="text" placeholder="Who was contacted or confirmed?"></label>
+          </div>
+          <div id="gapValidationState" class="gap-validation-state" aria-live="polite"></div>
+          <div id="gapSimulation" class="coverage-simulation" aria-live="polite"></div>
+          <p class="planner-disclaimer">Availability is inferred from the scanned allocation window. SLA experience is a planning signal, not proof of qualification.</p>
+          <div id="gapCandidates" class="planner-candidates"></div>
+        </div>
+
+        <div class="replacements-layout" id="replacementsLayout" style="display: none;">
+          <div class="duties-column">
+            <div class="replacement-person-banner">
+              <span>Staff member being replaced</span>
+              <strong id="replacementStaffName">Select a staff member</strong>
+              <small id="replacementStaffSummary">Type a name above to load their duties.</small>
+            </div>
+            <div class="column-header">Scheduled Duties</div>
+            <div class="duties-list" id="dutiesList">
+              <div class="empty-list">Please enter your initials and run a scan to see your duties.</div>
+            </div>
+          </div>
+          <div class="candidates-column">
+            <div class="column-header" id="replacementCandidatesHeader">Available Replacements</div>
+            <div id="candidatesList" class="candidates-list">
+              <div class="empty-selection">Select a duty on the left to see people who can replace you.</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="rosterLayout" class="roster-layout" style="display: none;">
+            <div class="roster-filter-title">
+              <div class="roster-filter-heading">
+                <strong>Roster filters &amp; window</strong>
+                <span id="rosterFilterHint">Customise window, staff search, status, and SLA</span>
+              </div>
+              <div class="roster-presets" id="rosterPresetFilterGroup" role="toolbar" aria-label="Roster view filter presets">
+                <span class="preset-label">Quick view:</span>
+                <button type="button" class="preset-chip active" data-preset="all">All staff</button>
+                <button type="button" class="preset-chip" data-preset="duty">On duty</button>
+                <button type="button" class="preset-chip" data-preset="free">Free</button>
+              </div>
+              <div class="roster-filter-actions">
+                <button id="rosterClearFilters" class="secondary-btn" type="button">Reset filters</button>
+                <button id="rosterFilterToggle" class="secondary-btn roster-filter-toggle" type="button" aria-expanded="true" aria-controls="rosterFields">Hide filters</button>
+              </div>
+            </div>
+            <div id="rosterFields" class="roster-fields">
+              <label>
+                <span>Overview period</span>
+                <select id="rosterPeriodMode">
+                  <option value="custom">Custom range</option>
+                  <option value="month">Full month</option>
+                </select>
+              </label>
+              <label id="rosterMonthField" hidden><span>Month</span><input id="rosterMonth" type="month"></label>
+              <label><span>From date</span><input id="rosterStartDate" type="date"></label>
+              <label><span>To date</span><input id="rosterEndDate" type="date"></label>
+              <label><span>From UTC</span><input id="rosterStartTime" type="time" value="00:00"></label>
+              <label><span>To UTC</span><input id="rosterEndTime" type="time" value="23:59"></label>
+              <label class="roster-search-filter"><span>Staff or assignment</span><input id="rosterStaffSearch" type="search" list="staffOptions" placeholder="Name, initials, flight, route…"></label>
+              <label>
+                <span>Availability</span>
+                <select id="rosterStatus">
+                  <option value="">Everyone</option>
+                  <option value="free">Free for entire window</option>
+                  <option value="duty">On duty in window</option>
+                </select>
+              </label>
+              <label>
+                <span>SLA</span>
+                <select id="rosterSla">
+                  <option value="">All SLAs</option>
+                </select>
+              </label>
+              <label class="roster-time-zone-filter">
+                <span>Duty times</span>
+                <span class="switch-control">
+                  <input id="rosterLocalTimeToggle" type="checkbox">
+                  <i></i>
+                  <b id="rosterTimeModeLabel">Zulu</b>
+                </span>
+              </label>
+            </div>
+          </div>
+          <div class="roster-summary" aria-live="polite">
+            <div class="roster-summary-card free"><span class="roster-summary-value" id="rosterFreeCount">0</span><span id="rosterFreeLabel">Free</span></div>
+            <div class="roster-summary-card duty"><span class="roster-summary-value" id="rosterDutyCount">0</span><span id="rosterDutyLabel">On duty</span></div>
+            <p id="rosterWindowText">Run a scan to load the duty roster.</p>
+            <div class="roster-summary-actions">
+              <button id="rosterTotalsBtn" class="secondary-btn roster-totals-btn" type="button" aria-pressed="false">Show duty hours</button>
+              <button id="rosterFullscreenBtn" class="secondary-btn roster-fullscreen-btn" type="button" aria-pressed="false" aria-keyshortcuts="Escape">Full screen</button>
+            </div>
+          </div>
+          <section class="auto-planner" aria-labelledby="autoPlannerTitle">
+            <div class="auto-planner-head">
+              <div>
+                <span>What-if planning</span>
+                <strong id="autoPlannerTitle">Automatic coverage planner</strong>
+                <small>Fill missing positions with selected staff while enforcing workload and rest rules. The plan stays local and does not change AVBIS.</small>
+              </div>
+              <div class="auto-planner-actions">
+                <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="true">Hide planner</button>
+                <button id="autoPlannerClear" class="secondary-btn" type="button">Clear plan</button>
+                <button id="autoPlannerRun" class="primary-btn" type="button">Build plan</button>
+              </div>
+            </div>
+            <div class="auto-planner-grid">
+              <div class="auto-planner-staff step-card" id="plannerStep1Card">
+                <div class="planner-field-heading">
+                  <span>Step 1 · Eligible staff <mark id="plannerStaffBadge" class="step-count-badge">0 selected</mark></span>
+                  <div class="step-heading-actions">
+                    <button id="autoPlannerSelectAll" type="button">Select all</button>
+                    <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep1Card" aria-expanded="true" title="Toggle Step 1 section">Collapse</button>
+                  </div>
+                </div>
+                <div class="step-card-content">
+                  <input id="autoPlannerStaffSearch" type="search" placeholder="Find staff by name or initials">
+                  <div id="autoPlannerStaffList" class="auto-planner-staff-list"><span class="muted">Run a scan to load staff.</span></div>
+                </div>
+              </div>
+              <div class="auto-planner-options step-card" id="plannerStep2Card">
+                <div class="planner-field-heading auto-planner-card-heading">
+                  <span>Step 2 · Planning rules <mark class="step-count-badge">Limits &amp; Buffers</mark></span>
+                  <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep2Card" aria-expanded="true" title="Toggle Step 2 section">Collapse</button>
+                </div>
+                <div class="step-card-content grid-rules">
+                  <label><span>Maximum duty hours / day</span><input id="plannerMaxHours" type="number" min="1" max="24" step="0.5" value="8"></label>
+                  <label><span>Maximum day span</span><input id="plannerMaxSpan" type="number" min="1" max="24" step="0.5" value="10"></label>
+                  <label><span>Buffer between duties</span><div class="input-suffix"><input id="plannerBuffer" type="number" min="0" max="240" step="5" value="30"><b>min</b></div></label>
+                  <label><span>Break after continuous work</span><div class="input-suffix"><input id="plannerBreakAfter" type="number" min="1" max="12" step="0.5" value="6"><b>hrs</b></div></label>
+                  <label><span>Minimum qualifying break</span><div class="input-suffix"><input id="plannerBreakLength" type="number" min="0" max="180" step="5" value="30"><b>min</b></div></label>
+                  <label><span>Maximum weekly hours</span><input id="plannerWeeklyHours" type="number" min="0" max="168" step="1" value="40"></label>
+                  <label><span>Maximum working days / week</span><input id="plannerWeeklyDays" type="number" min="1" max="7" step="1" value="5"></label>
+                  <label><span>Maximum monthly hours</span><input id="plannerMonthlyHours" type="number" min="0" max="744" step="1" value="160"></label>
+                  <label class="planner-sla-field"><span>SLAs to plan</span><select id="plannerSlas" multiple size="4"><option value="" disabled>Run a scan to load SLAs</option></select></label>
+                </div>
+              </div>
+              <div class="availability-editor step-card" id="plannerStep3Card">
+                <div class="planner-field-heading">
+                  <span>Step 3 · Staff availability <mark id="plannerRulesBadge" class="step-count-badge">0 rules</mark></span>
+                  <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep3Card" aria-expanded="true" title="Toggle Step 3 section">Collapse</button>
+                </div>
+                <div class="step-card-content">
+                  <label><span>Staff member</span><select id="availabilityStaff"><option value="">Select staff</option></select></label>
+                  <div class="availability-period-row">
+                    <label><span>Applies to</span><select id="availabilityPeriod"><option value="day">Given day</option><option value="dates">Multiple dates</option><option value="range">Date range</option><option value="month">Full month</option><option value="weekly">Weekly pattern</option></select></label>
+                    <label id="availabilityDateField"><span>Date</span><input id="availabilityDate" type="date"></label>
+                    <label id="availabilityEndField" hidden><span>End date</span><input id="availabilityEnd" type="date"></label>
+                    <label id="availabilityMonthField" hidden><span>Month</span><input id="availabilityMonth" type="month"></label>
+                    <div id="availabilityDatesField" class="availability-calendar-wrap" hidden>
+                      <span>Choose dates</span>
+                      <div class="availability-calendar-head"><button id="availabilityCalendarPrev" type="button" aria-label="Previous month">‹</button><input id="availabilityCalendarMonth" type="month"><button id="availabilityCalendarNext" type="button" aria-label="Next month">›</button></div>
+                      <div id="availabilityCalendar" class="availability-calendar" aria-label="Select availability dates"></div>
+                      <small id="availabilitySelectedDates">No dates selected</small>
+                      <label><span>Or paste dates</span><input id="availabilityDatesQuick" type="text" placeholder="01.08, 02.08, 15.08.2026"></label>
+                    </div>
+                  </div>
+                  <fieldset id="availabilityWeekdays" class="availability-weekdays" hidden><legend>Days in week</legend><label><input type="checkbox" value="1"><span>Mon</span></label><label><input type="checkbox" value="2"><span>Tue</span></label><label><input type="checkbox" value="3"><span>Wed</span></label><label><input type="checkbox" value="4"><span>Thu</span></label><label><input type="checkbox" value="5"><span>Fri</span></label><label><input type="checkbox" value="6"><span>Sat</span></label><label><input type="checkbox" value="0"><span>Sun</span></label></fieldset>
+                  <div class="availability-shift-row">
+                    <label><span>Availability</span><select id="availabilityShift"><option value="full">Available all day</option><option value="morning">Morning · 04:00–12:00</option><option value="evening">Evening · 12:00–23:59</option><option value="custom">Custom hours</option><option value="unavailable">Unavailable</option></select></label>
+                    <label id="availabilityFromField" hidden><span>From UTC</span><input id="availabilityFrom" type="time" value="08:00"></label>
+                    <label id="availabilityToField" hidden><span>To UTC</span><input id="availabilityTo" type="time" value="16:00"></label>
+                    <button id="availabilityAdd" class="primary-btn" type="button">Add rule</button>
+                  </div>
+                  <div id="availabilityRules" class="availability-rules"><span class="muted">No availability rules yet; staff are treated as available.</span></div>
+                  <div class="availability-month-preview"><strong>Month preview</strong><small id="availabilityPreviewMonth"></small><div id="availabilityPreviewCalendar" class="availability-calendar mini" aria-label="Selected availability days for the month"></div></div>
+                </div>
+              </div>
+            </div>
+            <div id="autoPlannerResult" class="auto-planner-result" aria-live="polite">Select eligible staff, adjust the rules, then build a plan.</div>
+          </section>
+          <div class="roster-view-toolbar">
+            <div class="roster-view-switch" role="group" aria-label="Roster layout">
+              <button id="rosterStaffViewBtn" type="button" aria-pressed="true">Staff roster</button>
+              <button id="rosterAirlineViewBtn" type="button" aria-pressed="false">Flight schedule</button>
+            </div>
+            <p id="rosterViewHint">People by day, including free staff and individual allocations.</p>
+            <div id="rosterBoardActions" class="roster-board-actions" hidden>
+              <div class="flight-schedule-filters">
+                <label><span>Airline</span>
+                  <select id="flightScheduleAirlineFilter" aria-label="Filter flight schedule by airline">
+                    <option value="all">All airlines</option>
+                  </select>
+                </label>
+                <label><span>Status</span>
+                  <select id="flightScheduleCoverageFilter" aria-label="Filter flight schedule by coverage">
+                    <option value="all">All flights</option>
+                    <option value="gaps">Gaps only</option>
+                    <option value="covered">Covered only</option>
+                  </select>
+                </label>
+                <label><span>Direction</span>
+                  <select id="flightScheduleDirectionFilter" aria-label="Filter flight schedule by direction">
+                    <option value="all">All directions</option>
+                    <option value="arr">Arrivals (ARR)</option>
+                    <option value="dep">Departures (DEP)</option>
+                  </select>
+                </label>
+                <input id="flightScheduleSearch" type="search" placeholder="Filter flights, staff, route..." aria-label="Search flight schedule">
+              </div>
+              <div class="roster-board-buttons">
+                <button id="rosterExpandAll" class="secondary-btn" type="button">Expand all</button>
+                <button id="rosterCollapseAll" class="secondary-btn" type="button">Collapse all</button>
+              </div>
+            </div>
+          </div>
+          <div id="rosterInlineReplacementDrawer" class="roster-inline-replacement-card" hidden>
+            <div class="inline-replacement-header">
+              <div>
+                <strong id="rosterInlineTitle">Quick Replacement Candidates</strong>
+                <span id="rosterInlineSubtitle">Find available staff without leaving the roster.</span>
+              </div>
+              <button id="rosterInlineCloseBtn" type="button" class="inline-close-btn" title="Close inline replacement panel">×</button>
+            </div>
+            <div id="rosterInlineCandidatesContent" class="inline-candidates-grid">
+              <span class="muted">Select a duty or gap to load available candidates.</span>
+            </div>
+          </div>
+          <div id="rosterStaffView" class="table-wrap roster-table-wrap">
+            <table class="roster-table">
+              <thead id="rosterHead"><tr><th>Staff member</th><th>Duty list by day</th></tr></thead>
+              <tbody id="rosterBody"><tr><td colspan="2" class="empty">No scan run yet.</td></tr></tbody>
+            </table>
+          </div>
+          <div id="rosterAirlineView" class="roster-airline-board" aria-label="Roster ordered by daily flight schedule" hidden>
+            <div class="empty-selection">Run a scan to load the daily flight schedule.</div>
+          </div>
+        </div>
+
+        <div id="insightsLayout" class="insights-layout" style="display: none;">
+          <div id="insightCards" class="insight-cards"></div>
+          <section class="roster-hours-overview insights-workload" id="insightsWorkloadSection" aria-labelledby="rosterHoursTitle">
+            <div class="roster-hours-heading">
+              <div>
+                <strong id="rosterHoursTitle">Staff workload &amp; duty hours</strong>
+                <span id="rosterHoursHint">Uses the selected Duty Roster period and filters. Hours are classified by Europe/Berlin calendar day; public-holiday hours may also be weekday or weekend hours.</span>
+              </div>
+              <button type="button" id="workloadSectionToggle" class="secondary-btn" aria-expanded="true">Collapse workload</button>
+            </div>
+            <div class="workload-section-body">
+              <div class="roster-hours-cards">
+                <div><strong id="rosterTotalHours">0.0</strong><span>Total hours</span></div>
+                <div><strong id="rosterWeekdayHours">0.0</strong><span>Mon–Fri</span></div>
+                <div><strong id="rosterSaturdayHours">0.0</strong><span>Saturday</span></div>
+                <div><strong id="rosterSundayHours">0.0</strong><span>Sunday</span></div>
+                <div><strong id="rosterHolidayHours">0.0</strong><span>Public holiday</span></div>
+              </div>
+              <div class="table-wrap roster-hours-table-wrap">
+                <table class="roster-hours-table">
+                  <thead><tr><th>Staff member</th><th>Duties</th><th>Total</th><th>Mon–Fri</th><th>Saturday</th><th>Sunday</th><th>Public holiday</th><th>SLAs</th><th>Longest span</th></tr></thead>
+                  <tbody id="rosterHoursBody"><tr><td colspan="9" class="empty">Run a scan to calculate workload.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+          <div class="insight-grid">
+            <section class="insight-section"><div class="column-header">Coverage by date</div><div id="coverageByDate"></div></section>
+            <section class="insight-section"><div class="column-header">Coverage by SLA</div><div id="coverageBySla"></div></section>
+            <section class="insight-section"><div class="column-header">Hourly pressure (UTC)</div><div id="coverageByHour"></div></section>
+            <section class="insight-section" id="insightsWarningsSection">
+              <div class="column-header warnings-header">
+                <span>Roster warnings</span>
+                <button type="button" id="warningsSectionToggle" class="secondary-btn" aria-expanded="true">Collapse</button>
+              </div>
+              <div id="rosterWarnings" class="warnings-container" role="region" aria-label="Roster warnings list" tabindex="0"></div>
+            </section>
+          </div>
+        </div>
+
+        <div id="historyLayout" class="history-layout" style="display: none;">
+          <div class="history-toolbar"><p>Completed and interrupted scans are saved in this browser. Restore, rerun, or export any snapshot.</p><button id="clearHistoryBtn" class="secondary-btn" type="button">Clear history</button></div>
+          <div id="historyComparison" class="history-comparison"></div>
+          <div id="historyList" class="history-list"></div>
+        </div>
       </section>
     </main>
-    <script src="/app.js"></script>
+    <script src="/holiday-utils.js?v=20260818-4"></script>
+    <script src="/staff-utils.js?v=20260818-6"></script>
+    <script src="/operations-utils.js?v=20260822-1"></script>
+    <script src="/app.js?v=20260822-1"></script>
   </body>
 </html>
