@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/styles.css?v=20260819-7">
+    <link rel="stylesheet" href="/styles.css?v=20260827-5">
   </head>
   <body>
     <main class="app-shell">
@@ -22,7 +22,12 @@
             </div>
           </div>
           <div class="title-actions">
+            <button id="coveragePlannerBtn" class="secondary-btn" type="button" title="Open the roster coverage planner">Coverage planner</button>
             <button id="setupToggleBtn" class="secondary-btn" type="button" aria-expanded="true" aria-controls="scanForm">Hide setup</button>
+            <label class="force-refresh-label" title="Bypass server and local cache and fetch fresh data directly from AVBIS" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;color:var(--ink-muted,#475569);">
+              <input id="forceRefreshToggle" type="checkbox">
+              <span>Bypass Cache</span>
+            </label>
             <button id="refreshScanBtn" class="secondary-btn" type="button" title="Bypass the local cache and fetch the selected dates again from AVBIS">Refresh range</button>
             <button id="runBtn" class="primary-btn" type="button" title="Reuse recently scanned dates and fetch only dates missing from the local cache">Run</button>
           </div>
@@ -39,126 +44,137 @@
         <div id="setupSummary" class="setup-summary" hidden aria-live="polite"></div>
 
         <form id="scanForm" autocomplete="off">
-          <div class="grid two">
-            <label>
-              <span>Email</span>
-              <input id="email" name="email" type="email" required>
-            </label>
-            <label>
-              <span>Password</span>
-              <input id="password" name="password" type="password" required>
-            </label>
-          </div>
-          <div class="connection-actions">
-            <button id="connectBtn" class="secondary-btn" type="button">Connect to AVBIS</button>
-            <span id="connectionHint">Authenticate once, then configure and run scans separately.</span>
-          </div>
-
-          <div class="period-picker scan-period-picker">
-            <label>
-              <span>Scan period</span>
-              <select id="scanPeriodMode">
-                <option value="custom">Custom date range</option>
-                <option value="month">Full calendar month</option>
-              </select>
-            </label>
-            <label id="scanMonthField" hidden>
-              <span>Month</span>
-              <input id="scanMonth" type="month">
-            </label>
-            <span class="period-help">Full month selects every day, including Saturdays and Sundays.</span>
-          </div>
-
-          <div class="grid four">
-            <label>
-              <span>Start date</span>
-              <input id="startDate" name="startDate" type="date" required>
-            </label>
-            <label>
-              <span>End date</span>
-              <input id="endDate" name="endDate" type="date" required>
-            </label>
-            <label>
-              <span>From UTC</span>
-              <input id="startTime" name="startTime" type="time" value="00:00" required>
-            </label>
-            <label>
-              <span>To UTC</span>
-              <input id="endTime" name="endTime" type="time" value="23:59" required>
-            </label>
-          </div>
-
-          <fieldset class="day-picker">
-            <legend>Days</legend>
-            <label><input type="checkbox" name="days" value="1" checked><span>Mon</span></label>
-            <label><input type="checkbox" name="days" value="2" checked><span>Tue</span></label>
-            <label><input type="checkbox" name="days" value="3" checked><span>Wed</span></label>
-            <label><input type="checkbox" name="days" value="4" checked><span>Thu</span></label>
-            <label><input type="checkbox" name="days" value="5" checked><span>Fri</span></label>
-            <label><input type="checkbox" name="days" value="6" checked><span>Sat</span></label>
-            <label><input type="checkbox" name="days" value="0" checked><span>Sun</span></label>
+          <fieldset class="form-section-card auth-card">
+            <legend class="form-section-title">AVBIS Authentication</legend>
+            <div class="grid two">
+              <label>
+                <span>Email</span>
+                <input id="email" name="email" type="email" required>
+              </label>
+              <label>
+                <span>Password</span>
+                <input id="password" name="password" type="password" required>
+              </label>
+            </div>
+            <div class="connection-actions">
+              <button id="connectBtn" class="secondary-btn" type="button">Connect to AVBIS</button>
+              <span id="connectionHint">Authenticate once, then configure and run scans separately.</span>
+            </div>
           </fieldset>
 
-          <div class="holiday-row">
-            <label class="holiday-toggle">
-              <input id="includePublicHolidays" name="includePublicHolidays" type="checkbox">
-              <span>Include Germany + Bavaria holidays</span>
-            </label>
-            <label class="holiday-dates">
-              <span>Extra holiday dates</span>
-              <input id="publicHolidays" name="publicHolidays" type="text" placeholder="Optional: 2026-08-08">
-            </label>
-          </div>
-
-          <section class="holiday-preview" aria-labelledby="holidayPreviewTitle">
-            <div class="holiday-preview-heading">
-              <span id="holidayPreviewTitle">Public holidays for selected month</span>
-              <span class="holiday-preview-note">Assumption Day depends on the municipality.</span>
+          <fieldset class="form-section-card schedule-card">
+            <legend class="form-section-title">Scan Period & Schedule</legend>
+            <div class="period-picker scan-period-picker">
+              <label>
+                <span>Scan period</span>
+                <select id="scanPeriodMode">
+                  <option value="custom">Custom date range</option>
+                  <option value="month">Full calendar month</option>
+                </select>
+              </label>
+              <label id="scanMonthField" hidden>
+                <span>Month</span>
+                <input id="scanMonth" type="month">
+              </label>
+              <span class="period-help">Full month selects every day, including Saturdays and Sundays.</span>
             </div>
-            <div id="holidayPreviewList" class="holiday-preview-list" aria-live="polite"></div>
-          </section>
 
-          <div class="filter-grid">
-            <label class="filter-control">
-              <span>Airlines</span>
-              <div class="filter-select-row">
-                <select id="airlines" name="airlines" multiple size="6">
-                  <option value="">All airlines</option>
-                </select>
-                <button id="airlinesBtn" class="secondary-btn" type="button">Refresh</button>
-              </div>
-            </label>
-            <label class="filter-control">
-              <span>SLA</span>
-              <select id="slas" name="slas" multiple size="6">
-                <option value="">All SLAs</option>
-                <option value="CKIN">CKIN</option>
-                <option value="GATE">GATE</option>
-                <option value="LOFO">LOFO</option>
-                <option value="QH-CKI">QH-CKI</option>
-                <option value="QH-GATE">QH-GATE</option>
-                <option value="ASVC">ASVC</option>
-                <option value="SECS">SECS</option>
-              </select>
-            </label>
-          </div>
+            <div class="grid four">
+              <label>
+                <span>Start date</span>
+                <input id="startDate" name="startDate" type="date" required>
+              </label>
+              <label>
+                <span>End date</span>
+                <input id="endDate" name="endDate" type="date" required>
+              </label>
+              <label>
+                <span>From UTC</span>
+                <input id="startTime" name="startTime" type="time" value="00:00" required>
+              </label>
+              <label>
+                <span>To UTC</span>
+                <input id="endTime" name="endTime" type="time" value="23:59" required>
+              </label>
+            </div>
 
-          <div id="replacementFields" class="grid two replacement-fields" style="display: none;">
-            <label>
-              <span>Staff member to replace</span>
-              <input id="myInitials" name="myInitials" type="text" list="staffOptions" placeholder="Type a staff name">
-            </label>
-            <label>
-              <span>Maximum gap from another duty</span>
-              <div class="duration-input">
-                <input id="maxDutyGap" name="maxDutyGap" type="number" value="2" min="0" step="0.25" inputmode="decimal" aria-label="Maximum duty gap">
-                <select id="maxDutyGapUnit" name="maxDutyGapUnit" aria-label="Maximum duty gap unit">
-                  <option value="minutes">Minutes</option>
-                  <option value="hours" selected>Hours</option>
-                </select>
+            <div class="day-picker">
+              <span class="day-picker-label">Days</span>
+              <div class="day-picker-group">
+                <label><input type="checkbox" name="days" value="1" checked><span>Mon</span></label>
+                <label><input type="checkbox" name="days" value="2" checked><span>Tue</span></label>
+                <label><input type="checkbox" name="days" value="3" checked><span>Wed</span></label>
+                <label><input type="checkbox" name="days" value="4" checked><span>Thu</span></label>
+                <label><input type="checkbox" name="days" value="5" checked><span>Fri</span></label>
+                <label><input type="checkbox" name="days" value="6" checked><span>Sat</span></label>
+                <label><input type="checkbox" name="days" value="0" checked><span>Sun</span></label>
               </div>
-            </label>
-          </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="form-section-card scope-card">
+            <legend class="form-section-title">Scope & Filters (Airlines, SLAs & Holidays)</legend>
+            <div class="holiday-row">
+              <label class="holiday-toggle">
+                <input id="includePublicHolidays" name="includePublicHolidays" type="checkbox">
+                <span>Include Germany + Bavaria holidays</span>
+              </label>
+              <label class="holiday-dates">
+                <span>Extra holiday dates</span>
+                <input id="publicHolidays" name="publicHolidays" type="text" placeholder="Optional: 2026-08-08">
+              </label>
+            </div>
+
+            <section class="holiday-preview" aria-labelledby="holidayPreviewTitle">
+              <div class="holiday-preview-heading">
+                <span id="holidayPreviewTitle">Public holidays for selected month</span>
+                <span class="holiday-preview-note">Assumption Day depends on the municipality.</span>
+              </div>
+              <div id="holidayPreviewList" class="holiday-preview-list" aria-live="polite"></div>
+            </section>
+
+            <div class="filter-grid">
+              <label class="filter-control">
+                <span>Airlines</span>
+                <div class="filter-select-row">
+                  <select id="airlines" name="airlines" multiple size="6">
+                    <option value="">All airlines</option>
+                  </select>
+                  <button id="airlinesBtn" class="secondary-btn" type="button">Refresh</button>
+                </div>
+              </label>
+              <label class="filter-control">
+                <span>SLA</span>
+                <select id="slas" name="slas" multiple size="6">
+                  <option value="">All SLAs</option>
+                  <option value="CKIN">CKIN</option>
+                  <option value="GATE">GATE</option>
+                  <option value="LOFO">LOFO</option>
+                  <option value="QH-CKI">QH-CKI</option>
+                  <option value="QH-GATE">QH-GATE</option>
+                  <option value="ASVC">ASVC</option>
+                  <option value="SECS">SECS</option>
+                </select>
+              </label>
+            </div>
+
+            <div id="replacementFields" class="grid two replacement-fields" style="display: none;">
+              <label>
+                <span>Staff member to replace</span>
+                <input id="myInitials" name="myInitials" type="text" list="staffOptions" placeholder="Type a staff name">
+              </label>
+              <label>
+                <span>Maximum gap from another duty</span>
+                <div class="duration-input">
+                  <input id="maxDutyGap" name="maxDutyGap" type="number" value="2" min="0" step="0.25" inputmode="decimal" aria-label="Maximum duty gap">
+                  <select id="maxDutyGapUnit" name="maxDutyGapUnit" aria-label="Maximum duty gap unit">
+                    <option value="minutes">Minutes</option>
+                    <option value="hours" selected>Hours</option>
+                  </select>
+                </div>
+              </label>
+            </div>
+          </fieldset>
 
           <datalist id="staffOptions"></datalist>
         </form>
@@ -167,7 +183,7 @@
       <section class="status-strip contextual-toolbar" aria-live="polite">
         <div class="context-heading">
           <strong id="contextTitle">Empty Slots</strong>
-          <span id="contextHint">Coverage gaps in the current scan</span>
+          <span id="contextHint">Unassigned coverage shifts you can ask to cover</span>
         </div>
         <div class="context-metrics">
           <div><span class="metric" id="resultCount">0</span><span id="resultCountLabel">empty slot groups</span></div>
@@ -177,6 +193,16 @@
         <div class="context-actions">
           <button id="csvBtn" class="secondary-btn" type="button" disabled>Download CSV</button>
           <button id="opsCsvBtn" class="secondary-btn" type="button" disabled>Action CSV</button>
+          <button id="pdfBtn" class="primary-btn pdf-btn" type="button" disabled title="Export active view to professional PDF report">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <span>Export PDF</span>
+          </button>
         </div>
       </section>
 
@@ -209,83 +235,131 @@
         <div id="message" class="message">Ready.</div>
         
         <div class="table-filter-bar" id="tableFilterBar">
-          <div class="filter-search-wrap">
-            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <input id="resultsSearch" type="text" placeholder="Filter output results (flight, route, date...)" class="search-input">
-          </div>
-          
-          <div class="filter-selects">
-            <div class="filter-group" id="replacementDateFilterGroup" hidden>
-              <label for="resultsDateFilter">Date</label>
-              <input id="resultsDateFilter" type="date" class="filter-date-input">
+          <div class="results-filter-heading">
+            <div>
+              <strong id="resultsFilterTitle">Shift opportunity filters</strong>
+              <span id="resultsFilterHint">Find uncovered shifts that fit your schedule.</span>
             </div>
-
-            <div class="filter-group">
-              <label for="resultsSlaFilter">SLA</label>
-              <select id="resultsSlaFilter">
-                <option value="">All SLAs</option>
-              </select>
-            </div>
-            
-            <div class="filter-group">
-              <label for="resultsDirectionFilter">Direction</label>
-              <select id="resultsDirectionFilter">
-                <option value="">All</option>
-                <option value="Arrival">ARR</option>
-                <option value="Departure">DEP</option>
-              </select>
-            </div>
-
-            <div class="filter-group" id="resultsMissingFilterGroup">
-              <label for="resultsMissingFilter">Min Missing</label>
-              <select id="resultsMissingFilter">
-                <option value="">Any</option>
-                <option value="1">1+</option>
-                <option value="2">2+</option>
-                <option value="3">3+</option>
-                <option value="4">4+</option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label for="resultsStartTimeFilter">From UTC</label>
-              <input id="resultsStartTimeFilter" type="time" class="filter-time-input">
-            </div>
-            
-            <div class="filter-group">
-              <label for="resultsEndTimeFilter">To UTC</label>
-              <input id="resultsEndTimeFilter" type="time" class="filter-time-input">
-            </div>
-
-            <div class="filter-group toggle-group">
-              <label class="toggle-label">
-                <input id="resultsLocalTimeToggle" type="checkbox">
-                <span>Local Time</span>
+            <div class="results-filter-actions">
+              <label class="personal-shift-picker" for="gapStaffSearch">
+                <span>Planning for</span>
+                <input id="gapStaffSearch" type="text" list="staffOptions" placeholder="Your name or initials" autocomplete="off">
               </label>
+              <label class="suitable-only-toggle" for="gapSuitableOnlyToggle">
+                <input id="gapSuitableOnlyToggle" type="checkbox">
+                <span>Suitable for me only</span>
+              </label>
+              <button id="resultsFullscreenBtn" class="secondary-btn" type="button" aria-pressed="false">Full screen</button>
+              <button id="resultsFilterToggle" class="secondary-btn" type="button" aria-expanded="true" aria-controls="resultsFilterFields">Hide filters</button>
+            </div>
+          </div>
+
+          <div id="resultsFilterFields" class="results-filter-fields">
+            <div class="filter-search-wrap">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input id="resultsSearch" type="search" placeholder="Search flight, route, date, SLA, or aircraft" class="search-input" aria-label="Search scan results">
             </div>
 
-            <button id="resultsClearFilters" class="filter-clear-btn" type="button">Clear</button>
+            <!-- Quick SLA Selection Chips -->
+            <div class="sla-chip-filter-bar" id="slaChipFilterBar">
+              <span class="chip-bar-label">SLA Filter:</span>
+              <div id="slaChipsContainer" class="sla-chips-container">
+                <button type="button" class="sla-chip active" data-sla="all">All SLAs</button>
+              </div>
+            </div>
+
+            <div class="results-filter-groups">
+              <div class="results-filter-group results-scope-group">
+                <strong>Gap details</strong>
+                <div class="filter-selects">
+                  <div class="filter-group" id="replacementDateFilterGroup" hidden>
+                    <label for="resultsDateFilter">Date</label>
+                    <input id="resultsDateFilter" type="date" class="filter-date-input">
+                  </div>
+
+                  <select id="resultsSlaFilter" multiple hidden aria-label="Selected SLAs">
+                    <option value="">All SLAs</option>
+                  </select>
+
+                  <div class="filter-group">
+                    <label for="resultsDirectionFilter">Direction</label>
+                    <select id="resultsDirectionFilter">
+                      <option value="">All directions</option>
+                      <option value="Arrival">ARR</option>
+                      <option value="Departure">DEP</option>
+                    </select>
+                  </div>
+
+                  <div class="filter-group" id="resultsMissingFilterGroup">
+                    <label for="resultsMissingFilter">Minimum gap</label>
+                    <select id="resultsMissingFilter">
+                      <option value="">Any gap</option>
+                      <option value="1">1+</option>
+                      <option value="2">2+</option>
+                      <option value="3">3+</option>
+                      <option value="4">4+</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="results-filter-group results-time-group">
+                <strong>Time window</strong>
+                <div class="filter-selects">
+                  <div class="filter-group">
+                    <label for="resultsStartTimeFilter">From UTC</label>
+                    <input id="resultsStartTimeFilter" type="time" class="filter-time-input">
+                  </div>
+
+                  <div class="filter-group">
+                    <label for="resultsEndTimeFilter">To UTC</label>
+                    <input id="resultsEndTimeFilter" type="time" class="filter-time-input">
+                  </div>
+
+                  <div class="filter-group toggle-group">
+                    <label class="toggle-label results-time-toggle">
+                      <input id="resultsLocalTimeToggle" type="checkbox">
+                      <span>Local time</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="results-filter-footer">
+              <span id="resultsMatchSummary" aria-live="polite">No scan results yet</span>
+              <button id="resultsClearFilters" class="filter-clear-btn" type="button" disabled>Reset filters</button>
+            </div>
           </div>
         </div>
 
+        <section id="accountDutySummary" class="account-duty-summary" aria-labelledby="accountDutyTitle" hidden>
+          <div class="account-duty-copy">
+            <span>Account owner duties</span>
+            <strong id="accountDutyTitle">No staff member selected</strong>
+          </div>
+          <div id="accountDutyChips" class="account-duty-chips"></div>
+          <button id="accountDutyRosterBtn" class="secondary-btn" type="button">Open in roster</button>
+        </section>
+
         <div class="table-wrap" id="gapsTableWrap">
-          <table>
+          <table class="gaps-table" id="gapsTable">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Flight</th>
-                <th>Route</th>
-                <th>SLA</th>
-                <th>Required</th>
-                <th>Assigned</th>
-                <th>Missing</th>
-                <th id="thStart">Start UTC</th>
-                <th id="thRelease">Release UTC</th>
-                <th>Duration</th>
-                <th>Plan</th>
+                <th data-sort="date" class="sortable-th">Date <span class="sort-icon"></span></th>
+                <th data-sort="flight" class="sortable-th">Flight <span class="sort-icon"></span></th>
+                <th data-sort="route" class="sortable-th">Route <span class="sort-icon"></span></th>
+                <th data-sort="sla" class="sortable-th">SLA <span class="sort-icon"></span></th>
+                <th data-sort="required" class="sortable-th">Required <span class="sort-icon"></span></th>
+                <th data-sort="assigned" class="sortable-th">Assigned <span class="sort-icon"></span></th>
+                <th data-sort="missing" class="sortable-th">Missing <span class="sort-icon"></span></th>
+                <th id="thStart" data-sort="start_utc" class="sortable-th">Start UTC <span class="sort-icon"></span></th>
+                <th id="thRelease" data-sort="release_utc" class="sortable-th">Release UTC <span class="sort-icon"></span></th>
+                <th data-sort="duration" class="sortable-th">Duration <span class="sort-icon"></span></th>
+                <th>Opportunity</th>
               </tr>
             </thead>
             <tbody id="resultsBody">
@@ -313,9 +387,29 @@
         <div class="replacements-layout" id="replacementsLayout" style="display: none;">
           <div class="duties-column">
             <div class="replacement-person-banner">
-              <span>Staff member being replaced</span>
-              <strong id="replacementStaffName">Select a staff member</strong>
-              <small id="replacementStaffSummary">Type a name above to load their duties.</small>
+              <div class="replacement-banner-top">
+                <span>Staff member being replaced</span>
+                <strong id="replacementStaffName">Select a staff member</strong>
+                <small id="replacementStaffSummary">Type a name above to load their duties.</small>
+              </div>
+              <div id="bulkReplacementBar" class="bulk-replacement-bar" hidden>
+                <div class="bulk-replacement-header">
+                  <svg style="width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2" viewBox="0 0 24 24">
+                    <path d="M17 1l4 4-4 4"></path>
+                    <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+                    <path d="M7 23l-4-4 4-4"></path>
+                    <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                  </svg>
+                  <strong>Replace All Shifts Across Scanned Dates</strong>
+                </div>
+                <div class="bulk-replacement-controls">
+                  <select id="bulkReplacementCandidateSelect" class="bulk-select" aria-label="Select replacement candidate">
+                    <option value="">Select replacement candidate...</option>
+                    <option value="auto">✨ Auto-assign best match for each shift</option>
+                  </select>
+                  <button id="replaceAllShiftsBtn" type="button" class="primary-btn bulk-replace-btn">Replace All Shifts</button>
+                </div>
+              </div>
             </div>
             <div class="column-header">Scheduled Duties</div>
             <div class="duties-list" id="dutiesList">
@@ -331,60 +425,78 @@
         </div>
 
         <div id="rosterLayout" class="roster-layout" style="display: none;">
+          <section class="roster-filter-panel" aria-labelledby="rosterFilterTitle">
             <div class="roster-filter-title">
               <div class="roster-filter-heading">
-                <strong>Roster filters &amp; window</strong>
+                <strong id="rosterFilterTitle">Roster filters &amp; window</strong>
                 <span id="rosterFilterHint">Customise window, staff search, status, and SLA</span>
               </div>
-              <div class="roster-presets" id="rosterPresetFilterGroup" role="toolbar" aria-label="Roster view filter presets">
-                <span class="preset-label">Quick view:</span>
-                <button type="button" class="preset-chip active" data-preset="all">All staff</button>
-                <button type="button" class="preset-chip" data-preset="duty">On duty</button>
-                <button type="button" class="preset-chip" data-preset="free">Free</button>
-              </div>
-              <div class="roster-filter-actions">
-                <button id="rosterClearFilters" class="secondary-btn" type="button">Reset filters</button>
-                <button id="rosterFilterToggle" class="secondary-btn roster-filter-toggle" type="button" aria-expanded="true" aria-controls="rosterFields">Hide filters</button>
+              <div class="roster-toolbar-right">
+                <div class="roster-presets" id="rosterPresetFilterGroup" role="toolbar" aria-label="Roster view filter presets">
+                  <span class="preset-label">Quick view:</span>
+                  <button type="button" class="preset-chip active" data-preset="all">All staff</button>
+                  <button type="button" class="preset-chip" data-preset="duty">On duty</button>
+                  <button type="button" class="preset-chip" data-preset="free">Free</button>
+                </div>
+                <div class="roster-filter-actions">
+                  <button id="rosterClearFilters" class="secondary-btn" type="button">Reset filters</button>
+                  <button id="rosterFilterToggle" class="secondary-btn roster-filter-toggle" type="button" aria-expanded="true" aria-controls="rosterFields">Hide filters</button>
+                </div>
               </div>
             </div>
             <div id="rosterFields" class="roster-fields">
-              <label>
-                <span>Overview period</span>
-                <select id="rosterPeriodMode">
-                  <option value="custom">Custom range</option>
-                  <option value="month">Full month</option>
-                </select>
-              </label>
-              <label id="rosterMonthField" hidden><span>Month</span><input id="rosterMonth" type="month"></label>
-              <label><span>From date</span><input id="rosterStartDate" type="date"></label>
-              <label><span>To date</span><input id="rosterEndDate" type="date"></label>
-              <label><span>From UTC</span><input id="rosterStartTime" type="time" value="00:00"></label>
-              <label><span>To UTC</span><input id="rosterEndTime" type="time" value="23:59"></label>
-              <label class="roster-search-filter"><span>Staff or assignment</span><input id="rosterStaffSearch" type="search" list="staffOptions" placeholder="Name, initials, flight, route…"></label>
-              <label>
-                <span>Availability</span>
-                <select id="rosterStatus">
-                  <option value="">Everyone</option>
-                  <option value="free">Free for entire window</option>
-                  <option value="duty">On duty in window</option>
-                </select>
-              </label>
-              <label>
-                <span>SLA</span>
-                <select id="rosterSla">
-                  <option value="">All SLAs</option>
-                </select>
-              </label>
-              <label class="roster-time-zone-filter">
-                <span>Duty times</span>
-                <span class="switch-control">
-                  <input id="rosterLocalTimeToggle" type="checkbox">
-                  <i></i>
-                  <b id="rosterTimeModeLabel">Zulu</b>
-                </span>
-              </label>
+              <section class="roster-filter-group roster-period-group" aria-labelledby="rosterPeriodGroupTitle">
+                <strong id="rosterPeriodGroupTitle">Period</strong>
+                <div class="roster-filter-group-controls">
+                  <label>
+                    <span>Range</span>
+                    <select id="rosterPeriodMode">
+                      <option value="custom">Custom range</option>
+                      <option value="month">Full month</option>
+                    </select>
+                  </label>
+                  <label id="rosterMonthField" hidden><span>Month</span><input id="rosterMonth" type="month"></label>
+                  <label><span>From</span><input id="rosterStartDate" type="date"></label>
+                  <label><span>To</span><input id="rosterEndDate" type="date"></label>
+                </div>
+              </section>
+              <section class="roster-filter-group roster-window-group" aria-labelledby="rosterWindowGroupTitle">
+                <strong id="rosterWindowGroupTitle">Time window</strong>
+                <div class="roster-filter-group-controls">
+                  <label><span>From UTC</span><input id="rosterStartTime" type="time" value="00:00"></label>
+                  <label><span>To UTC</span><input id="rosterEndTime" type="time" value="23:59"></label>
+                  <label class="roster-time-zone-filter">
+                    <span>Display</span>
+                    <span class="switch-control">
+                      <input id="rosterLocalTimeToggle" type="checkbox">
+                      <i></i>
+                      <b id="rosterTimeModeLabel">Zulu</b>
+                    </span>
+                  </label>
+                </div>
+              </section>
+              <section class="roster-filter-group roster-people-group" aria-labelledby="rosterPeopleGroupTitle">
+                <strong id="rosterPeopleGroupTitle">People &amp; duties</strong>
+                <div class="roster-filter-group-controls">
+                  <label>
+                    <span>Availability</span>
+                    <select id="rosterStatus">
+                      <option value="">Everyone</option>
+                      <option value="free">Free for entire window</option>
+                      <option value="duty">On duty in window</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>SLA</span>
+                    <select id="rosterSla">
+                      <option value="">All SLAs</option>
+                    </select>
+                  </label>
+                  <label class="roster-search-filter"><span>Search</span><input id="rosterStaffSearch" type="search" list="staffOptions" placeholder="Name, initials, flight, route…"></label>
+                </div>
+              </section>
             </div>
-          </div>
+          </section>
           <div class="roster-summary" aria-live="polite">
             <div class="roster-summary-card free"><span class="roster-summary-value" id="rosterFreeCount">0</span><span id="rosterFreeLabel">Free</span></div>
             <div class="roster-summary-card duty"><span class="roster-summary-value" id="rosterDutyCount">0</span><span id="rosterDutyLabel">On duty</span></div>
@@ -398,13 +510,14 @@
             <div class="auto-planner-head">
               <div>
                 <span>What-if planning</span>
-                <strong id="autoPlannerTitle">Automatic coverage planner</strong>
-                <small>Fill missing positions with selected staff while enforcing workload and rest rules. The plan stays local and does not change AVBIS.</small>
+                <strong id="autoPlannerTitle">Coverage planner</strong>
+                <small>Create a local staffing proposal, review it, then add it to the edited roster.</small>
               </div>
               <div class="auto-planner-actions">
+                <button id="plannerAvailabilityBtn" class="secondary-btn" type="button">Availability <span id="plannerRulesBadge" class="button-count">0</span></button>
                 <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="true">Hide planner</button>
                 <button id="autoPlannerClear" class="secondary-btn" type="button">Clear plan</button>
-                <button id="autoPlannerRun" class="primary-btn" type="button">Build plan</button>
+                <button id="autoPlannerRun" class="primary-btn" type="button">Create plan</button>
               </div>
             </div>
             <div class="auto-planner-grid">
@@ -412,6 +525,7 @@
                 <div class="planner-field-heading">
                   <span>Step 1 · Eligible staff <mark id="plannerStaffBadge" class="step-count-badge">0 selected</mark></span>
                   <div class="step-heading-actions">
+                    <button id="autoPlannerSelectFree" type="button">Use free staff</button>
                     <button id="autoPlannerSelectAll" type="button">Select all</button>
                     <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep1Card" aria-expanded="true" title="Toggle Step 1 section">Collapse</button>
                   </div>
@@ -426,58 +540,40 @@
                   <span>Step 2 · Planning rules <mark class="step-count-badge">Limits &amp; Buffers</mark></span>
                   <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep2Card" aria-expanded="true" title="Toggle Step 2 section">Collapse</button>
                 </div>
-                <div class="step-card-content grid-rules">
-                  <label><span>Maximum duty hours / day</span><input id="plannerMaxHours" type="number" min="1" max="24" step="0.5" value="8"></label>
-                  <label><span>Maximum day span</span><input id="plannerMaxSpan" type="number" min="1" max="24" step="0.5" value="10"></label>
-                  <label><span>Buffer between duties</span><div class="input-suffix"><input id="plannerBuffer" type="number" min="0" max="240" step="5" value="30"><b>min</b></div></label>
-                  <label><span>Break after continuous work</span><div class="input-suffix"><input id="plannerBreakAfter" type="number" min="1" max="12" step="0.5" value="6"><b>hrs</b></div></label>
-                  <label><span>Minimum qualifying break</span><div class="input-suffix"><input id="plannerBreakLength" type="number" min="0" max="180" step="5" value="30"><b>min</b></div></label>
-                  <label><span>Maximum weekly hours</span><input id="plannerWeeklyHours" type="number" min="0" max="168" step="1" value="40"></label>
-                  <label><span>Maximum working days / week</span><input id="plannerWeeklyDays" type="number" min="1" max="7" step="1" value="5"></label>
-                  <label><span>Maximum monthly hours</span><input id="plannerMonthlyHours" type="number" min="0" max="744" step="1" value="160"></label>
-                  <label class="planner-sla-field"><span>SLAs to plan</span><select id="plannerSlas" multiple size="4"><option value="" disabled>Run a scan to load SLAs</option></select></label>
-                </div>
-              </div>
-              <div class="availability-editor step-card" id="plannerStep3Card">
-                <div class="planner-field-heading">
-                  <span>Step 3 · Staff availability <mark id="plannerRulesBadge" class="step-count-badge">0 rules</mark></span>
-                  <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep3Card" aria-expanded="true" title="Toggle Step 3 section">Collapse</button>
-                </div>
-                <div class="step-card-content">
-                  <label><span>Staff member</span><select id="availabilityStaff"><option value="">Select staff</option></select></label>
-                  <div class="availability-period-row">
-                    <label><span>Applies to</span><select id="availabilityPeriod"><option value="day">Given day</option><option value="dates">Multiple dates</option><option value="range">Date range</option><option value="month">Full month</option><option value="weekly">Weekly pattern</option></select></label>
-                    <label id="availabilityDateField"><span>Date</span><input id="availabilityDate" type="date"></label>
-                    <label id="availabilityEndField" hidden><span>End date</span><input id="availabilityEnd" type="date"></label>
-                    <label id="availabilityMonthField" hidden><span>Month</span><input id="availabilityMonth" type="month"></label>
-                    <div id="availabilityDatesField" class="availability-calendar-wrap" hidden>
-                      <span>Choose dates</span>
-                      <div class="availability-calendar-head"><button id="availabilityCalendarPrev" type="button" aria-label="Previous month">‹</button><input id="availabilityCalendarMonth" type="month"><button id="availabilityCalendarNext" type="button" aria-label="Next month">›</button></div>
-                      <div id="availabilityCalendar" class="availability-calendar" aria-label="Select availability dates"></div>
-                      <small id="availabilitySelectedDates">No dates selected</small>
-                      <label><span>Or paste dates</span><input id="availabilityDatesQuick" type="text" placeholder="01.08, 02.08, 15.08.2026"></label>
-                    </div>
-                  </div>
-                  <fieldset id="availabilityWeekdays" class="availability-weekdays" hidden><legend>Days in week</legend><label><input type="checkbox" value="1"><span>Mon</span></label><label><input type="checkbox" value="2"><span>Tue</span></label><label><input type="checkbox" value="3"><span>Wed</span></label><label><input type="checkbox" value="4"><span>Thu</span></label><label><input type="checkbox" value="5"><span>Fri</span></label><label><input type="checkbox" value="6"><span>Sat</span></label><label><input type="checkbox" value="0"><span>Sun</span></label></fieldset>
-                  <div class="availability-shift-row">
-                    <label><span>Availability</span><select id="availabilityShift"><option value="full">Available all day</option><option value="morning">Morning · 04:00–12:00</option><option value="evening">Evening · 12:00–23:59</option><option value="custom">Custom hours</option><option value="unavailable">Unavailable</option></select></label>
-                    <label id="availabilityFromField" hidden><span>From UTC</span><input id="availabilityFrom" type="time" value="08:00"></label>
-                    <label id="availabilityToField" hidden><span>To UTC</span><input id="availabilityTo" type="time" value="16:00"></label>
-                    <button id="availabilityAdd" class="primary-btn" type="button">Add rule</button>
-                  </div>
-                  <div id="availabilityRules" class="availability-rules"><span class="muted">No availability rules yet; staff are treated as available.</span></div>
-                  <div class="availability-month-preview"><strong>Month preview</strong><small id="availabilityPreviewMonth"></small><div id="availabilityPreviewCalendar" class="availability-calendar mini" aria-label="Selected availability days for the month"></div></div>
+                <div class="step-card-content planner-rule-groups">
+                  <section class="planner-rule-group"><strong>Daily limits</strong><div>
+                    <label><span>Duty hours / day</span><input id="plannerMaxHours" type="number" min="1" max="24" step="0.5" value="8"></label>
+                    <label><span>Day span</span><input id="plannerMaxSpan" type="number" min="1" max="24" step="0.5" value="10"></label>
+                  </div></section>
+                  <section class="planner-rule-group"><strong>Rest &amp; breaks</strong><div>
+                    <label><span>Between duties</span><div class="input-suffix"><input id="plannerBuffer" type="number" min="0" max="240" step="5" value="30"><b>min</b></div></label>
+                    <label><span>Continuous work</span><div class="input-suffix"><input id="plannerBreakAfter" type="number" min="1" max="12" step="0.5" value="6"><b>hrs</b></div></label>
+                    <label><span>Qualifying break</span><div class="input-suffix"><input id="plannerBreakLength" type="number" min="0" max="180" step="5" value="30"><b>min</b></div></label>
+                  </div></section>
+                  <section class="planner-rule-group"><strong>Period limits</strong><div>
+                    <label><span>Weekly hours</span><input id="plannerWeeklyHours" type="number" min="0" max="168" step="1" value="40"></label>
+                    <label><span>Days / week</span><input id="plannerWeeklyDays" type="number" min="1" max="7" step="1" value="5"></label>
+                    <label><span>Monthly hours</span><input id="plannerMonthlyHours" type="number" min="0" max="744" step="1" value="160"></label>
+                  </div></section>
+                  <section class="planner-rule-group planner-sla-group"><strong>Coverage scope</strong><div>
+                    <label class="planner-sla-field"><span>SLAs to plan</span><select id="plannerSlas" multiple size="4"><option value="" disabled>Run a scan to load SLAs</option></select></label>
+                  </div></section>
                 </div>
               </div>
             </div>
-            <div id="autoPlannerResult" class="auto-planner-result" aria-live="polite">Select eligible staff, adjust the rules, then build a plan.</div>
+            <div id="autoPlannerResult" class="auto-planner-result" aria-live="polite">Select eligible staff, adjust the rules, then create a plan.</div>
           </section>
           <div class="roster-view-toolbar">
+            <div class="roster-state-toggle-group" id="rosterStateToggleGroup" title="Choose which local roster state to view">
+              <button id="stateBtnEdited" type="button" class="state-toggle-btn active" data-state-mode="edited">Edited roster</button>
+              <button id="stateBtnOriginal" type="button" class="state-toggle-btn" data-state-mode="original">Original scan</button>
+              <button id="stateBtnCompare" type="button" class="state-toggle-btn" data-state-mode="compare">Compare</button>
+            </div>
             <div class="roster-view-switch" role="group" aria-label="Roster layout">
               <button id="rosterStaffViewBtn" type="button" aria-pressed="true">Staff roster</button>
               <button id="rosterAirlineViewBtn" type="button" aria-pressed="false">Flight schedule</button>
             </div>
-            <p id="rosterViewHint">People by day, including free staff and individual allocations.</p>
+            <p id="rosterViewHint">People by day with local roster edits clearly marked.</p>
             <div id="rosterBoardActions" class="roster-board-actions" hidden>
               <div class="flight-schedule-filters">
                 <label><span>Airline</span>
@@ -576,10 +672,63 @@
           <div id="historyList" class="history-list"></div>
         </div>
       </section>
+
+      <div id="availabilityModal" class="modal-overlay" hidden aria-hidden="true">
+        <div class="modal-card availability-modal-card" role="dialog" aria-modal="true" aria-labelledby="modalAvailabilityTitle">
+          <div class="modal-header">
+            <div>
+              <span class="modal-badge">Coverage planning</span>
+              <h2 id="modalAvailabilityTitle">Staff availability</h2>
+            </div>
+            <button type="button" id="modalAvailabilityClose" class="modal-close-btn" aria-label="Close modal">&times;</button>
+          </div>
+
+          <div class="modal-body">
+            <div class="availability-editor modal-availability-editor" id="plannerStep3Card">
+              <div class="availability-form-column">
+                <label class="availability-staff-field"><span>Staff members</span><select id="availabilityStaff" multiple size="5" aria-describedby="availabilityStaffHint"><option value="">Select staff</option></select></label>
+                <div class="availability-staff-actions"><small id="availabilityStaffHint">Choose one or more people for the same rule.</small><span><button id="availabilityUseEligible" type="button">Use eligible staff</button><button id="availabilityClearStaff" type="button">Clear</button></span></div>
+                <div class="availability-period-row">
+                  <label><span>Applies to</span><select id="availabilityPeriod"><option value="day">Given day</option><option value="dates">Multiple dates</option><option value="range">Date range</option><option value="month">Full month</option><option value="weekly">Weekly pattern</option></select></label>
+                  <label id="availabilityDateField"><span>Date</span><input id="availabilityDate" type="date"></label>
+                  <label id="availabilityEndField" hidden><span>End date</span><input id="availabilityEnd" type="date"></label>
+                  <label id="availabilityMonthField" hidden><span>Month</span><input id="availabilityMonth" type="month"></label>
+                  <div id="availabilityDatesField" class="availability-calendar-wrap" hidden>
+                    <span>Choose dates</span>
+                    <div class="availability-calendar-head"><button id="availabilityCalendarPrev" type="button" aria-label="Previous month">‹</button><input id="availabilityCalendarMonth" type="month"><button id="availabilityCalendarNext" type="button" aria-label="Next month">›</button></div>
+                    <div id="availabilityCalendar" class="availability-calendar" aria-label="Select availability dates"></div>
+                    <small id="availabilitySelectedDates">No dates selected</small>
+                    <label><span>Or paste dates</span><input id="availabilityDatesQuick" type="text" placeholder="01.08, 02.08, 15.08.2026"></label>
+                  </div>
+                </div>
+                <fieldset id="availabilityWeekdays" class="availability-weekdays" hidden><legend>Days in week</legend><label><input type="checkbox" value="1"><span>Mon</span></label><label><input type="checkbox" value="2"><span>Tue</span></label><label><input type="checkbox" value="3"><span>Wed</span></label><label><input type="checkbox" value="4"><span>Thu</span></label><label><input type="checkbox" value="5"><span>Fri</span></label><label><input type="checkbox" value="6"><span>Sat</span></label><label><input type="checkbox" value="0"><span>Sun</span></label></fieldset>
+                <div class="availability-shift-row">
+                  <label><span>Availability</span><select id="availabilityShift"><option value="full">Available all day</option><option value="morning">Morning · 04:00–12:00</option><option value="evening">Evening · 12:00–23:59</option><option value="custom">Custom hours</option><option value="unavailable">Unavailable</option></select></label>
+                  <label id="availabilityFromField" hidden><span>From UTC</span><input id="availabilityFrom" type="time" value="08:00"></label>
+                  <label id="availabilityToField" hidden><span>To UTC</span><input id="availabilityTo" type="time" value="16:00"></label>
+                  <button id="availabilityAdd" class="primary-btn" type="button">Add rule</button>
+                </div>
+              </div>
+              <div class="availability-preview-column">
+                <div class="preview-header"><strong>Active rules</strong><span class="muted">Latest matching rule wins</span></div>
+                <div id="availabilityRules" class="availability-rules"><span class="muted">No availability rules yet; staff are treated as available.</span></div>
+                <div class="availability-month-preview"><strong>Month preview</strong><small id="availabilityPreviewMonth"></small><div id="availabilityPreviewCalendar" class="availability-calendar mini" aria-label="Selected availability days for the month"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <span>Availability rules are saved locally and used by the automatic planner.</span>
+            <button type="button" id="modalAvailabilityDone" class="primary-btn">Done</button>
+          </div>
+        </div>
+      </div>
     </main>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <script src="/holiday-utils.js?v=20260818-4"></script>
     <script src="/staff-utils.js?v=20260818-6"></script>
-    <script src="/operations-utils.js?v=20260822-1"></script>
-    <script src="/app.js?v=20260822-1"></script>
+    <script src="/operations-utils.js?v=20260826-4"></script>
+    <script src="/app.js?v=20260827-5"></script>
   </body>
 </html>

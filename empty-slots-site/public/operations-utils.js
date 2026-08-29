@@ -655,11 +655,24 @@
   }
 
   function compareSnapshots(current, previous) {
-    const currentMap = new Map((current?.gaps || []).map((gap) => [gap.key, gap]));
-    const previousMap = new Map((previous?.gaps || []).map((gap) => [gap.key, gap]));
+    const enrichGaps = (snapshot) => {
+      const rows = new Map((snapshot?.rows || []).map((row) => [rowKey(row), row]));
+      return new Map((snapshot?.gaps || []).map((gap) => {
+        const source = rows.get(gap.key);
+        return [gap.key, { ...gap, staff: gap.staff || source?.staff || [] }];
+      }));
+    };
+    const currentMap = enrichGaps(current);
+    const previousMap = enrichGaps(previous);
     const opened = [...currentMap.values()].filter((gap) => !previousMap.has(gap.key));
     const resolved = [...previousMap.values()].filter((gap) => !currentMap.has(gap.key));
-    const changed = [...currentMap.values()].filter((gap) => previousMap.has(gap.key) && (gap.missing !== previousMap.get(gap.key).missing || gap.required !== previousMap.get(gap.key).required || gap.assigned !== previousMap.get(gap.key).assigned));
+    const staffKey = (gap) => [...new Set(gap?.staff || [])].map(String).sort().join("|");
+    const changed = [...currentMap.values()].filter((gap) => previousMap.has(gap.key) && (
+      gap.missing !== previousMap.get(gap.key).missing
+      || gap.required !== previousMap.get(gap.key).required
+      || gap.assigned !== previousMap.get(gap.key).assigned
+      || staffKey(gap) !== staffKey(previousMap.get(gap.key))
+    ));
     return { opened, resolved, changed };
   }
 

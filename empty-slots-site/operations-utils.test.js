@@ -143,13 +143,13 @@ test("analytics totals missing staff-hours and detects overlapping allocations",
 });
 
 test("scan comparison reports opened, resolved, and changed gaps", () => {
-  const previous = { gaps: [{ key: "a", missing: 1 }, { key: "b", missing: 1 }, { key: "c", missing: 1, required: 2, assigned: 1 }] };
-  const current = { gaps: [{ key: "b", missing: 1 }, { key: "c", missing: 2, required: 3, assigned: 1 }, { key: "d", missing: 1 }] };
+  const previous = { gaps: [{ key: "a", missing: 1 }, { key: "b", missing: 1, required: 2, assigned: 1, staff: ["AAA - Alice Agent"] }, { key: "c", missing: 1, required: 2, assigned: 1 }] };
+  const current = { gaps: [{ key: "b", missing: 1, required: 2, assigned: 1, staff: ["BBB - Bob Agent"] }, { key: "c", missing: 2, required: 3, assigned: 1 }, { key: "d", missing: 1 }] };
   const result = OperationsUtils.compareSnapshots(current, previous);
 
   assert.deepEqual(result.opened.map((gap) => gap.key), ["d"]);
   assert.deepEqual(result.resolved.map((gap) => gap.key), ["a"]);
-  assert.deepEqual(result.changed.map((gap) => gap.key), ["c"]);
+  assert.deepEqual(result.changed.map((gap) => gap.key), ["b", "c"]);
 });
 
 test("duty-hours overview splits weekend and public-holiday minutes in Berlin time", () => {

@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs/promises");
 const { chromium } = require("playwright");
 const { getGermanBavarianHolidays } = require("./public/holiday-utils");
+const db = require("./db");
 
 const PORT = Number(process.env.PORT || 4173);
 const BASE_URL = "https://gsrm.avbis.online";
@@ -84,8 +85,78 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && req.url === "/api/session") {
-      const connected = Boolean(authSession && !authSession.closing && authSession.browser?.isConnected());
+      const connected = await verifyAuthenticatedSession(authSession);
+      if (!connected && authSession) await closeAuthSession();
       sendJson(res, 200, { connected, email: connected ? authSession.email : "" });
+      return;
+    }
+
+    if (req.method === "GET" && req.url === "/api/notes") {
+      sendJson(res, 200, db.getAllGapNotes());
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/notes") {
+      const payload = await readJson(req);
+      if (payload.gapId) {
+        db.saveGapNote(payload.gapId, payload);
+      } else if (payload.notes) {
+        db.saveAllGapNotes(payload.notes);
+      }
+      sendJson(res, 200, { success: true });
+      return;
+    }
+
+    if (req.method === "GET" && req.url === "/api/availability") {
+      sendJson(res, 200, db.getStaffAvailability() || {});
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/availability") {
+      const payload = await readJson(req);
+      db.saveStaffAvailability(payload);
+      sendJson(res, 200, { success: true });
+      return;
+    }
+
+    if (req.method === "GET" && req.url === "/api/history") {
+      sendJson(res, 200, db.getScanHistory());
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/history") {
+      const payload = await readJson(req);
+      if (Array.isArray(payload)) {
+        db.saveScanHistory(payload);
+      } else if (payload && payload.id) {
+        db.saveScanItem(payload);
+      }
+      sendJson(res, 200, { success: true });
+      return;
+    }
+
+    if (req.method === "DELETE" && req.url.startsWith("/api/history")) {
+      const urlObj = new URL(req.url, `http://localhost:${PORT}`);
+      const id = urlObj.searchParams.get("id");
+      if (id) {
+        db.deleteScanItem(id);
+      } else {
+        db.clearScanHistory();
+      }
+      sendJson(res, 200, { success: true });
+      return;
+    }
+
+    if (req.method === "GET" && req.url === "/api/cache/stats") {
+      sendJson(res, 200, db.getCacheStats());
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/cache/clear") {
+      db.clearSodCache();
+      dateScanCache.clear();
+      flightSodCache.clear();
+      sendJson(res, 200, { success: true });
       return;
     }
 
@@ -272,17 +343,26 @@ function dateScanCacheKey(config, date) {
 
 function getCachedDateScan(config, date) {
   cleanupDateScanCache();
-  const cached = dateScanCache.get(dateScanCacheKey(config, date));
-  return cached?.result || null;
+  const key = dateScanCacheKey(config, date);
+  const cached = dateScanCache.get(key);
+  if (cached?.result) return cached.result;
+  const dbCached = db.getCachedSod(key);
+  if (dbCached) {
+    dateScanCache.set(key, { createdAt: Date.now(), result: dbCached });
+    return dbCached;
+  }
+  return null;
 }
 
 function setCachedDateScan(config, date, result) {
   cleanupDateScanCache();
+  const key = dateScanCacheKey(config, date);
   if (dateScanCache.size >= DATE_SCAN_CACHE_MAX_ENTRIES) {
     const oldestKey = dateScanCache.keys().next().value;
     if (oldestKey) dateScanCache.delete(oldestKey);
   }
-  dateScanCache.set(dateScanCacheKey(config, date), { createdAt: Date.now(), result });
+  dateScanCache.set(key, { createdAt: Date.now(), result });
+  db.setCachedSod(key, formatIsoDate(date), result);
 }
 
 function cleanupDateScanCache() {
@@ -364,9 +444,12 @@ async function acquireAuthenticatedSession(email, password) {
 
   while (true) {
     if (authSession?.sessionKey === sessionKey && !authSession.closing && authSession.browser?.isConnected()) {
-      clearAuthSessionTimer();
-      authSession.active += 1;
-      return authSession;
+      if (await verifyAuthenticatedSession(authSession)) {
+        clearAuthSessionTimer();
+        authSession.active += 1;
+        return authSession;
+      }
+      await closeAuthSession();
     }
 
     if (authSessionPromise) {
@@ -398,6 +481,26 @@ async function acquireAuthenticatedSession(email, password) {
     } finally {
       if (authSessionPromise?.promise === promise) authSessionPromise = null;
     }
+  }
+}
+
+async function verifyAuthenticatedSession(session) {
+  if (!session || session.closing || !session.browser?.isConnected() || !session.context) return false;
+
+  try {
+    const response = await session.context.request.get(`${BASE_URL}/flight-comms`, {
+      headers: { Accept: "text/html" },
+      failOnStatusCode: false,
+      maxRedirects: 0,
+      timeout: 5000,
+    });
+    const location = String(response.headers()?.location || "");
+    const responseUrl = String(response.url?.() || "");
+    return response.ok()
+      && !/\/login(?:[/?#]|$)/i.test(location)
+      && !/\/login(?:[/?#]|$)/i.test(responseUrl);
+  } catch {
+    return false;
   }
 }
 
@@ -1315,4 +1418,4 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-module.exports = { dateScanSucceeded, extractFlightSodRows, extractStaffDirectory, extractTableRows, fetchFlightLinks, parseSodGroups };
+module.exports = { dateScanSucceeded, extractFlightSodRows, extractStaffDirectory, extractTableRows, fetchFlightLinks, parseSodGroups, verifyAuthenticatedSession };

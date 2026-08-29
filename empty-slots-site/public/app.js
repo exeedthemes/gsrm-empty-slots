@@ -125,18 +125,31 @@ const availabilityTo = document.getElementById("availabilityTo");
 const availabilityRulesEl = document.getElementById("availabilityRules");
 const plannerSlas = document.getElementById("plannerSlas");
 const plannerOptionIds = ["plannerMaxHours", "plannerMaxSpan", "plannerBuffer", "plannerBreakAfter", "plannerBreakLength", "plannerWeeklyHours", "plannerWeeklyDays", "plannerMonthlyHours"];
+const pdfBtn = document.getElementById("pdfBtn");
+const resultsSlaBtn = document.getElementById("resultsSlaBtn");
+const resultsSlaBtnText = document.getElementById("resultsSlaBtnText");
+const resultsSlaMenu = document.getElementById("resultsSlaMenu");
+const resultsSlaCheckboxes = document.getElementById("resultsSlaCheckboxes");
+const resultsSlaAllBtn = document.getElementById("resultsSlaAllBtn");
+const resultsSlaClearBtn = document.getElementById("resultsSlaClearBtn");
+const slaChipsContainer = document.getElementById("slaChipsContainer");
 
 let latestRows = [];
+let originalRows = [];
+let rosterStateMode = "edited";
 let latestScannedDates = [];
 let latestStaffDirectory = [];
 let filteredRows = [];
+let selectedResultsSlas = [];
+let currentSortCol = "date";
+let currentSortDir = "asc";
 let progressTimer = null;
 let activeTab = "gaps";
 let selectedReplacementDuty = null;
 let selectedGap = null;
 let activeScanId = "";
 let connectedEmail = "";
-let showRosterDutyTotals = false;
+let showRosterDutyTotals = localStorage.getItem("gsrmRosterDutyTotals") === "true";
 let rosterViewMode = localStorage.getItem("gsrmRosterViewMode") === "airline" ? "airline" : "staff";
 let currentAutoPlan = null;
 let selectedPlannerStaff = new Set();
@@ -156,6 +169,54 @@ availabilityMonth.value = today.slice(0, 7);
 availabilityCalendarMonth.value = today.slice(0, 7);
 renderHolidayPreview();
 
+if (pdfBtn) pdfBtn.addEventListener("click", exportPdf);
+
+document.querySelectorAll("#rosterStateToggleGroup .state-toggle-btn").forEach((btn) => {
+  btn.addEventListener("click", () => setRosterStateMode(btn.dataset.stateMode));
+});
+
+const replaceAllShiftsBtn = document.getElementById("replaceAllShiftsBtn");
+if (replaceAllShiftsBtn) {
+  replaceAllShiftsBtn.addEventListener("click", executeBulkReplacement);
+}
+
+if (resultsSlaBtn) {
+  resultsSlaBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!resultsSlaMenu) return;
+    const isHidden = resultsSlaMenu.hidden;
+    resultsSlaMenu.hidden = !isHidden;
+    resultsSlaBtn.setAttribute("aria-expanded", String(!isHidden));
+  });
+}
+
+document.addEventListener("click", (e) => {
+  if (resultsSlaMenu && !resultsSlaMenu.hidden) {
+    const wrap = document.getElementById("resultsSlaDropdownWrap");
+    if (wrap && !wrap.contains(e.target)) {
+      resultsSlaMenu.hidden = true;
+      if (resultsSlaBtn) resultsSlaBtn.setAttribute("aria-expanded", "false");
+    }
+  }
+});
+
+if (resultsSlaAllBtn) {
+  resultsSlaAllBtn.addEventListener("click", () => {
+    const uniqueSlas = [...new Set(latestRows.map((r) => r.sla).filter(Boolean))];
+    selectedResultsSlas = [...uniqueSlas];
+    updateResultsSlaFilter();
+    applyFilters();
+  });
+}
+
+if (resultsSlaClearBtn) {
+  resultsSlaClearBtn.addEventListener("click", () => {
+    selectedResultsSlas = [];
+    updateResultsSlaFilter();
+    applyFilters();
+  });
+}
+
 runBtn.addEventListener("click", () => runScan(false));
 refreshScanBtn.addEventListener("click", () => runScan(true));
 connectBtn.addEventListener("click", connectToAvbis);
@@ -167,7 +228,25 @@ scanPeriodMode.addEventListener("change", applyScanPeriodMode);
 scanMonth.addEventListener("input", applyScanPeriodMode);
 airlinesBtn.addEventListener("click", refreshAirlines);
 opsCsvBtn.addEventListener("click", downloadOperationalCsv);
+document.getElementById("coveragePlannerBtn")?.addEventListener("click", openCoveragePlannerWorkspace);
+document.getElementById("plannerAvailabilityBtn")?.addEventListener("click", openAvailabilityModal);
+document.getElementById("modalAvailabilityClose")?.addEventListener("click", closeAvailabilityModal);
+document.getElementById("modalAvailabilityDone")?.addEventListener("click", closeAvailabilityModal);
+
+const availModalOverlay = document.getElementById("availabilityModal");
+if (availModalOverlay) {
+  availModalOverlay.addEventListener("click", (e) => {
+    if (e.target === availModalOverlay) closeAvailabilityModal();
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && availModalOverlay && !availModalOverlay.hidden) {
+    closeAvailabilityModal();
+  }
+});
+
 document.getElementById("gapPlannerClose").addEventListener("click", closeGapPlanner);
+document.getElementById("rosterInlineCloseBtn")?.addEventListener("click", closeRosterInlineReplacement);
 document.getElementById("clearHistoryBtn").addEventListener("click", clearScanHistory);
 gapActionStatus.addEventListener("change", saveSelectedGapAction);
 gapActionNotes.addEventListener("input", saveSelectedGapAction);
@@ -178,6 +257,10 @@ csvBtn.addEventListener("click", () => {
     downloadReplacementsCsv();
   } else if (activeTab === "roster") {
     downloadRosterCsv();
+  } else if (activeTab === "insights") {
+    downloadInsightsCsv();
+  } else if (activeTab === "history") {
+    downloadHistoryCsv();
   } else {
     downloadCsv(filteredRows);
   }
@@ -191,6 +274,7 @@ tabHistory.addEventListener("click", () => switchTab("history"));
 
 myInitialsInput.addEventListener("input", (e) => {
   localStorage.setItem("myInitials", e.target.value);
+  if (gapStaffSearch) gapStaffSearch.value = e.target.value;
   applyFilters();
 });
 function refreshReplacementCandidates() {
@@ -233,6 +317,7 @@ rosterFilterToggle.addEventListener("click", () => setRosterFiltersCollapsed(!ro
 rosterFullscreenBtn.addEventListener("click", toggleRosterFullscreen);
 rosterTotalsBtn.addEventListener("click", () => {
   showRosterDutyTotals = !showRosterDutyTotals;
+  localStorage.setItem("gsrmRosterDutyTotals", String(showRosterDutyTotals));
   rosterTotalsBtn.textContent = showRosterDutyTotals ? "Hide duty hours" : "Show duty hours";
   rosterTotalsBtn.setAttribute("aria-pressed", String(showRosterDutyTotals));
   renderRoster();
@@ -254,6 +339,7 @@ autoPlannerToggle.addEventListener("click", () => {
 });
 autoPlannerClear.addEventListener("click", clearAutomaticPlan);
 autoPlannerSelectAll.addEventListener("click", toggleAllPlannerStaff);
+document.getElementById("autoPlannerSelectFree")?.addEventListener("click", selectFreePlannerStaff);
 autoPlannerStaffSearch.addEventListener("input", renderPlannerStaffList);
 for (const id of plannerOptionIds) document.getElementById(id).addEventListener("change", savePlannerOptions);
 availabilityPeriod.addEventListener("change", updateAvailabilityFields);
@@ -262,6 +348,8 @@ availabilityStaff.addEventListener("change", () => {
   renderAvailabilityRules();
   updateAvailabilityFields();
 });
+document.getElementById("availabilityUseEligible")?.addEventListener("click", () => selectAvailabilityStaff(selectedPlannerStaff));
+document.getElementById("availabilityClearStaff")?.addEventListener("click", () => selectAvailabilityStaff([]));
 for (const input of [availabilityDate, availabilityEnd, availabilityMonth, availabilityCalendarMonth, availabilityDatesQuick]) input.addEventListener("input", renderAvailabilityPreview);
 for (const input of document.querySelectorAll('#availabilityWeekdays input')) input.addEventListener("change", renderAvailabilityPreview);
 document.getElementById("availabilityAdd").addEventListener("click", addAvailabilityRule);
@@ -282,10 +370,26 @@ document.querySelectorAll(".step-toggle-btn").forEach((btn) => {
   });
 });
 
+function syncRosterPresetChips() {
+  const currentStatus = rosterStatus ? rosterStatus.value : "";
+  const presetBtns = document.querySelectorAll("#rosterPresetFilterGroup .preset-chip");
+  presetBtns.forEach((btn) => {
+    const preset = btn.dataset.preset;
+    if (preset === "all") {
+      btn.classList.toggle("active", currentStatus === "");
+    } else if (preset === "duty") {
+      btn.classList.toggle("active", currentStatus === "duty");
+    } else if (preset === "free") {
+      btn.classList.toggle("active", currentStatus === "free" || currentStatus === "free-window");
+    }
+  });
+}
+
 // Preset View Filter chips for Roster
 const rosterPresetBtns = document.querySelectorAll("#rosterPresetFilterGroup .preset-chip");
 rosterPresetBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
+    if (rosterViewMode === "airline") return;
     rosterPresetBtns.forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     const preset = btn.dataset.preset;
@@ -324,12 +428,32 @@ if (warningsSectionToggle) {
 }
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && rosterLayout.classList.contains("fullscreen")) toggleRosterFullscreen(false);
+  if (event.key === "Escape") {
+    const drawer = document.getElementById("rosterInlineReplacementDrawer");
+    if (drawer && !drawer.hidden) {
+      drawer.hidden = true;
+      return;
+    }
+    if (rosterLayout.classList.contains("fullscreen")) {
+      toggleRosterFullscreen(false);
+      return;
+    }
+    if (resultsPanel.classList.contains("results-fullscreen")) {
+      toggleResultsFullscreen(false);
+    }
+  }
 });
 
-// Load saved initials
+// Load saved preferences
 if (localStorage.getItem("myInitials")) {
   myInitialsInput.value = localStorage.getItem("myInitials");
+}
+if (showRosterDutyTotals) {
+  rosterTotalsBtn.textContent = "Hide duty hours";
+  rosterTotalsBtn.setAttribute("aria-pressed", "true");
+}
+if (localStorage.getItem("gsrmRosterFiltersCollapsed") === "true") {
+  setRosterFiltersCollapsed(true);
 }
 updateRosterFilters();
 setRosterViewMode(rosterViewMode, false);
@@ -409,6 +533,7 @@ function applyRosterPeriodMode() {
 function switchTab(tab) {
   activeTab = tab;
   if (tab !== "gaps") closeGapPlanner();
+  if (tab !== "gaps" && document.querySelector(".table-panel")?.classList.contains("results-fullscreen")) toggleResultsFullscreen(false);
   if (tab !== "roster" && rosterLayout.classList.contains("fullscreen")) toggleRosterFullscreen(false);
   tabGaps.classList.toggle("active", tab === "gaps");
   tabReplacements.classList.toggle("active", tab === "replacements");
@@ -421,12 +546,19 @@ function switchTab(tab) {
   rosterLayout.style.display = tab === "roster" ? "block" : "none";
   insightsLayout.style.display = tab === "insights" ? "block" : "none";
   historyLayout.style.display = tab === "history" ? "block" : "none";
-  tableFilterBar.style.display = ["gaps", "replacements"].includes(tab) ? "flex" : "none";
+  tableFilterBar.style.display = ["gaps", "replacements"].includes(tab) ? "grid" : "none";
   replacementDateFilterGroup.hidden = tab !== "replacements";
   resultsMissingFilterGroup.hidden = tab === "replacements";
+  resultsFullscreenBtn.hidden = tab !== "gaps";
+  gapStaffSearch.closest(".personal-shift-picker").hidden = tab !== "gaps";
+  gapSuitableOnlyToggle.closest(".suitable-only-toggle").hidden = tab !== "gaps";
+  resultsFilterTitle.textContent = tab === "replacements" ? "Duty filters" : "Shift opportunity filters";
+  resultsFilterHint.textContent = tab === "replacements"
+    ? "Narrow duties by date, flight, SLA, direction, or time."
+    : "Find uncovered shifts that fit your schedule.";
   resultsSearch.placeholder = tab === "replacements"
     ? "Search duties by flight, route, date, or SLA"
-    : "Filter output results (flight, route, date...)";
+    : "Search flight, route, date, SLA, or aircraft";
   updateResultTimeFilterLabels();
   resultCountLabel.textContent = tab === "gaps" ? "empty slot groups" : tab === "replacements" ? "scheduled duties" : tab === "roster" ? (rosterViewMode === "airline" ? "flights shown" : "staff shown") : tab === "insights" ? "warnings" : "saved scans";
   updateContextToolbar(tab);
@@ -437,7 +569,7 @@ function switchTab(tab) {
 
 function updateContextToolbar(tab) {
   const copy = {
-    gaps: ["Empty Slots", "Coverage gaps in the current scan"],
+    gaps: ["Empty Slots", "Unassigned coverage shifts you can ask to cover"],
     replacements: ["Replacements", "Duties and conflict-free replacement candidates"],
     roster: ["Duty Roster", rosterViewMode === "airline" ? "Daily airline and flight allocation board" : "Availability and duties for the selected window"],
     insights: ["Coverage Insights", "Pressure, workload, and roster warnings"],
@@ -445,26 +577,90 @@ function updateContextToolbar(tab) {
   }[tab];
   contextTitle.textContent = copy[0];
   contextHint.textContent = copy[1];
-  csvBtn.hidden = ["insights", "history"].includes(tab);
+  csvBtn.hidden = false;
+  if (pdfBtn) pdfBtn.hidden = false;
   opsCsvBtn.hidden = tab !== "gaps";
-  csvBtn.textContent = tab === "roster" ? "Download roster CSV" : tab === "replacements" ? "Download replacements CSV" : "Download gaps CSV";
+  const rosterStateToggleGroup = document.getElementById("rosterStateToggleGroup");
+  if (rosterStateToggleGroup) rosterStateToggleGroup.hidden = tab !== "roster";
+
+  const csvLabels = {
+    gaps: "Download gaps CSV",
+    replacements: "Download replacements CSV",
+    roster: rosterViewMode === "airline" ? "Download schedule CSV" : "Download roster CSV",
+    insights: "Download insights CSV",
+    history: "Download history CSV",
+  };
+  csvBtn.textContent = csvLabels[tab] || "Download CSV";
+
+  const pdfLabels = {
+    gaps: "Export gaps PDF",
+    replacements: "Export replacements PDF",
+    roster: rosterViewMode === "airline" ? "Export schedule PDF" : "Export roster PDF",
+    insights: "Export insights PDF",
+    history: "Export history PDF",
+  };
+  if (pdfBtn) pdfBtn.textContent = pdfLabels[tab] || "Export PDF";
+
+  updateExportButtonsState();
+}
+
+function updateExportButtonsState() {
+  if (activeTab === "history") {
+    const history = getScanHistory();
+    csvBtn.disabled = history.length === 0;
+    if (pdfBtn) pdfBtn.disabled = history.length === 0;
+  } else if (activeTab === "insights") {
+    csvBtn.disabled = latestRows.length === 0;
+    if (pdfBtn) pdfBtn.disabled = latestRows.length === 0;
+  } else if (activeTab === "roster") {
+    csvBtn.disabled = latestRows.length === 0;
+    if (pdfBtn) pdfBtn.disabled = latestRows.length === 0;
+  } else if (activeTab === "replacements") {
+    const initials = myInitialsInput.value.trim().toUpperCase();
+    const myDuties = latestRows.filter((r) => (r.staff || []).some((s) => matchStaffMember(s, initials)));
+    csvBtn.disabled = myDuties.length === 0;
+    if (pdfBtn) pdfBtn.disabled = myDuties.length === 0;
+  } else {
+    csvBtn.disabled = filteredRows.length === 0;
+    if (pdfBtn) pdfBtn.disabled = filteredRows.length === 0 && latestRows.length === 0;
+  }
 }
 
 function toggleRosterFullscreen(force) {
   const enabled = typeof force === "boolean" ? force : !rosterLayout.classList.contains("fullscreen");
+  const planner = rosterLayout.querySelector(".auto-planner");
+  if (enabled && planner) {
+    const wasExpanded = !planner.classList.contains("collapsed");
+    rosterLayout.dataset.fullscreenPlannerWasExpanded = String(wasExpanded);
+    if (wasExpanded) {
+      planner.classList.add("collapsed");
+      autoPlannerToggle.textContent = "Show planner";
+      autoPlannerToggle.setAttribute("aria-expanded", "false");
+    }
+  }
   rosterLayout.classList.toggle("fullscreen", enabled);
   document.body.classList.toggle("roster-mode-fullscreen", enabled);
   rosterFullscreenBtn.textContent = enabled ? "Close full screen" : "Full screen";
   rosterFullscreenBtn.setAttribute("aria-pressed", String(enabled));
-  if (!enabled) setRosterFiltersCollapsed(false);
-  if (!enabled) rosterFullscreenBtn.focus();
+  if (!enabled) {
+    if (planner && rosterLayout.dataset.fullscreenPlannerWasExpanded === "true") {
+      planner.classList.remove("collapsed");
+      autoPlannerToggle.textContent = "Hide planner";
+      autoPlannerToggle.setAttribute("aria-expanded", "true");
+    }
+    delete rosterLayout.dataset.fullscreenPlannerWasExpanded;
+    const savedCollapsed = localStorage.getItem("gsrmRosterFiltersCollapsed") === "true";
+    setRosterFiltersCollapsed(savedCollapsed);
+    rosterFullscreenBtn.focus();
+  }
 }
 
 function setRosterFiltersCollapsed(collapsed) {
-  const enabled = Boolean(collapsed) && rosterLayout.classList.contains("fullscreen");
+  const enabled = Boolean(collapsed);
   rosterLayout.classList.toggle("filters-collapsed", enabled);
   rosterFilterToggle.textContent = enabled ? "Show filters" : "Hide filters";
   rosterFilterToggle.setAttribute("aria-expanded", String(!enabled));
+  localStorage.setItem("gsrmRosterFiltersCollapsed", String(enabled));
 }
 
 const resultsSearch = document.getElementById("resultsSearch");
@@ -478,6 +674,18 @@ const resultsStartTimeFilter = document.getElementById("resultsStartTimeFilter")
 const resultsEndTimeFilter = document.getElementById("resultsEndTimeFilter");
 const resultsLocalTimeToggle = document.getElementById("resultsLocalTimeToggle");
 const resultsClearFilters = document.getElementById("resultsClearFilters");
+const resultsFilterTitle = document.getElementById("resultsFilterTitle");
+const resultsFilterHint = document.getElementById("resultsFilterHint");
+const resultsFilterToggle = document.getElementById("resultsFilterToggle");
+const resultsFullscreenBtn = document.getElementById("resultsFullscreenBtn");
+const resultsMatchSummary = document.getElementById("resultsMatchSummary");
+const gapStaffSearch = document.getElementById("gapStaffSearch");
+const gapSuitableOnlyToggle = document.getElementById("gapSuitableOnlyToggle");
+const resultsPanel = tableFilterBar.closest(".table-panel");
+const accountDutySummary = document.getElementById("accountDutySummary");
+const accountDutyTitle = document.getElementById("accountDutyTitle");
+const accountDutyChips = document.getElementById("accountDutyChips");
+const accountDutyRosterBtn = document.getElementById("accountDutyRosterBtn");
 
 resultsSearch.addEventListener("input", applyFilters);
 resultsDateFilter.addEventListener("input", applyFilters);
@@ -491,6 +699,22 @@ resultsLocalTimeToggle.addEventListener("change", () => {
   applyFilters();
 });
 resultsClearFilters.addEventListener("click", clearResultFilters);
+resultsFilterToggle.addEventListener("click", () => setResultFiltersCollapsed(!tableFilterBar.classList.contains("filters-collapsed")));
+resultsFullscreenBtn.addEventListener("click", () => toggleResultsFullscreen());
+gapStaffSearch.addEventListener("input", () => {
+  myInitialsInput.value = gapStaffSearch.value;
+  localStorage.setItem("myInitials", gapStaffSearch.value);
+  applyFilters();
+});
+gapSuitableOnlyToggle.addEventListener("change", () => {
+  if (gapSuitableOnlyToggle.checked && !resolveStaffIdentity(gapStaffSearch.value.trim())) {
+    gapSuitableOnlyToggle.checked = false;
+    setMessage("Select your staff name or initials before filtering suitable shifts.", "warn");
+    gapStaffSearch.focus();
+  }
+  applyFilters();
+});
+accountDutyRosterBtn?.addEventListener("click", openAccountOwnerRoster);
 
 function updateResultTimeFilterLabels() {
   const zone = resultsLocalTimeToggle.checked ? "Local" : "UTC";
@@ -503,16 +727,67 @@ function updateResultTimeFilterLabels() {
 
 function clearResultFilters() {
   resultsSearch.value = "";
+  selectedResultsSlas = [];
   resultsSlaFilter.value = "";
   resultsDirectionFilter.value = "";
   resultsStartTimeFilter.value = "";
   resultsEndTimeFilter.value = "";
   resultsLocalTimeToggle.checked = false;
+  gapSuitableOnlyToggle.checked = false;
   if (activeTab === "replacements") resultsDateFilter.value = "";
   else resultsMissingFilter.value = "";
   updateResultTimeFilterLabels();
+  updateResultsSlaFilter();
   applyFilters();
 }
+
+function setResultFiltersCollapsed(collapsed) {
+  const enabled = Boolean(collapsed);
+  tableFilterBar.classList.toggle("filters-collapsed", enabled);
+  resultsFilterToggle.textContent = enabled ? "Show filters" : "Hide filters";
+  resultsFilterToggle.setAttribute("aria-expanded", String(!enabled));
+  localStorage.setItem("gsrmResultFiltersCollapsed", String(enabled));
+}
+
+function toggleResultsFullscreen(force) {
+  const enabled = typeof force === "boolean" ? force : !resultsPanel.classList.contains("results-fullscreen");
+  resultsPanel.classList.toggle("results-fullscreen", enabled);
+  document.body.classList.toggle("results-mode-fullscreen", enabled);
+  resultsFullscreenBtn.textContent = enabled ? "Close full screen" : "Full screen";
+  resultsFullscreenBtn.setAttribute("aria-pressed", String(enabled));
+  if (enabled) {
+    resultsPanel.scrollIntoView({ block: "start" });
+  } else {
+    resultsFullscreenBtn.focus();
+  }
+}
+
+function getActiveResultFilterCount() {
+  return [
+    resultsSearch.value.trim(),
+    selectedResultsSlas.length ? "sla" : resultsSlaFilter.value,
+    resultsDirectionFilter.value,
+    activeTab === "replacements" ? resultsDateFilter.value : resultsMissingFilter.value,
+    resultsStartTimeFilter.value,
+    resultsEndTimeFilter.value,
+    resultsLocalTimeToggle.checked ? "local" : "",
+    activeTab === "gaps" && gapSuitableOnlyToggle.checked ? "suitable" : "",
+  ].filter(Boolean).length;
+}
+
+function syncResultFilterUi(total, shown) {
+  const activeCount = getActiveResultFilterCount();
+  resultsClearFilters.disabled = activeCount === 0;
+  resultsMatchSummary.textContent = total
+    ? `${shown} of ${total} shown${activeCount ? ` · ${activeCount} active filter${activeCount === 1 ? "" : "s"}` : ""}`
+    : "No scan results yet";
+
+}
+
+gapStaffSearch.value = localStorage.getItem("myInitials") || "";
+setResultFiltersCollapsed(localStorage.getItem("gsrmResultFiltersCollapsed") === "true");
+updateResultsSlaFilter();
+syncResultFilterUi(0, 0);
 
 function handleCredentialChange() {
   if (connectedEmail && form.email.value.trim().toLowerCase() !== connectedEmail.toLowerCase()) {
@@ -587,7 +862,8 @@ async function cancelActiveScan() {
 async function runScan(forceRefresh = false) {
   if (!form.reportValidity()) return;
   const payload = readForm();
-  payload.forceRefresh = forceRefresh;
+  const force = forceRefresh || Boolean(document.getElementById("forceRefreshToggle")?.checked);
+  payload.forceRefresh = force;
   if (!rosterDate.value || rosterDate.value < payload.startDate || rosterDate.value > payload.endDate) {
     rosterDate.value = payload.startDate;
   }
@@ -604,6 +880,7 @@ async function runScan(forceRefresh = false) {
   // Reset filter inputs
   resultsSearch.value = "";
   resultsDateFilter.value = "";
+  selectedResultsSlas = [];
   resultsSlaFilter.value = "";
   resultsDirectionFilter.value = "";
   resultsMissingFilter.value = "";
@@ -611,6 +888,7 @@ async function runScan(forceRefresh = false) {
   resultsEndTimeFilter.value = "";
   resultsLocalTimeToggle.checked = false;
   latestRows = [];
+  originalRows = [];
   latestScannedDates = [];
   latestStaffDirectory = [];
   updateStaffOptions();
@@ -628,6 +906,7 @@ async function runScan(forceRefresh = false) {
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
 
     latestRows = result.rows || [];
+    originalRows = JSON.parse(JSON.stringify(result.rows || []));
     latestScannedDates = result.scannedDates || [];
     latestStaffDirectory = result.staffDirectory || [];
     saveScanSnapshot(result, payload);
@@ -660,6 +939,7 @@ async function runScan(forceRefresh = false) {
     console.log("Empty SOD slot JSON:", result);
   } catch (error) {
     latestRows = [];
+    originalRows = [];
     latestScannedDates = [];
     latestStaffDirectory = [];
     updateStaffOptions();
@@ -790,7 +1070,15 @@ function renderRows(rows) {
 
   if (!rows.length) {
     const tr = document.createElement("tr");
-    tr.innerHTML = '<td colspan="11" class="empty">No empty slots found.</td>';
+    const activeFilters = getActiveResultFilterCount();
+    const hasScanRows = latestRows.length > 0;
+    const title = !hasScanRows ? "Run a scan to find coverage gaps" : activeFilters ? "No gaps match these filters" : "No coverage gaps found";
+    const hint = !hasScanRows
+      ? "Connect to AVBIS, confirm the scan period, then select Run."
+      : activeFilters
+        ? "Reset or adjust the filters to see more results."
+        : "Every scanned position is currently covered for this period.";
+    tr.innerHTML = `<td colspan="11" class="empty results-empty-cell"><div class="results-empty-state"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(hint)}</span></div></td>`;
     resultsBody.appendChild(tr);
     return;
   }
@@ -801,7 +1089,33 @@ function renderRows(rows) {
   if (startHeader) startHeader.textContent = useLocal ? "Start Local" : "Start UTC";
   if (releaseHeader) releaseHeader.textContent = useLocal ? "Release Local" : "Release UTC";
 
-  for (const row of rows) {
+  // Sort rows based on currentSortCol & currentSortDir
+  const sortedRows = [...rows].sort((a, b) => {
+    let valA = a[currentSortCol] ?? "";
+    let valB = b[currentSortCol] ?? "";
+
+    if (currentSortCol === "required" || currentSortCol === "assigned" || currentSortCol === "missing") {
+      valA = Number(valA) || 0;
+      valB = Number(valB) || 0;
+    } else if (currentSortCol === "duration") {
+      const startA = parseUtcTime(a.date, a.start_utc);
+      const relA = parseUtcTime(a.date, a.release_utc);
+      valA = (startA && relA) ? (relA - startA) : 0;
+
+      const startB = parseUtcTime(b.date, b.start_utc);
+      const relB = parseUtcTime(b.date, b.release_utc);
+      valB = (startB && relB) ? (relB - startB) : 0;
+    } else {
+      valA = String(valA).toLowerCase();
+      valB = String(valB).toLowerCase();
+    }
+
+    if (valA < valB) return currentSortDir === "asc" ? -1 : 1;
+    if (valA > valB) return currentSortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  for (const row of sortedRows) {
     const tr = document.createElement("tr");
     const displayStart = getDisplayTime(row.date, row.start_utc, useLocal);
     const displayRelease = getDisplayTime(row.date, row.release_utc, useLocal);
@@ -832,22 +1146,87 @@ function renderRows(rows) {
       }
     }
 
+    const personalFit = getPersonalGapFit(row);
+    const fitLabel = personalFit.state === "eligible"
+      ? `<span class="opportunity-fit fit-good">Good fit · ${escapeHtml(personalFit.candidate.score)}/10</span>`
+      : personalFit.state === "assigned"
+        ? '<span class="opportunity-fit fit-assigned">Already assigned</span>'
+        : personalFit.state === "conflict"
+          ? '<span class="opportunity-fit fit-conflict">Not suitable</span>'
+          : "";
+    tr.classList.toggle("personal-opportunity", personalFit.state === "eligible");
+
+    const missingVal = Number(row.missing || 0);
+    const missingBadgeHtml = missingVal > 0
+      ? `<span class="missing-badge${missingVal >= 2 ? " critical" : ""}">${missingVal}</span>`
+      : `<span class="badge badge-covered">0</span>`;
+
+    const directionText = row.direction
+      ? `<span class="flight-dir">${escapeHtml(row.direction)}</span>`
+      : "";
+
     tr.innerHTML = `
-      <td>${escapeHtml(row.date)}</td>
-      <td>${escapeHtml(row.flight)} <span class="muted">${escapeHtml(row.direction || "")}</span></td>
-      <td>${escapeHtml(row.route)}</td>
+      <td class="col-date">${escapeHtml(row.date)}</td>
+      <td class="col-flight">
+        <strong>${escapeHtml(row.flight)}</strong>
+        ${directionText}
+      </td>
+      <td class="col-route">${escapeHtml(row.route || "-")}</td>
       <td><span class="badge badge-${escapeHtml(row.sla).toLowerCase().replace(/[^a-z0-9]/g, "-")}">${escapeHtml(row.sla)}</span></td>
-      <td>${escapeHtml(row.required)}</td>
-      <td>${escapeHtml(row.assigned)}</td>
-      <td class="missing">${escapeHtml(row.missing)}</td>
-      <td>${escapeHtml(displayStart)}</td>
-      <td>${escapeHtml(displayRelease)}</td>
-      <td>${escapeHtml(duration)}</td>
-      <td><button type="button" class="compact-action-btn">Fill gap</button></td>
+      <td class="col-num">${escapeHtml(row.required)}</td>
+      <td class="col-num">${escapeHtml(row.assigned)}</td>
+      <td class="col-num">${missingBadgeHtml}</td>
+      <td class="col-time">${escapeHtml(displayStart)}</td>
+      <td class="col-time">${escapeHtml(displayRelease)}</td>
+      <td class="col-duration">${escapeHtml(duration)}</td>
+      <td class="opportunity-cell">
+        ${fitLabel}
+        <button type="button" class="plan-gap-btn">
+          <svg style="width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2" viewBox="0 0 24 24">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="8.5" cy="7" r="4"></circle>
+            <line x1="20" y1="8" x2="20" y2="14"></line>
+            <line x1="17" y1="11" x2="23" y2="11"></line>
+          </svg>
+          <span>Plan / Assign</span>
+        </button>
+      </td>
     `;
-    tr.querySelector(".compact-action-btn").addEventListener("click", () => openGapPlanner(row));
+    tr.querySelector(".plan-gap-btn").addEventListener("click", () => openGapPlanner(row));
     resultsBody.appendChild(tr);
   }
+
+  // Bind table header sort events once table rendered
+  document.querySelectorAll("#gapsTable th.sortable-th").forEach((th) => {
+    th.onclick = () => {
+      const col = th.dataset.sort;
+      if (!col) return;
+      if (currentSortCol === col) {
+        currentSortDir = currentSortDir === "asc" ? "desc" : "asc";
+      } else {
+        currentSortCol = col;
+        currentSortDir = "asc";
+      }
+      document.querySelectorAll("#gapsTable th .sort-icon").forEach((s) => (s.textContent = ""));
+      const iconSpan = th.querySelector(".sort-icon");
+      if (iconSpan) iconSpan.textContent = currentSortDir === "asc" ? " ▲" : " ▼";
+      applyFilters();
+    };
+  });
+}
+
+function getPersonalGapFit(row) {
+  const query = gapStaffSearch?.value.trim();
+  if (!query) return { state: "none", eligible: false };
+  const identity = resolveStaffIdentity(query);
+  if (!identity) return { state: "unknown", eligible: false };
+  const assigned = (row.staff || []).some((value) => parseStaffIdentity(value)?.key === identity.key);
+  if (assigned) return { state: "assigned", eligible: false, identity };
+  const candidate = OperationsUtils.rankCandidates(row, latestRows, latestStaffDirectory, { maxGapMinutes: 240 })
+    .find((person) => person.key === identity.key);
+  return candidate
+    ? { state: "eligible", eligible: true, identity, candidate }
+    : { state: "conflict", eligible: false, identity };
 }
 
 function setBusy(isBusy) {
@@ -1148,7 +1527,88 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function setRosterStateMode(mode) {
+  rosterStateMode = ["original", "compare"].includes(mode) ? mode : "edited";
+  document.querySelectorAll("#rosterStateToggleGroup .state-toggle-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.stateMode === rosterStateMode);
+  });
+  if (activeTab === "roster") renderRoster();
+}
+
+function getRosterSourceRows() {
+  return rosterStateMode === "original" && originalRows.length ? originalRows : latestRows;
+}
+
+function getOriginalDuty(row) {
+  const key = OperationsUtils.rowKey(row);
+  return originalRows.find((item) => OperationsUtils.rowKey(item) === key) || null;
+}
+
+function staffByKey(row) {
+  const people = new Map();
+  for (const label of row?.staff || []) {
+    const identity = parseStaffIdentity(label);
+    if (identity) people.set(identity.key, identity);
+  }
+  return people;
+}
+
+function getDutyRosterChange(row) {
+  const original = getOriginalDuty(row);
+  if (!original) return { changed: false, added: [], removed: [] };
+  const before = staffByKey(original);
+  const after = staffByKey(latestRows.find((item) => OperationsUtils.rowKey(item) === OperationsUtils.rowKey(row)) || row);
+  const added = [...after.entries()].filter(([key]) => !before.has(key)).map(([, person]) => person);
+  const removed = [...before.entries()].filter(([key]) => !after.has(key)).map(([, person]) => person);
+  return { changed: added.length > 0 || removed.length > 0, added, removed };
+}
+
+function formatRosterChange(change) {
+  const removed = change.removed.map((person) => person.name).join(", ");
+  const added = change.added.map((person) => person.name).join(", ");
+  if (removed && added) return `${removed} → ${added}`;
+  if (added) return `Added ${added}`;
+  if (removed) return `Removed ${removed}`;
+  return "";
+}
+
+function formatStaffLabel(person) {
+  return `${person.initials || person.key} - ${person.name || person.initials || person.key}`;
+}
+
+function renderAccountOwnerDuties() {
+  if (!accountDutySummary) return;
+  if (activeTab !== "gaps") {
+    accountDutySummary.hidden = true;
+    return;
+  }
+  const query = gapStaffSearch.value.trim();
+  const owner = resolveStaffIdentity(query);
+  if (!owner || !latestRows.length) {
+    accountDutySummary.hidden = true;
+    return;
+  }
+  const duties = latestRows
+    .filter((row) => (row.staff || []).some((label) => matchStaffMember(label, owner.initials) || matchStaffMember(label, owner.name)))
+    .sort((a, b) => `${a.date} ${a.start_utc}`.localeCompare(`${b.date} ${b.start_utc}`));
+  accountDutySummary.hidden = false;
+  accountDutyTitle.textContent = `${owner.name} · ${duties.length} assigned ${duties.length === 1 ? "duty" : "duties"}`;
+  accountDutyChips.innerHTML = duties.length
+    ? duties.slice(0, 4).map((row) => `<span><strong>${escapeHtml(row.flight)} · ${escapeHtml(row.sla)}</strong><small>${escapeHtml(row.date)} · ${escapeHtml(row.start_utc)}–${escapeHtml(row.release_utc)} UTC</small></span>`).join("") + (duties.length > 4 ? `<em>+${duties.length - 4} more</em>` : "")
+    : '<span class="account-duty-empty">No assigned duties in this scan.</span>';
+}
+
+function openAccountOwnerRoster() {
+  const owner = resolveStaffIdentity(gapStaffSearch.value.trim());
+  if (!owner) return;
+  rosterStaffSearch.value = owner.name;
+  setRosterViewMode("staff", false);
+  setRosterStateMode("edited");
+  switchTab("roster");
+}
+
 function applyFilters() {
+  renderAccountOwnerDuties();
   if (activeTab === "replacements") {
     renderReplacements();
     csvBtn.disabled = latestRows.length === 0;
@@ -1180,7 +1640,9 @@ function applyFilters() {
 
   updateResultTimeFilterLabels();
 
-  filteredRows = latestRows.filter((row) => {
+  const sourceRows = latestRows;
+
+  filteredRows = sourceRows.filter((row) => {
     if (activeTab === "gaps" && row.missing <= 0) return false;
 
     if (searchVal) {
@@ -1198,7 +1660,11 @@ function applyFilters() {
       if (!matchText.includes(searchVal)) return false;
     }
 
-    if (slaVal && row.sla !== slaVal) return false;
+    if (selectedResultsSlas.length > 0) {
+      if (!selectedResultsSlas.includes(row.sla)) return false;
+    } else if (slaVal && row.sla !== slaVal) {
+      return false;
+    }
 
     if (directionVal) {
       const dirLower = String(row.direction || "").toLowerCase();
@@ -1212,6 +1678,7 @@ function applyFilters() {
       }
     }
     if (missingVal && Number(row.missing || 0) < Number(missingVal)) return false;
+    if (activeTab === "gaps" && gapSuitableOnlyToggle.checked && !getPersonalGapFit(row).eligible) return false;
 
     // Timing Filter
     if (startTimeVal || endTimeVal) {
@@ -1248,20 +1715,22 @@ function applyFilters() {
 
   renderRows(filteredRows);
 
-  if (latestRows.length === 0) {
+  const totalGapRows = latestRows.filter((row) => Number(row.missing || 0) > 0).length;
+  if (totalGapRows === 0) {
     resultCount.textContent = "0";
-  } else if (filteredRows.length === latestRows.length) {
-    resultCount.textContent = latestRows.length;
+  } else if (filteredRows.length === totalGapRows) {
+    resultCount.textContent = totalGapRows;
   } else {
-    resultCount.textContent = `${filteredRows.length} of ${latestRows.length}`;
+    resultCount.textContent = `${filteredRows.length} of ${totalGapRows}`;
   }
 
-  csvBtn.disabled = filteredRows.length === 0;
+  syncResultFilterUi(totalGapRows, filteredRows.length);
+
+  updateExportButtonsState();
   opsCsvBtn.disabled = !latestRows.some((row) => Number(row.missing || 0) > 0);
 }
 
 function updateResultsSlaFilter() {
-  const currentVal = resultsSlaFilter.value;
   const uniqueSlas = [...new Set(latestRows.map((r) => r.sla).filter(Boolean))].sort();
 
   resultsSlaFilter.innerHTML = '<option value="">All SLAs</option>';
@@ -1269,14 +1738,80 @@ function updateResultsSlaFilter() {
     const opt = document.createElement("option");
     opt.value = sla;
     opt.textContent = sla;
+    if (selectedResultsSlas.includes(sla)) opt.selected = true;
     resultsSlaFilter.appendChild(opt);
   }
 
-  if (uniqueSlas.includes(currentVal)) {
-    resultsSlaFilter.value = currentVal;
-  } else {
-    resultsSlaFilter.value = "";
+  if (resultsSlaCheckboxes) {
+    resultsSlaCheckboxes.innerHTML = "";
+    if (uniqueSlas.length === 0) {
+      resultsSlaCheckboxes.innerHTML = '<span class="muted" style="padding:4px; font-size:12px;">No scan data available</span>';
+    } else {
+      for (const sla of uniqueSlas) {
+        const isChecked = selectedResultsSlas.includes(sla);
+        const label = document.createElement("label");
+        label.className = "multi-select-item";
+        label.innerHTML = `
+          <input type="checkbox" value="${escapeHtml(sla)}" ${isChecked ? "checked" : ""}>
+          <span>${escapeHtml(sla)}</span>
+        `;
+        label.querySelector("input").addEventListener("change", (e) => {
+          if (e.target.checked) {
+            if (!selectedResultsSlas.includes(sla)) selectedResultsSlas.push(sla);
+          } else {
+            selectedResultsSlas = selectedResultsSlas.filter((s) => s !== sla);
+          }
+          syncResultsSlaBtnText();
+          renderSlaChips(uniqueSlas);
+          applyFilters();
+        });
+        resultsSlaCheckboxes.appendChild(label);
+      }
+    }
   }
+
+  syncResultsSlaBtnText();
+  renderSlaChips(uniqueSlas);
+}
+
+function syncResultsSlaBtnText() {
+  if (!resultsSlaBtnText) return;
+  if (selectedResultsSlas.length === 0) {
+    resultsSlaBtnText.textContent = "All SLAs";
+  } else if (selectedResultsSlas.length === 1) {
+    resultsSlaBtnText.textContent = selectedResultsSlas[0];
+  } else {
+    resultsSlaBtnText.textContent = `${selectedResultsSlas.length} SLAs selected`;
+  }
+}
+
+function renderSlaChips(availableSlas) {
+  if (!slaChipsContainer) return;
+  const slas = availableSlas.length > 0 ? availableSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS"];
+
+  let html = `<button type="button" class="sla-chip ${selectedResultsSlas.length === 0 ? "active" : ""}" data-sla="all">All SLAs</button>`;
+  for (const sla of slas) {
+    const isActive = selectedResultsSlas.includes(sla);
+    html += `<button type="button" class="sla-chip ${isActive ? "active" : ""}" data-sla="${escapeHtml(sla)}">${escapeHtml(sla)}</button>`;
+  }
+  slaChipsContainer.innerHTML = html;
+
+  slaChipsContainer.querySelectorAll(".sla-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sla = btn.dataset.sla;
+      if (sla === "all") {
+        selectedResultsSlas = [];
+      } else {
+        if (selectedResultsSlas.includes(sla)) {
+          selectedResultsSlas = selectedResultsSlas.filter((s) => s !== sla);
+        } else {
+          selectedResultsSlas.push(sla);
+        }
+      }
+      updateResultsSlaFilter();
+      applyFilters();
+    });
+  });
 }
 
 function updateRosterFilters() {
@@ -1350,22 +1885,53 @@ function resetRosterFilters() {
     btn.classList.toggle("active", btn.dataset.preset === "all");
   });
 
+  syncRosterPresetChips();
   applyFilters();
 }
 
-function renderReplacements() {
-  selectedReplacementDuty = null;
+function populateBulkReplacementOptions(targetIdentity) {
+  const select = document.getElementById("bulkReplacementCandidateSelect");
+  if (!select) return;
+  const currentVal = select.value;
+  select.innerHTML = `
+    <option value="">Select replacement candidate...</option>
+    <option value="auto">✨ Auto-assign best match for each shift</option>
+  `;
+
+  const staffList = typeof getPlannerPeople === "function" ? getPlannerPeople() : [];
+  const targetKey = targetIdentity?.key || targetIdentity?.initials?.toUpperCase();
+
+  for (const person of staffList) {
+    if (targetKey && (person.key === targetKey || person.initials.toUpperCase() === targetKey)) continue;
+    const option = document.createElement("option");
+    option.value = person.key;
+    option.textContent = `${person.initials} - ${person.name}`;
+    select.appendChild(option);
+  }
+  if (currentVal && [...select.options].some((o) => o.value === currentVal)) {
+    select.value = currentVal;
+  }
+}
+
+function renderReplacements(preserveSelectedDuty = false) {
+  if (!preserveSelectedDuty) {
+    selectedReplacementDuty = null;
+  }
   const dutiesList = document.getElementById("dutiesList");
   const candidatesList = document.getElementById("candidatesList");
+  const bulkBar = document.getElementById("bulkReplacementBar");
   dutiesList.innerHTML = "";
-  candidatesList.innerHTML = `<div class="empty-selection">Select a duty on the left to see people who can replace you.</div>`;
-  replacementCandidatesHeader.textContent = "Available Replacements";
+  if (!preserveSelectedDuty) {
+    candidatesList.innerHTML = `<div class="empty-selection">Select a duty on the left to see people who can replace you.</div>`;
+    replacementCandidatesHeader.textContent = "Available Replacements";
+  }
 
   const initials = myInitialsInput.value.trim().toUpperCase();
   if (!initials) {
     replacementStaffName.textContent = "Select a staff member";
     replacementStaffSummary.textContent = "Type a name above to load their duties.";
     dutiesList.innerHTML = `<div class="empty-list">Please enter your initials/name to see your duties.</div>`;
+    if (bulkBar) bulkBar.hidden = true;
     return;
   }
 
@@ -1380,6 +1946,11 @@ function renderReplacements() {
   replacementStaffSummary.textContent = myDuties.length === 1
     ? "1 scheduled duty found in the current scan."
     : `${myDuties.length} scheduled duties found in the current scan.`;
+
+  if (bulkBar) {
+    bulkBar.hidden = myDuties.length === 0;
+    populateBulkReplacementOptions(selectedIdentity || { initials });
+  }
 
   // Apply active filters to my duties
   const searchVal = resultsSearch.value.toLowerCase().trim();
@@ -1543,12 +2114,13 @@ function getRosterRows() {
   if (!dailyWindows.length) return null;
   const selectedPeriodEnd = new Date(lastDay.getTime() + 24 * 60 * 60 * 1000);
 
+  const sourceRows = getRosterSourceRows();
   const staff = new Map();
   for (const staffString of latestStaffDirectory) {
     const identity = parseStaffIdentity(staffString);
     if (identity && !staff.has(identity.key)) staff.set(identity.key, { ...identity, assignments: [] });
   }
-  for (const assignment of latestRows) {
+  for (const assignment of sourceRows) {
     for (const staffString of assignment.staff || []) {
       const identity = parseStaffIdentity(staffString);
       if (!identity) continue;
@@ -1592,17 +2164,26 @@ function setRosterViewMode(mode, shouldRender = true) {
   rosterLayout.classList.toggle("airline-view", isAirline);
   rosterBoardActions.hidden = !isAirline;
   rosterTotalsBtn.hidden = isAirline;
+  const rosterPresetFilterGroup = document.getElementById("rosterPresetFilterGroup");
+  if (rosterPresetFilterGroup) rosterPresetFilterGroup.hidden = isAirline;
   rosterStatus.disabled = isAirline || !latestScannedDates.length;
   rosterStatus.title = isAirline ? "Availability applies to the staff roster view." : "";
+
+  document.querySelectorAll("#rosterPresetFilterGroup .preset-chip").forEach((btn) => {
+    btn.disabled = isAirline;
+    btn.title = isAirline ? "Filter presets apply to staff roster view" : "";
+  });
+
   rosterViewHint.textContent = isAirline
-    ? "All arrivals and departures in one chronological daily schedule, without airline grouping."
-    : "People by day, including free staff and individual allocations.";
+    ? "Chronological flights with coverage, assigned staff, and local edits."
+    : "People by day with replacements and local edits clearly marked.";
   rosterFreeLabel.textContent = isAirline ? "Days" : "Free";
   rosterDutyLabel.textContent = isAirline ? "Flights" : "On duty";
   if (activeTab === "roster") contextHint.textContent = isAirline
     ? "Chronological daily flight and staffing schedule"
     : "Availability and duties for the selected window";
   if (activeTab === "roster") resultCountLabel.textContent = isAirline ? "flights shown" : "staff shown";
+  syncRosterPresetChips();
   if (shouldRender) renderRoster();
 }
 
@@ -1618,7 +2199,7 @@ function setAllAirlineSections(open) {
 function updateAirlineFilterOptions() {
   if (!flightScheduleAirlineFilter) return;
   const currentSelection = flightScheduleAirlineFilter.value || "all";
-  const uniqueAirlines = [...new Set(latestRows.map((r) => OperationsUtils.airlineCode(r)).filter(Boolean))].sort();
+  const uniqueAirlines = [...new Set(getRosterSourceRows().map((r) => OperationsUtils.airlineCode(r)).filter(Boolean))].sort();
 
   flightScheduleAirlineFilter.innerHTML = `<option value="all">All airlines (${uniqueAirlines.length})</option>` +
     uniqueAirlines.map((code) => `<option value="${escapeHtml(code)}" ${code === currentSelection ? "selected" : ""}>${escapeHtml(code)}</option>`).join("");
@@ -1626,7 +2207,8 @@ function updateAirlineFilterOptions() {
 
 function getAirlineRosterDays(roster) {
   const scheduleQuery = (flightScheduleSearch?.value || "").trim() || (rosterStaffSearch?.value || "").trim();
-  return OperationsUtils.buildFlightSchedule(latestRows, roster.dailyWindows, {
+  const sourceRows = getRosterSourceRows();
+  return OperationsUtils.buildFlightSchedule(sourceRows, roster.dailyWindows, {
     query: scheduleQuery,
     sla: rosterSla.value,
     coverage: flightScheduleCoverageFilter?.value || "all",
@@ -1637,6 +2219,7 @@ function getAirlineRosterDays(roster) {
 
 function renderRoster() {
   updateAirlineFilterOptions();
+  syncRosterPresetChips();
   const roster = getRosterRows();
   rosterBody.innerHTML = "";
   rosterAirlineView.innerHTML = "";
@@ -1679,7 +2262,8 @@ function renderRoster() {
   const overnightSuffix = rosterEndTime.value <= rosterStartTime.value ? " (+1 day)" : "";
   const dateLabel = rosterDate.value === rosterEndDate.value ? rosterDate.value : `${rosterDate.value} to ${rosterEndDate.value}`;
   const displayZone = rosterLocalTimeToggle.checked ? "Local (Europe/Berlin)" : "Zulu (UTC)";
-  rosterWindowText.textContent = `${dateLabel} · availability window ${rosterStartTime.value}–${rosterEndTime.value}${overnightSuffix} UTC · duty times shown in ${displayZone}. “Free” means no allocation overlaps the selected timeframe.`;
+  const rosterStateLabel = rosterStateMode === "original" ? "Original scan" : rosterStateMode === "compare" ? "Edited roster with changes" : "Edited roster";
+  rosterWindowText.textContent = `${rosterStateLabel} · ${dateLabel} · ${rosterStartTime.value}–${rosterEndTime.value}${overnightSuffix} UTC · times shown in ${displayZone}.`;
   const shown = filterRosterPeople(roster.rows);
   renderRosterHeader(roster.dailyWindows);
 
@@ -1693,10 +2277,12 @@ function renderRoster() {
   } else {
     for (const person of shown) {
       const tr = document.createElement("tr");
+      const hasLocalEdit = rosterStateMode !== "original" && person.byDay.flat().some((assignment) => getDutyRosterChange(assignment).changed);
+      if (hasLocalEdit) tr.classList.add("roster-edited-row");
       tr.innerHTML = `
         <td class="roster-person-cell">
           <strong>${escapeHtml(person.name)}</strong>
-          <span>${escapeHtml(person.initials)}</span>
+          <span>${escapeHtml(person.initials)}${hasLocalEdit ? ' <b class="edited-badge">Edited</b>' : ""}</span>
         </td>
         ${person.byDay.map((assignments, index) => renderRosterDayCell(assignments, roster.dailyWindows[index], showRosterDutyTotals)).join("")}
         ${showRosterDutyTotals ? `<td class="roster-total-cell"><span class="roster-range-total" title="Duty hours in selected range">${formatHours(OperationsUtils.summarizeDutyHours(person.overlapping, roster.dailyWindows).totalMinutes)}h</span></td>` : ""}
@@ -1731,7 +2317,8 @@ function renderAirlineRoster(roster) {
   rosterDutyCount.textContent = String(visibleFlights);
   const overnightSuffix = rosterEndTime.value <= rosterStartTime.value ? " (+1 day)" : "";
   const dateLabel = rosterDate.value === rosterEndDate.value ? rosterDate.value : `${rosterDate.value} to ${rosterEndDate.value}`;
-  rosterWindowText.textContent = `${dateLabel} · ${visibleDuties} visible SLA duties · ${visibleMissing} missing positions · ${rosterStartTime.value}–${rosterEndTime.value}${overnightSuffix} UTC work window.`;
+  const scheduleStateLabel = rosterStateMode === "original" ? "Original scan" : rosterStateMode === "compare" ? "Edited schedule with changes" : "Edited schedule";
+  rosterWindowText.textContent = `${scheduleStateLabel} · ${dateLabel} · ${visibleFlights} flights · ${visibleMissing} missing · ${rosterStartTime.value}–${rosterEndTime.value}${overnightSuffix} UTC.`;
 
   rosterAirlineView.innerHTML = days.map((day) => {
     const date = new Date(`${day.isoDate}T12:00:00Z`);
@@ -1739,6 +2326,7 @@ function renderAirlineRoster(roster) {
     const flightCards = day.flights.length ? day.flights.map((flight) => {
         const dutyRows = flight.duties.map((duty) => {
           const dutyIndex = dutyRefs.push(duty) - 1;
+          const rosterChange = rosterStateMode === "original" ? { changed: false, added: [], removed: [] } : getDutyRosterChange(duty);
           const staff = (duty.staff || []).length ? duty.staff.map((label) => {
             const identity = parseStaffIdentity(label);
             const staffIndex = staffRefs.push({ label, identity, duty }) - 1;
@@ -1754,14 +2342,14 @@ function renderAirlineRoster(roster) {
           const remaining = Math.max(0, Number(duty.missing || 0) - planned.length);
           const plannedAssigned = Number(duty.assigned || 0) + planned.length;
           const role = [duty.type, duty.movement].filter(Boolean).join(" · ") || "—";
-          return `<tr class="${remaining ? "allocation-gap-row" : ""}">
+          const changeText = formatRosterChange(rosterChange);
+          return `<tr class="${remaining ? "allocation-gap-row" : ""}${rosterChange.changed ? " roster-edited-duty" : ""}">
             <td><strong>${escapeHtml(duty.sla || "—")}</strong><small>${escapeHtml(role)}</small></td>
             <td>${escapeHtml(getDisplayTime(duty.date, duty.start_utc, useLocal))}–${escapeHtml(getDisplayTime(duty.date, duty.release_utc, useLocal))} ${zoneLabel}</td>
             <td><span class="allocation-coverage ${remaining ? "has-gap" : "covered"}">${plannedAssigned}/${escapeHtml(duty.required)}</span>${remaining ? `<small>${remaining} missing</small>` : planned.length ? "<small>Covered by local plan</small>" : ""}</td>
-            <td><div class="board-staff-list">${staff}${plannedStaff}</div></td>
+            <td><div class="board-staff-list">${staff}${plannedStaff}</div>${rosterChange.changed ? `<div class="roster-change-note"><b>Edited</b><span>${escapeHtml(changeText)}</span></div>` : ""}</td>
             <td>
-              ${Number(duty.missing || 0) ? `<button type="button" class="secondary-btn board-plan-btn" data-duty-index="${dutyIndex}">${remaining ? "Plan gap" : "Review plan"}</button>` : '<span class="board-covered-label">Covered</span>'}
-              <button type="button" class="board-add-btn" data-add-duty-index="${dutyIndex}" title="Quick add or replace staff in place">+ Add</button>
+              ${remaining ? `<button type="button" class="secondary-btn board-plan-btn" data-duty-index="${dutyIndex}">Fill gap</button>` : '<span class="board-covered-label">Click a name to replace</span>'}
             </td>
           </tr>`;
         }).join("");
@@ -1800,11 +2388,6 @@ function renderAirlineRoster(roster) {
 
   rosterAirlineView.querySelectorAll(".board-plan-btn").forEach((button) => button.addEventListener("click", () => {
     const duty = dutyRefs[Number(button.dataset.dutyIndex)];
-    if (!duty) return;
-    openRosterInlineReplacement(duty, null);
-  }));
-  rosterAirlineView.querySelectorAll(".board-add-btn").forEach((button) => button.addEventListener("click", () => {
-    const duty = dutyRefs[Number(button.dataset.addDutyIndex)];
     if (!duty) return;
     openRosterInlineReplacement(duty, null);
   }));
@@ -1933,22 +2516,38 @@ function renderRosterDayCell(assignments, window, showTotal = false) {
   if (!assignments.length) return `<td class="roster-day-cell free-day"><div class="roster-free-day-content">${showTotal ? '<span class="roster-day-total">0.0h</span>' : ""}<span>Free</span></div></td>`;
   const useLocal = rosterLocalTimeToggle.checked;
   const zoneLabel = useLocal ? "Local" : "Z";
-  const duties = assignments.map((row) => `
-    <button type="button" class="compact-duty" title="Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
+  const duties = assignments.map((row) => {
+    const change = rosterStateMode === "original" ? { changed: false, added: [], removed: [] } : getDutyRosterChange(row);
+    const changeText = formatRosterChange(change);
+    return `
+    <button type="button" class="compact-duty${change.changed ? " edited" : ""}" title="${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
       <strong>${escapeHtml(row.flight)}</strong>
-      <span class="compact-sla">${escapeHtml(row.sla)}</span>
+      <span class="compact-sla">${escapeHtml(row.sla)}${change.changed ? ' <b class="edited-badge">Edited</b>' : ""}</span>
       <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
+      ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
     </button>
-  `).join("");
+  `; }).join("");
   return `<td class="roster-day-cell">${showTotal ? `<span class="roster-day-total">${dutyHours}h</span>` : ""}<div class="duty-strip">${duties}</div></td>`;
 }
 
 function openReplacementFinder(person, duty) {
-  myInitialsInput.value = person.name;
-  localStorage.setItem("myInitials", person.name);
+  const staffKey = person.initials || person.name;
+  myInitialsInput.value = staffKey;
+  localStorage.setItem("myInitials", staffKey);
   switchTab("replacements");
+  renderReplacements(true);
   showCandidatesForDuty(duty);
+  const activeCard = Array.from(document.querySelectorAll(".duty-card")).find((c) => c.textContent.includes(duty.flight) && c.textContent.includes(duty.date));
+  if (activeCard) {
+    document.querySelectorAll(".duty-card").forEach((c) => c.classList.remove("active"));
+    activeCard.classList.add("active");
+  }
   setMessage(`Showing agents available to replace ${person.name} on ${duty.flight} (${duty.sla}).`);
+}
+
+function closeRosterInlineReplacement() {
+  const drawer = document.getElementById("rosterInlineReplacementDrawer");
+  if (drawer) drawer.hidden = true;
 }
 
 function openRosterInlineReplacement(duty, personToReplace = null) {
@@ -1956,7 +2555,6 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
   const titleEl = document.getElementById("rosterInlineTitle");
   const subtitleEl = document.getElementById("rosterInlineSubtitle");
   const contentEl = document.getElementById("rosterInlineCandidatesContent");
-  const closeBtn = document.getElementById("rosterInlineCloseBtn");
 
   if (!drawer || !contentEl) return;
 
@@ -1967,10 +2565,6 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
   drawer.hidden = false;
   drawer.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
-  if (closeBtn) {
-    closeBtn.onclick = () => { drawer.hidden = true; };
-  }
-
   const candidates = OperationsUtils.getDutyGapCandidates(duty, latestRows, latestStaffDirectory, getPlannerOptions());
 
   if (!candidates || !candidates.length) {
@@ -1978,7 +2572,11 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
     return;
   }
 
-  contentEl.innerHTML = candidates.map((cand) => {
+  const BEST_LIMIT = 3;
+  const bestCandidates = candidates.slice(0, BEST_LIMIT);
+  const moreCandidates = candidates.slice(BEST_LIMIT);
+
+  const buildCandidateCard = (cand, isBest = false) => {
     const bufferHours = formatHours(cand.connectionGapMinutes);
     const statusText = cand.freeAllDay
       ? "Free all day"
@@ -1987,59 +2585,267 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
       : `Free window (${bufferHours}h buffer)`;
 
     const slaExpText = cand.slaExperience ? ` · ${cand.slaExperience} ${duty.sla} duties prior` : "";
+    const bestBadge = isBest ? `<span class="inline-candidate-badge-best">Best Match</span>` : "";
 
     return `
       <div class="inline-candidate-card">
         <div class="inline-candidate-info">
-          <strong>${escapeHtml(cand.name)} <small>(${escapeHtml(cand.initials)})</small></strong>
+          <strong>${escapeHtml(cand.name)} <small>(${escapeHtml(cand.initials)})</small>${bestBadge}</strong>
           <span>${escapeHtml(statusText)}</span>
           <small>${escapeHtml(`${cand.sameDayDuties ? cand.sameDayDuties.length : 0} shifts scheduled today${slaExpText}`)}</small>
         </div>
-        <button type="button" class="inline-assign-btn" data-assign-key="${escapeHtml(cand.key)}" data-assign-name="${escapeHtml(cand.name)}">+ Assign</button>
+        <button type="button" class="inline-assign-btn" data-assign-key="${escapeHtml(cand.key)}" data-assign-name="${escapeHtml(cand.name)}" data-assign-initials="${escapeHtml(cand.initials)}">${personToReplace ? "Replace" : "Assign"}</button>
       </div>
     `;
-  }).join("");
+  };
+
+  let html = "";
+
+  // 1. Assigned Staff Management Section (Remove functionality)
+  const currentAssigned = duty.staff || [];
+  if (currentAssigned.length > 0) {
+    html += `
+      <div class="inline-candidate-quick-action assigned-section" style="grid-column: 1 / -1; background: #fdf2f2; border-color: #fecaca; margin-bottom: 6px;">
+        <div style="display:flex; flex-direction:column; gap:4px; width:100%;">
+          <span style="font-weight:700; font-size:12px; color:#991b1b;">Currently Assigned Staff (${currentAssigned.length}):</span>
+          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:2px;">
+            ${currentAssigned.map((label) => {
+              const parsed = parseStaffIdentity(label);
+              const displayName = parsed ? `${parsed.name} (${parsed.initials})` : label;
+              const staffKey = parsed?.key || label;
+              return `
+                <span class="assigned-person-chip" style="display:inline-flex; align-items:center; gap:6px; background:#ffffff; border:1px solid #fca5a5; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:600; color:#7f1d1d;">
+                  ${escapeHtml(displayName)}
+                  <button type="button" class="inline-remove-staff-btn danger-btn" data-remove-key="${escapeHtml(staffKey)}" data-remove-name="${escapeHtml(displayName)}" style="min-height:22px; padding:0 6px; font-size:10px; line-height:1; border-radius:4px;">
+                    ✕ Remove
+                  </button>
+                </span>
+              `;
+            }).join("")}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // 2. Bulk Replace Action Bar (if personToReplace is selected)
+  if (personToReplace) {
+    html += `
+      <div class="inline-candidate-quick-action" style="background: #f0fdfa; border-color: var(--accent); grid-column: 1 / -1; margin-bottom: 6px;">
+        <span>Replace all shifts of <strong>${escapeHtml(replaceName)}</strong> across all scanned dates:</span>
+        <button id="rosterInlineReplaceAllBtn" type="button" class="inline-bulk-replace-btn">
+          <svg style="width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2" viewBox="0 0 24 24">
+            <path d="M17 1l4 4-4 4"></path>
+            <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+            <path d="M7 23l-4-4 4-4"></path>
+            <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+          </svg>
+          Replace All Shifts...
+        </button>
+      </div>
+    `;
+  }
+
+  // 3. Recommended Match Action
+  html += `<div class="inline-candidate-quick-action"><span><strong>Recommended</strong> ${escapeHtml(bestCandidates[0].name)} is the highest-ranked valid match.</span><button id="rosterAssignBestBtn" type="button" class="primary-btn">Assign best match</button></div>`;
+  html += bestCandidates.map((candidate, index) => buildCandidateCard(candidate, index === 0)).join("");
+
+  if (moreCandidates.length > 0) {
+    html += `
+      <button type="button" id="rosterInlineShowMoreBtn" class="show-more-candidates-btn">Show ${moreCandidates.length} more candidate${moreCandidates.length > 1 ? "s" : ""} ▾</button>
+      <div id="rosterInlineMoreCandidates" class="inline-candidates-grid" style="grid-column: 1 / -1;" hidden>
+        ${moreCandidates.map((c) => buildCandidateCard(c, false)).join("")}
+      </div>
+    `;
+  }
+
+  contentEl.innerHTML = html;
+
+  const showMoreBtn = contentEl.querySelector("#rosterInlineShowMoreBtn");
+  const moreContainer = contentEl.querySelector("#rosterInlineMoreCandidates");
+  if (showMoreBtn && moreContainer) {
+    showMoreBtn.addEventListener("click", () => {
+      const isHidden = moreContainer.hidden;
+      moreContainer.hidden = !isHidden;
+      showMoreBtn.innerHTML = isHidden
+        ? "Show less ▴"
+        : `Show ${moreCandidates.length} more candidate${moreCandidates.length > 1 ? "s" : ""} ▾`;
+    });
+  }
+
+  contentEl.querySelector("#rosterInlineReplaceAllBtn")?.addEventListener("click", () => {
+    openBulkReplacementForPerson(personToReplace);
+  });
+
+  // Handle Remove Staff event
+  contentEl.querySelectorAll("button[data-remove-key]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const removeKey = btn.dataset.removeKey;
+      const removeName = btn.dataset.removeName;
+      const targetRow = latestRows.find((r) => OperationsUtils.rowKey(r) === OperationsUtils.rowKey(duty));
+      if (targetRow && targetRow.staff) {
+        targetRow.staff = targetRow.staff.filter((label) => !matchStaffMember(label, removeKey) && !matchStaffMember(label, removeName));
+        targetRow.assigned = targetRow.staff.length;
+        targetRow.missing = Math.max(0, Number(targetRow.required || 0) - targetRow.assigned);
+        currentAutoPlan = null;
+        autoPlannerResult.textContent = "Roster changed. Create a new plan to use the updated staffing.";
+        applyFilters();
+        if (typeof renderRoster === "function") renderRoster();
+        if (typeof renderReplacements === "function") renderReplacements();
+        closeRosterInlineReplacement();
+        setMessage(`Removed ${removeName} from ${duty.flight} (${duty.sla}).`, "warn");
+      }
+    });
+  });
 
   contentEl.querySelectorAll("button[data-assign-key]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const candidateKey = btn.dataset.assignKey;
       const candidateName = btn.dataset.assignName;
+      const candidateInitials = btn.dataset.assignInitials;
 
-      if (!currentAutoPlan) {
-        currentAutoPlan = {
-          slots: [],
-          gapCount: 1,
-          requestedPositions: Number(duty.missing || 1),
-          assignments: [],
-          unfilled: [],
-        };
+      const targetRow = latestRows.find((r) => OperationsUtils.rowKey(r) === OperationsUtils.rowKey(duty));
+      if (targetRow) {
+        targetRow.staff = targetRow.staff || [];
+        const formatted = formatStaffLabel({ name: candidateName, initials: candidateInitials, key: candidateKey });
+        if (personToReplace) {
+          const oldIndex = targetRow.staff.findIndex((label) => matchStaffMember(label, replaceName));
+          if (oldIndex >= 0) {
+            targetRow.staff[oldIndex] = formatted;
+          } else if (!targetRow.staff.some((label) => matchStaffMember(label, candidateKey))) {
+            targetRow.staff.push(formatted);
+          }
+        } else {
+          if (!targetRow.staff.some((label) => matchStaffMember(label, candidateKey))) {
+            targetRow.staff.push(formatted);
+          }
+        }
+        targetRow.assigned = targetRow.staff.length;
+        targetRow.missing = Math.max(0, Number(targetRow.required || 0) - targetRow.assigned);
       }
 
-      const targetIndex = currentAutoPlan.slots.findIndex((slot) => OperationsUtils.rowKey(slot.row) === OperationsUtils.rowKey(duty) && !slot.personKey);
-      const proposedSlots = currentAutoPlan.slots.map((slot, index) => ({
-        row: slot.row,
-        personKey: index === targetIndex ? candidateKey : slot.personKey,
-      })).filter((item) => item.personKey);
-      if (targetIndex < 0) proposedSlots.push({ row: duty, personKey: candidateKey });
+      currentAutoPlan = null;
+      autoPlannerResult.textContent = "Roster changed. Create a new plan to use the updated staffing.";
 
-      const validation = OperationsUtils.validateAutoAssignments(latestRows, latestStaffDirectory, proposedSlots, getPlannerOptions());
-      if (!validation.valid) {
-        return setMessage(`Cannot assign ${candidateName}: ${plannerViolationText(validation)}.`, "warn");
-      }
-
-      selectedPlannerStaff.add(candidateKey);
-      if (targetIndex >= 0) {
-        currentAutoPlan.slots[targetIndex].personKey = candidateKey;
-      } else {
-        currentAutoPlan.slots.push({ row: duty, personKey: candidateKey, position: 1 });
-      }
-
-      renderAutomaticPlan();
-      renderRoster();
+      applyFilters();
+      if (typeof renderRoster === "function") renderRoster();
       setMessage(`Assigned ${candidateName} to ${duty.flight} (${duty.sla}).`, "success");
       drawer.hidden = true;
     });
   });
+  contentEl.querySelector("#rosterAssignBestBtn")?.addEventListener("click", () => {
+    contentEl.querySelector("button[data-assign-key]")?.click();
+  });
+}
+
+function executeBulkReplacement() {
+  const initials = myInitialsInput.value.trim().toUpperCase();
+  if (!initials) {
+    return setMessage("Please enter or select a staff member to replace.", "warn");
+  }
+
+  const selectedIdentity = resolveStaffIdentity(initials) || { name: initials, initials, key: initials };
+  const targetName = selectedIdentity.name || initials;
+
+  const targetDuties = latestRows.filter((row) => {
+    if (!row.staff) return false;
+    return row.staff.some((s) => matchStaffMember(s, initials));
+  });
+
+  if (!targetDuties.length) {
+    return setMessage(`No scheduled duties found for ${targetName} across the scanned dates.`, "warn");
+  }
+
+  const selectEl = document.getElementById("bulkReplacementCandidateSelect");
+  const selectedCandidateKey = selectEl ? selectEl.value : "";
+  if (!selectedCandidateKey) {
+    return setMessage("Please select a replacement candidate or 'Auto-assign best match'.", "warn");
+  }
+
+  let replacedCount = 0;
+  let conflictCount = 0;
+  const chosenSummaryList = [];
+
+  for (const duty of targetDuties) {
+    let chosenCandidate = null;
+
+    if (selectedCandidateKey === "auto") {
+      const opts = { ...getPlannerOptions(), excludedKey: selectedIdentity.key || initials };
+      const candidates = OperationsUtils.getDutyGapCandidates(duty, latestRows, latestStaffDirectory, opts);
+      if (candidates && candidates.length > 0) {
+        chosenCandidate = candidates[0];
+      }
+    } else {
+      const candObj = getPlannerPeople().find((p) => p.key === selectedCandidateKey) || resolveStaffIdentity(selectedCandidateKey);
+      if (candObj) {
+        chosenCandidate = candObj;
+      }
+    }
+
+    if (!chosenCandidate) {
+      conflictCount += 1;
+      continue;
+    }
+
+    const candName = chosenCandidate.name || chosenCandidate.initials;
+    const candKey = chosenCandidate.key || chosenCandidate.initials;
+    const formatted = formatStaffLabel({ name: candName, initials: chosenCandidate.initials, key: candKey });
+
+    const targetRow = latestRows.find((r) => OperationsUtils.rowKey(r) === OperationsUtils.rowKey(duty));
+    if (targetRow) {
+      targetRow.staff = targetRow.staff || [];
+      const oldIndex = targetRow.staff.findIndex((label) => matchStaffMember(label, initials));
+
+      if (oldIndex >= 0) {
+        const existingCandIndex = targetRow.staff.findIndex((label) => matchStaffMember(label, candKey));
+        if (existingCandIndex >= 0 && existingCandIndex !== oldIndex) {
+          targetRow.staff.splice(oldIndex, 1);
+        } else {
+          targetRow.staff[oldIndex] = formatted;
+        }
+      } else {
+        targetRow.staff.push(formatted);
+      }
+
+      targetRow.assigned = targetRow.staff.length;
+      targetRow.missing = Math.max(0, Number(targetRow.required || 0) - targetRow.assigned);
+      replacedCount += 1;
+      if (!chosenSummaryList.includes(candName)) {
+        chosenSummaryList.push(candName);
+      }
+    }
+  }
+
+  applyFilters();
+  renderReplacements(true);
+  currentAutoPlan = null;
+  autoPlannerResult.textContent = "Roster changed. Create a new plan to use the updated staffing.";
+  if (typeof renderRoster === "function") renderRoster();
+
+  if (replacedCount > 0) {
+    const candLabel = selectedCandidateKey === "auto"
+      ? `best matching candidates (${chosenSummaryList.join(", ")})`
+      : chosenSummaryList.join(", ");
+    const conflictNote = conflictCount > 0 ? ` (${conflictCount} shift(s) could not be covered due to schedule constraints)` : "";
+    setMessage(`Successfully replaced ${replacedCount} shift(s) of ${targetName} across all scanned dates with ${candLabel}.${conflictNote}`, "success");
+  } else {
+    setMessage(`Could not replace shifts for ${targetName}. No suitable candidates were available.`, "warn");
+  }
+}
+
+function openBulkReplacementForPerson(personToReplace) {
+  if (!personToReplace) return;
+  const staffKey = personToReplace.initials || personToReplace.name || personToReplace.key;
+  myInitialsInput.value = staffKey;
+  localStorage.setItem("myInitials", staffKey);
+  switchTab("replacements");
+  renderReplacements(false);
+  closeRosterInlineReplacement();
+  const bulkBar = document.getElementById("bulkReplacementBar");
+  if (bulkBar) {
+    bulkBar.hidden = false;
+    bulkBar.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 }
 
 function parseStaffIdentity(staffString) {
@@ -2093,7 +2899,8 @@ function renderPlannerStaffList() {
   for (const input of autoPlannerStaffList.querySelectorAll('input[type="checkbox"]')) input.addEventListener("change", () => {
     if (input.checked) {
       selectedPlannerStaff.add(input.value);
-      availabilityStaff.value = input.value;
+      const availabilityOption = [...availabilityStaff.options].find((option) => option.value === input.value);
+      if (availabilityOption) availabilityOption.selected = true;
       renderAvailabilityRules();
       updateAvailabilityFields();
     } else {
@@ -2105,11 +2912,14 @@ function renderPlannerStaffList() {
   const staffBadge = document.getElementById("plannerStaffBadge");
   if (staffBadge) staffBadge.textContent = `${selectedPlannerStaff.size} selected`;
   autoPlannerSelectAll.textContent = people.length && selectedPlannerStaff.size === people.length ? "Clear all" : "Select all";
-  const previousAvailabilityStaff = availabilityStaff.value;
+  const previousAvailabilityStaff = new Set([...availabilityStaff.selectedOptions].map((option) => option.value));
   availabilityStaff.innerHTML = `<option value="">Select staff</option>${people.map((person) => `<option value="${escapeHtml(person.key)}">${escapeHtml(person.initials)} — ${escapeHtml(person.name)}</option>`).join("")}`;
-  if (people.some((person) => person.key === previousAvailabilityStaff)) {
-    availabilityStaff.value = previousAvailabilityStaff;
-  } else if (people.length) {
+  let restoredSelection = false;
+  for (const option of availabilityStaff.options) {
+    option.selected = previousAvailabilityStaff.has(option.value);
+    if (option.selected) restoredSelection = true;
+  }
+  if (!restoredSelection && people.length) {
     const defaultStaff = people.find((person) => selectedPlannerStaff.has(person.key)) || people[0];
     if (defaultStaff) {
       availabilityStaff.value = defaultStaff.key;
@@ -2120,12 +2930,27 @@ function renderPlannerStaffList() {
   renderPlannerSlaOptions();
 }
 
+function selectAvailabilityStaff(personKeys) {
+  const selected = new Set(personKeys || []);
+  for (const option of availabilityStaff.options) option.selected = selected.has(option.value);
+  renderAvailabilityRules();
+}
+
 function toggleAllPlannerStaff() {
   const people = getPlannerPeople();
   selectedPlannerStaff = selectedPlannerStaff.size === people.length ? new Set() : new Set(people.map((person) => person.key));
   currentAutoPlan = null;
   renderPlannerStaffList();
   autoPlannerResult.textContent = `${selectedPlannerStaff.size} staff selected.`;
+}
+
+function selectFreePlannerStaff() {
+  const roster = getRosterRows();
+  if (!roster) return setMessage("Choose a scanned roster window before selecting free staff.", "warn");
+  selectedPlannerStaff = new Set(roster.rows.filter((person) => person.status === "free").map((person) => person.key));
+  currentAutoPlan = null;
+  renderPlannerStaffList();
+  autoPlannerResult.textContent = `${selectedPlannerStaff.size} staff free for the entire roster window selected.`;
 }
 
 function getPlannerOptions() {
@@ -2175,7 +3000,8 @@ function updateAvailabilityFields() {
 }
 
 function addAvailabilityRule() {
-  if (!availabilityStaff.value) return setMessage("Select a staff member before adding an availability rule.", "warn");
+  const personKeys = [...availabilityStaff.selectedOptions].map((option) => option.value).filter(Boolean);
+  if (!personKeys.length) return setMessage("Select at least one staff member before adding an availability rule.", "warn");
   const mode = availabilityPeriod.value;
   let startDate = availabilityDate.value;
   let endDate = mode === "day" ? startDate : availabilityEnd.value;
@@ -2193,9 +3019,10 @@ function addAvailabilityRule() {
   const weekdays = mode === "weekly" ? [...document.querySelectorAll('#availabilityWeekdays input:checked')].map((input) => input.value) : [];
   if (!startDate || !endDate || endDate < startDate) return setMessage("Enter a valid availability period.", "warn");
   if (mode === "weekly" && !weekdays.length) return setMessage("Select at least one weekday for the weekly availability rule.", "warn");
-  plannerAvailabilityRules.push({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    personKey: availabilityStaff.value,
+  const createdAt = Date.now();
+  plannerAvailabilityRules.push(...personKeys.map((personKey, index) => ({
+    id: `${createdAt}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+    personKey,
     startDate,
     endDate,
     weekdays,
@@ -2203,8 +3030,9 @@ function addAvailabilityRule() {
     shift: availabilityShift.value,
     from: availabilityFrom.value,
     to: availabilityTo.value,
-  });
+  })));
   localStorage.setItem("gsrmPlannerAvailabilityV1", JSON.stringify(plannerAvailabilityRules));
+  syncAvailabilityToBackend();
   if (mode === "dates") {
     selectedAvailabilityDates = new Set();
     availabilityDatesQuick.value = "";
@@ -2212,7 +3040,7 @@ function addAvailabilityRule() {
   }
   currentAutoPlan = null;
   renderAvailabilityRules();
-  autoPlannerResult.textContent = "Availability updated. Build a new plan to apply it.";
+  autoPlannerResult.textContent = `Availability updated for ${personKeys.length} staff member${personKeys.length === 1 ? "" : "s"}. Build a new plan to apply it.`;
 }
 
 function parseAvailabilityDates(value) {
@@ -2296,7 +3124,10 @@ function renderAvailabilityRules() {
   const people = new Map(getPlannerPeople().map((person) => [person.key, person]));
   const weekdayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const rulesBadge = document.getElementById("plannerRulesBadge");
-  if (rulesBadge) rulesBadge.textContent = `${plannerAvailabilityRules.length} rule${plannerAvailabilityRules.length === 1 ? "" : "s"}`;
+  if (rulesBadge) {
+    rulesBadge.textContent = String(plannerAvailabilityRules.length);
+    rulesBadge.setAttribute("aria-label", `${plannerAvailabilityRules.length} availability rule${plannerAvailabilityRules.length === 1 ? "" : "s"}`);
+  }
   availabilityRulesEl.innerHTML = plannerAvailabilityRules.length ? plannerAvailabilityRules.map((rule) => {
     const person = people.get(rule.personKey);
     const period = rule.dates?.length ? rule.dates.join(", ") : rule.startDate === rule.endDate ? rule.startDate : `${rule.startDate}–${rule.endDate}`;
@@ -2307,6 +3138,7 @@ function renderAvailabilityRules() {
   for (const button of availabilityRulesEl.querySelectorAll("button[data-rule-id]")) button.addEventListener("click", () => {
     plannerAvailabilityRules = plannerAvailabilityRules.filter((rule) => rule.id !== button.dataset.ruleId);
     localStorage.setItem("gsrmPlannerAvailabilityV1", JSON.stringify(plannerAvailabilityRules));
+    syncAvailabilityToBackend();
     currentAutoPlan = null;
     renderAvailabilityRules();
   });
@@ -2317,7 +3149,7 @@ function renderPlannerSlaOptions() {
   let saved = null;
   try {
     const options = JSON.parse(localStorage.getItem("gsrmAutoPlannerOptionsV1") || "{}");
-    if (Array.isArray(options.allowedSlas)) saved = new Set(options.allowedSlas);
+    if (Array.isArray(options.allowedSlas) && options.allowedSlas.length > 0) saved = new Set(options.allowedSlas);
   } catch {}
   plannerSlas.innerHTML = values.length
     ? values.map((sla) => `<option value="${escapeHtml(sla)}" ${!saved || saved.has(sla) ? "selected" : ""}>${escapeHtml(sla)}</option>`).join("")
@@ -2325,10 +3157,22 @@ function renderPlannerSlaOptions() {
 }
 
 function buildAutomaticPlan() {
+  if (rosterStateMode !== "edited") setRosterStateMode("edited");
   const roster = getRosterRows();
   if (!roster) return setMessage("Choose a scanned roster date and time window before building a plan.", "warn");
   if (!selectedPlannerStaff.size) return setMessage("Select at least one eligible staff member for automatic planning.", "warn");
   if (!plannerSlas.selectedOptions.length) return setMessage("Select at least one SLA for the automatic planner.", "warn");
+
+  const autoPlannerCard = autoPlannerRun?.closest(".auto-planner");
+  if (autoPlannerCard && autoPlannerCard.classList.contains("collapsed")) {
+    autoPlannerCard.classList.remove("collapsed");
+    if (autoPlannerToggle) {
+      autoPlannerToggle.textContent = "Hide planner";
+      autoPlannerToggle.setAttribute("aria-expanded", "true");
+    }
+    localStorage.setItem("gsrmAutoPlannerCollapsed", "false");
+  }
+
   const generated = OperationsUtils.buildAutoPlan(latestRows, latestStaffDirectory, [...selectedPlannerStaff], roster.dailyWindows, getPlannerOptions());
   const assignmentBySlot = new Map(generated.assignments.map((item) => [`${OperationsUtils.rowKey(item.row)}|${item.position}`, item.person.key]));
   const slots = [];
@@ -2344,12 +3188,43 @@ function buildAutomaticPlan() {
   renderAutomaticPlan();
   if (rosterViewMode === "airline") renderRoster();
   setMessage(`Automatic plan filled ${generated.assignments.length} of ${generated.requestedPositions} missing position(s).`);
+  autoPlannerResult.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function clearAutomaticPlan() {
   currentAutoPlan = null;
-  autoPlannerResult.textContent = "Plan cleared. Select eligible staff, adjust the rules, then build a plan.";
+  autoPlannerResult.textContent = "Plan cleared. Select eligible staff, adjust the rules, then create a plan.";
   if (rosterViewMode === "airline") renderRoster();
+}
+
+function openAvailabilityModal() {
+  const modal = document.getElementById("availabilityModal");
+  if (!modal) return;
+  modal.hidden = false;
+  modal.setAttribute("aria-hidden", "false");
+  renderPlannerStaffList();
+  updateAvailabilityFields();
+  renderAvailabilityRules();
+  availabilityStaff.focus();
+}
+
+function openCoveragePlannerWorkspace() {
+  switchTab("roster");
+  const planner = rosterLayout.querySelector(".auto-planner");
+  if (planner?.classList.contains("collapsed")) {
+    planner.classList.remove("collapsed");
+    autoPlannerToggle.textContent = "Hide planner";
+    autoPlannerToggle.setAttribute("aria-expanded", "true");
+  }
+  planner?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function closeAvailabilityModal() {
+  const modal = document.getElementById("availabilityModal");
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  }
 }
 
 function plannerViolationText(result) {
@@ -2359,13 +3234,26 @@ function plannerViolationText(result) {
 
 function applyPlanToRosterBoard() {
   if (!currentAutoPlan) return;
-  setRosterViewMode("airline");
-  setAllAirlineSections(true);
+  const people = new Map(getPlannerPeople().map((person) => [person.key, person]));
+  let appliedCount = 0;
+  for (const slot of currentAutoPlan.slots.filter((item) => item.personKey)) {
+    const targetRow = latestRows.find((row) => OperationsUtils.rowKey(row) === OperationsUtils.rowKey(slot.row));
+    const person = people.get(slot.personKey);
+    if (!targetRow || !person) continue;
+    targetRow.staff = targetRow.staff || [];
+    if (targetRow.staff.some((label) => matchStaffMember(label, person.initials) || matchStaffMember(label, person.name))) continue;
+    targetRow.staff.push(formatStaffLabel(person));
+    targetRow.assigned = targetRow.staff.length;
+    targetRow.missing = Math.max(0, Number(targetRow.required || 0) - targetRow.assigned);
+    appliedCount += 1;
+  }
+  currentAutoPlan = null;
+  autoPlannerResult.innerHTML = `<div class="planner-applied-message"><strong>Plan added to the edited roster</strong><span>${appliedCount} assignment${appliedCount === 1 ? "" : "s"} added locally. AVBIS was not changed.</span></div>`;
+  setRosterStateMode("edited");
+  setRosterViewMode("staff", false);
   renderRoster();
-  const filledCount = currentAutoPlan.slots.filter((s) => s.personKey).length;
-  setMessage(`Applied ${filledCount} planned assignments to the Flight Schedule view.`, "success");
-  const board = document.getElementById("rosterAirlineView");
-  if (board) board.scrollIntoView({ behavior: "smooth" });
+  setMessage(`Added ${appliedCount} planned assignment${appliedCount === 1 ? "" : "s"} to the edited roster.`, "success");
+  rosterStaffView.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function exportAutoPlanCsv() {
@@ -2435,12 +3323,18 @@ function renderAutomaticPlan(errorText = "") {
 
       <div class="auto-plan-action-bar">
         <div>
-          <strong style="color:var(--ink); font-size:14px;">Automatic Duty Plan Outcome</strong>
-          <span style="display:block; font-size:11px; color:var(--muted);">${assignedCount} filled, ${unfilledSlots.length} unfilled across ${currentAutoPlan.gapCount} gap duties</span>
+          <strong style="color:var(--ink); font-size:13px; font-weight:700;">Plan ready</strong>
+          <span style="display:block; font-size:11px; color:#64748b;">${assignedCount} of ${totalSlots} positions filled${unfilledSlots.length ? ` · ${unfilledSlots.length} need attention` : ""}</span>
         </div>
         <div class="auto-plan-action-buttons">
-          <button type="button" class="primary-btn" id="applyAutoPlanBtn">Apply Plan to Roster</button>
-          <button type="button" class="secondary-btn" id="exportAutoPlanBtn">Export CSV</button>
+          <button type="button" class="primary-btn" id="applyAutoPlanBtn">
+            <svg style="width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            Add to edited roster
+          </button>
+          <button type="button" class="secondary-btn" id="exportAutoPlanBtn">
+            <svg style="width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export CSV
+          </button>
           <button type="button" class="secondary-btn" id="clearAutoPlanBtn">Clear</button>
         </div>
       </div>
@@ -2449,7 +3343,7 @@ function renderAutomaticPlan(errorText = "") {
         ${currentAutoPlan.slots.map((slot, index) => `
           <div class="auto-plan-slot-card ${slot.personKey ? "filled" : "unfilled"}">
             <div class="auto-plan-slot-info">
-              <strong>${escapeHtml(slot.row.flight)} · ${escapeHtml(slot.row.sla)} <small style="color:var(--muted); font-weight:normal;">(Position ${slot.position})</small></strong>
+              <strong>${escapeHtml(slot.row.flight)} · ${escapeHtml(slot.row.sla)} <small style="color:#64748b; font-weight:500;">(Position ${slot.position})</small></strong>
               <span>${escapeHtml(slot.row.date)} · ${escapeHtml(slot.row.start_utc)}–${escapeHtml(slot.row.release_utc)} UTC (${OperationsUtils.dutyMinutes(slot.row)} min)</span>
             </div>
             <div class="auto-plan-slot-select">
@@ -2466,15 +3360,15 @@ function renderAutomaticPlan(errorText = "") {
 
       ${unfilledSlots.length ? `
         <div class="unfilled-diagnostics-card">
-          <strong>Diagnostic Note: ${unfilledSlots.length} position(s) could not be filled automatically</strong>
-          <span>Reasons may include daily/weekly hour limits, overlapping shift windows, or custom availability exclusions. Try selecting additional staff in Step 1 or adjusting shift buffers in Step 2.</span>
+          <strong>${unfilledSlots.length} position(s) still need attention</strong>
+          <span>Add more eligible staff or adjust the planning rules.</span>
         </div>
       ` : ""}
 
       <div class="auto-plan-workload">
-        <strong style="font-size:12px; color:var(--ink);">Planned Workload per Staff Member:</strong>
-        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:6px;">
-          ${people.filter((person) => staffTotals.has(person.key)).map((person) => `<span style="padding:4px 8px; background:#f1f5f9; border-radius:6px; font-size:11px; font-weight:700;"><strong>${escapeHtml(person.name)}</strong>: +${formatHours(staffTotals.get(person.key))}h planned</span>`).join("") || "<span class=\"muted\">No assignments.</span>"}
+        <strong style="font-size:11px; color:#475569; text-transform:uppercase; letter-spacing:0.05em;">Planned Workload per Staff Member:</strong>
+        <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;">
+          ${people.filter((person) => staffTotals.has(person.key)).map((person) => `<span style="padding:3px 8px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:6px; font-size:11px; font-weight:600; color:#334155;"><strong>${escapeHtml(person.name)}</strong>: +${formatHours(staffTotals.get(person.key))}h planned</span>`).join("") || "<span class=\"muted\">No assignments.</span>"}
         </div>
       </div>
     </div>
@@ -2499,6 +3393,7 @@ function updateManualPlanSlot(index, personKey) {
 
 loadPlannerOptions();
 if (localStorage.getItem("gsrmAutoPlannerCollapsed") === "true") autoPlannerToggle.click();
+initBackendSync();
 
 function resolveStaffIdentity(query) {
   for (const staffString of getKnownStaffStrings()) {
@@ -2879,6 +3774,65 @@ function downloadReplacementsCsv() {
   downloadBlob(`gsrm-duty-replacements-${initials}.csv`, csvRows.join("\n"), "text/csv;charset=utf-8");
 }
 
+function downloadInsightsCsv() {
+  if (!latestRows.length) {
+    return setMessage("No scan data available to export workload insights.", "warn");
+  }
+  const analytics = OperationsUtils.buildAnalytics(latestRows, latestStaffDirectory);
+  const roster = getRosterRows();
+  const windows = roster?.dailyWindows || [];
+  const holidayDates = HolidayUtils.getHolidaysForSelectedMonths(scanStartDate.value, scanEndDate.value).map((h) => h.date);
+
+  const headers = ["Staff Member", "Initials", "Duties Count", "Total Hours", "Weekday Hours", "Saturday Hours", "Sunday Hours", "Holiday Hours", "Covered SLAs", "Longest Span (h)"];
+  const rows = analytics.workload.map((person) => {
+    const totals = OperationsUtils.summarizeDutyHours(person.duties, windows, holidayDates);
+    return [
+      person.name || "",
+      person.initials || "",
+      totals.dutyCount,
+      formatHours(totals.totalMinutes),
+      formatHours(totals.weekdayMinutes),
+      formatHours(totals.saturdayMinutes),
+      formatHours(totals.sundayMinutes),
+      formatHours(totals.holidayMinutes),
+      (person.slas || []).join("; "),
+      (person.longestSpanHours || 0).toFixed(1),
+    ].map(csvCell).join(",");
+  });
+
+  const nowStr = new Date().toISOString().slice(0, 10);
+  downloadBlob(`gsrm-coverage-insights-${nowStr}.csv`, [headers.join(","), ...rows].join("\n"), "text/csv;charset=utf-8");
+  setMessage("Downloaded coverage insights CSV report.", "success");
+}
+
+function downloadHistoryCsv() {
+  const history = getScanHistory();
+  if (!history.length) {
+    return setMessage("No saved scan history available to export.", "warn");
+  }
+  const headers = ["Scan ID", "Scanned At", "Date Range", "Flight Count", "Empty Slots Count", "Missing Positions", "Status Notes Count"];
+  const rows = history.map((snap) => {
+    const dateStr = snap.timestamp ? new Date(snap.timestamp).toISOString().replace("T", " ").slice(0, 16) : "";
+    const rowsList = snap.rows || [];
+    const gapsList = snap.gaps || rowsList.filter((r) => Number(r.missing || 0) > 0);
+    const missingTotal = gapsList.reduce((sum, r) => sum + Number(r.missing || 0), 0);
+    const notesCount = Object.keys(snap.actions || {}).length;
+    return [
+      snap.id || "",
+      dateStr,
+      snap.dateRange || "",
+      rowsList.length,
+      gapsList.length,
+      missingTotal,
+      notesCount,
+    ].map(csvCell).join(",");
+  });
+
+  const nowStr = new Date().toISOString().slice(0, 10);
+  downloadBlob(`gsrm-scan-history-${nowStr}.csv`, [headers.join(","), ...rows].join("\n"), "text/csv;charset=utf-8");
+  setMessage("Downloaded scan history CSV report.", "success");
+}
+
 function openGapPlanner(row) {
   selectedGap = row;
   gapPlanner.hidden = false;
@@ -2889,7 +3843,12 @@ function openGapPlanner(row) {
   renderGapValidationState(action);
   gapPlannerTitle.textContent = `${row.date} · ${row.flight} · ${row.sla}`;
   const assigned = (row.staff || []).map((label) => parseStaffIdentity(label)?.name || label).join(", ") || "None";
+  const personalFit = getPersonalGapFit(row);
+  const personalSummary = personalFit.identity
+    ? `<div class="personal-opportunity-summary ${personalFit.state}"><span>Fit for ${escapeHtml(personalFit.identity.name)}</span><strong>${personalFit.state === "eligible" ? `Conflict-free · Match ${escapeHtml(personalFit.candidate.score)}/10` : personalFit.state === "assigned" ? "Already assigned to this duty" : "Not recommended with the current scanned duties"}</strong></div>`
+    : "";
   gapPlannerDetails.innerHTML = `
+    ${personalSummary}
     <div class="planner-detail-grid">
       <div><span>Route</span><strong>${escapeHtml(row.route || "—")}</strong></div>
       <div><span>Aircraft</span><strong>${escapeHtml(row.aircraft || "—")}</strong></div>
@@ -2908,9 +3867,10 @@ function openGapPlanner(row) {
     const availability = candidate.freeAllDay ? "Free all day" : `${formatHours(candidate.connectionGapMinutes)}h ${candidate.closestPosition} nearest duty`;
     const card = document.createElement("div");
     const isSelected = action.assignedCandidateKey === candidate.key;
-    card.className = `planner-candidate-card${isSelected ? " selected" : ""}`;
+    const isPersonal = personalFit.identity?.key === candidate.key;
+    card.className = `planner-candidate-card${isSelected ? " selected" : ""}${isPersonal ? " personal-match" : ""}`;
     card.innerHTML = `
-      <div><strong>${escapeHtml(candidate.initials)} — ${escapeHtml(candidate.name)}</strong><span>${escapeHtml(availability)}</span></div>
+      <div><strong>${isPersonal ? "You · " : ""}${escapeHtml(candidate.initials)} — ${escapeHtml(candidate.name)}</strong><span>${escapeHtml(availability)}</span></div>
       <div class="planner-candidate-actions">
         <div class="planner-tags"><span>Match ${candidate.score}/10</span><span>${candidate.slaExperience} observed ${escapeHtml(row.sla)} duty(s)</span></div>
         <button type="button" class="secondary-btn candidate-select-btn">${isSelected ? "Selected" : "Select candidate"}</button>
@@ -2934,6 +3894,12 @@ function getGapActions() {
 function storeGapAction(key, action, actions = getGapActions()) {
   actions[key] = action;
   localStorage.setItem(ACTIONS_KEY, JSON.stringify(actions));
+  fetch("/api/notes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, ...action }),
+  }).catch((err) => console.warn("Could not sync note to backend:", err));
+
   const history = getScanHistory();
   const latest = history.find((snapshot) => (snapshot.rows || []).some((row) => OperationsUtils.rowKey(row) === key));
   if (latest) {
@@ -2951,11 +3917,27 @@ function selectGapCandidate(candidate) {
     ...current,
     assignedCandidateKey: candidate.key,
     assignedCandidate: `${candidate.initials} - ${candidate.name}`,
-    validation: null,
+    status: "Covered",
+    validation: { valid: true, checkedAt: new Date().toISOString() },
     updatedAt: new Date().toISOString(),
   };
   storeGapAction(key, updated, actions);
+
+  const targetRow = latestRows.find((r) => OperationsUtils.rowKey(r) === key);
+  if (targetRow) {
+    targetRow.staff = targetRow.staff || [];
+    const formatted = formatStaffLabel(candidate);
+    if (!targetRow.staff.some((label) => matchStaffMember(label, candidate.key))) {
+      targetRow.staff.push(formatted);
+      targetRow.assigned = targetRow.staff.length;
+      targetRow.missing = Math.max(0, Number(targetRow.required || 0) - targetRow.assigned);
+    }
+  }
+  currentAutoPlan = null;
+
+  applyFilters();
   openGapPlanner(selectedGap);
+  setMessage(`Assigned ${candidate.name} to ${selectedGap.flight} (${selectedGap.sla}).`, "success");
 }
 
 function clearGapCandidate() {
@@ -2966,6 +3948,283 @@ function clearGapCandidate() {
   const { assignedCandidateKey, assignedCandidate, validation, ...rest } = current;
   storeGapAction(key, { ...rest, updatedAt: new Date().toISOString() }, actions);
   openGapPlanner(selectedGap);
+}
+
+function exportPdf() {
+  if (!latestRows.length && activeTab !== "history") {
+    return setMessage("No scan data available to export to PDF.", "warn");
+  }
+
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) {
+    return exportPdfFallback();
+  }
+
+  try {
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    const timeStr = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+    const titles = {
+      gaps: "GSRM Empty Slots Report",
+      replacements: "GSRM Duty Replacements Report",
+      roster: rosterViewMode === "airline" ? "GSRM Flight Allocation Schedule Report" : "GSRM Staff Duty Roster Report",
+      insights: "GSRM Coverage & Workload Insights Report",
+      history: "GSRM Scan Snapshots History Report",
+    };
+    const titleText = titles[activeTab] || "GSRM Operational Report";
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(15, 23, 42);
+    doc.text(titleText, 14, 12);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Generated: ${dateStr} ${timeStr} UTC`, 283, 12, { align: "right" });
+
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.3);
+    doc.line(14, 15, 283, 15);
+
+    let tableHeaders = [];
+    let exportRows = [];
+    let columnStyles = {};
+
+    if (activeTab === "replacements") {
+      tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Start UTC", "Release UTC", "Duration", "Candidates", "Top Candidate Match"]];
+      const initials = myInitialsInput.value.trim().toUpperCase();
+      const myDuties = latestRows.filter((row) => row.staff && row.staff.some((s) => matchStaffMember(s, initials)));
+      const maxGapMinutes = getMaxDutyGap().minutes;
+      const maxGapMs = maxGapMinutes * 60 * 1000;
+
+      exportRows = myDuties.map((duty) => {
+        const dutyStart = parseUtcTime(duty.date, duty.start_utc);
+        const dutyRelease = parseUtcTime(duty.date, duty.release_utc);
+        const candidates = [];
+        for (const candStr of getKnownStaffStrings()) {
+          const identity = parseStaffIdentity(candStr);
+          if (!identity || matchStaffMember(candStr, initials)) continue;
+          const shifts = latestRows.filter((r) => r.staff && r.staff.some((s) => parseStaffIdentity(s)?.key === identity.key));
+          if (shifts.some((s) => {
+            const st = parseUtcTime(s.date, s.start_utc);
+            const rel = parseUtcTime(s.date, s.release_utc);
+            return st && rel && st < dutyRelease && rel > dutyStart;
+          })) continue;
+
+          const sameDay = shifts.filter((s) => s.date === duty.date);
+          let closestGapMs = Infinity;
+          for (const s of sameDay) {
+            const st = parseUtcTime(s.date, s.start_utc);
+            const rel = parseUtcTime(s.date, s.release_utc);
+            if (st && rel) {
+              if (rel <= dutyStart) closestGapMs = Math.min(closestGapMs, dutyStart - rel);
+              if (st >= dutyRelease) closestGapMs = Math.min(closestGapMs, st - dutyRelease);
+            }
+          }
+          const freeAllDay = sameDay.length === 0;
+          if (!freeAllDay && (!Number.isFinite(closestGapMs) || closestGapMs > maxGapMs)) continue;
+          let score = freeAllDay ? 4 : 5;
+          if (shifts.some((s) => s.sla === duty.sla)) score += 3;
+          candidates.push({ initials: identity.initials, name: identity.name, score, freeAllDay, connectionGapMinutes: Number.isFinite(closestGapMs) ? Math.round(closestGapMs / 60000) : null });
+        }
+        candidates.sort((a, b) => b.score - a.score || (a.connectionGapMinutes ?? Infinity) - (b.connectionGapMinutes ?? Infinity));
+        const topMatch = candidates[0] ? `${candidates[0].name} (${candidates[0].freeAllDay ? "Free all day" : `${formatHours(candidates[0].connectionGapMinutes)}h gap`})` : "None available";
+        return [
+          duty.date || "",
+          duty.flight || "",
+          duty.direction || "",
+          duty.route || "",
+          duty.sla || "",
+          duty.start_utc || "",
+          duty.release_utc || "",
+          duty.duration || "",
+          candidates.length,
+          topMatch
+        ];
+      });
+      columnStyles = {
+        0: { cellWidth: 26 }, 1: { cellWidth: 24, fontStyle: "bold" }, 2: { cellWidth: 16, halign: "center" },
+        3: { cellWidth: 28 }, 4: { cellWidth: 22 }, 5: { cellWidth: 24, halign: "center" },
+        6: { cellWidth: 24, halign: "center" }, 7: { cellWidth: 20, halign: "center" },
+        8: { cellWidth: 22, halign: "center", fontStyle: "bold" }, 9: { cellWidth: 59 }
+      };
+
+    } else if (activeTab === "roster") {
+      const roster = getRosterRows();
+      if (rosterViewMode === "airline") {
+        tableHeaders = [["Date", "Flight", "Dir", "Route", "Aircraft", "Sch. UTC", "SLA", "Start UTC", "Release UTC", "Req / Asgd", "Allocated Staff"]];
+        const days = getAirlineRosterDays(roster);
+        exportRows = days.flatMap((day) => day.flights.flatMap((flight) => flight.duties.map((duty) => [
+          day.isoDate || "",
+          duty.flight || "",
+          duty.direction || "",
+          duty.route || "",
+          duty.aircraft || "",
+          duty.scheduled_utc || "",
+          duty.sla || "",
+          duty.start_utc || "",
+          duty.release_utc || "",
+          `${duty.required || 0} / ${duty.assigned || 0}`,
+          (duty.staff || []).map((s) => parseStaffIdentity(s)?.name || s).join(", ") || "Unassigned"
+        ])));
+        columnStyles = {
+          0: { cellWidth: 24 }, 1: { cellWidth: 24, fontStyle: "bold" }, 2: { cellWidth: 14, halign: "center" },
+          3: { cellWidth: 26 }, 4: { cellWidth: 20 }, 5: { cellWidth: 22, halign: "center" },
+          6: { cellWidth: 20 }, 7: { cellWidth: 22, halign: "center" }, 8: { cellWidth: 22, halign: "center" },
+          9: { cellWidth: 22, halign: "center", fontStyle: "bold" }, 10: { cellWidth: 53 }
+        };
+      } else {
+        tableHeaders = [["Status", "Initials", "Staff Name", "Date", "Flight", "Direction", "Route", "SLA", "Start UTC", "Release UTC"]];
+        const visible = new Set(JSON.parse(rosterBody.dataset.visibleStaffKeys || "[]"));
+        const people = (roster?.rows || []).filter((person) => visible.has(person.key));
+        exportRows = people.flatMap((person) => (person.overlapping.length ? person.overlapping : [null]).map((alloc) => [
+          person.status === "free" ? "Free" : "On duty",
+          person.initials || "",
+          person.name || "",
+          alloc?.date || "—",
+          alloc?.flight || "—",
+          alloc?.direction || "—",
+          alloc?.route || "—",
+          alloc?.sla || "—",
+          alloc?.start_utc || "—",
+          alloc?.release_utc || "—",
+        ]));
+        columnStyles = {
+          0: { cellWidth: 20, halign: "center" }, 1: { cellWidth: 18, fontStyle: "bold" }, 2: { cellWidth: 42, fontStyle: "bold" },
+          3: { cellWidth: 26 }, 4: { cellWidth: 26 }, 5: { cellWidth: 18, halign: "center" },
+          6: { cellWidth: 32 }, 7: { cellWidth: 26 }, 8: { cellWidth: 30, halign: "center" }, 9: { cellWidth: 31, halign: "center" }
+        };
+      }
+
+    } else if (activeTab === "insights") {
+      tableHeaders = [["Staff Member", "Initials", "Duties", "Total Hours", "Weekday", "Saturday", "Sunday", "Holiday", "SLAs Covered", "Max Span"]];
+      const analytics = OperationsUtils.buildAnalytics(latestRows, latestStaffDirectory);
+      const roster = getRosterRows();
+      const windows = roster?.dailyWindows || [];
+      const holidayDates = HolidayUtils.getHolidaysForSelectedMonths(scanStartDate.value, scanEndDate.value).map((h) => h.date);
+
+      exportRows = analytics.workload.map((person) => {
+        const totals = OperationsUtils.summarizeDutyHours(person.duties, windows, holidayDates);
+        return [
+          person.name || "",
+          person.initials || "",
+          totals.dutyCount,
+          `${formatHours(totals.totalMinutes)}h`,
+          `${formatHours(totals.weekdayMinutes)}h`,
+          `${formatHours(totals.saturdayMinutes)}h`,
+          `${formatHours(totals.sundayMinutes)}h`,
+          `${formatHours(totals.holidayMinutes)}h`,
+          (person.slas || []).join(", ") || "—",
+          `${(person.longestSpanHours || 0).toFixed(1)}h`,
+        ];
+      });
+      columnStyles = {
+        0: { cellWidth: 45, fontStyle: "bold" }, 1: { cellWidth: 18, halign: "center" }, 2: { cellWidth: 18, halign: "center" },
+        3: { cellWidth: 26, halign: "center", fontStyle: "bold" }, 4: { cellWidth: 24, halign: "center" },
+        5: { cellWidth: 24, halign: "center" }, 6: { cellWidth: 24, halign: "center" },
+        7: { cellWidth: 24, halign: "center" }, 8: { cellWidth: 46 }, 9: { cellWidth: 20, halign: "center" }
+      };
+
+    } else if (activeTab === "history") {
+      tableHeaders = [["Scan ID", "Scanned At", "Date Range", "Flight Count", "Empty Slots", "Missing Positions", "Status Notes"]];
+      const history = getScanHistory();
+      exportRows = history.map((snap) => {
+        const dateStr = snap.timestamp ? new Date(snap.timestamp).toISOString().replace("T", " ").slice(0, 16) : "";
+        const rowsList = snap.rows || [];
+        const gapsList = snap.gaps || rowsList.filter((r) => Number(r.missing || 0) > 0);
+        const missingTotal = gapsList.reduce((sum, r) => sum + Number(r.missing || 0), 0);
+        const notesCount = Object.keys(snap.actions || {}).length;
+        return [
+          snap.id || "",
+          dateStr,
+          snap.dateRange || "",
+          rowsList.length,
+          gapsList.length,
+          missingTotal,
+          notesCount,
+        ];
+      });
+      columnStyles = {
+        0: { cellWidth: 42, fontStyle: "bold" }, 1: { cellWidth: 38, halign: "center" }, 2: { cellWidth: 42 },
+        3: { cellWidth: 30, halign: "center" }, 4: { cellWidth: 32, halign: "center" },
+        5: { cellWidth: 40, halign: "center", fontStyle: "bold", textColor: [220, 38, 38] }, 6: { cellWidth: 45, halign: "center" }
+      };
+
+    } else {
+      // Default: Gaps / Empty Slots
+      tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Req", "Assigned", "Missing", "Start UTC", "Release UTC", "Duration"]];
+      exportRows = filteredRows.map((r) => [
+        r.date || "",
+        r.flight || "",
+        r.direction || "",
+        r.route || "",
+        r.sla || "",
+        r.required || 0,
+        r.assigned || 0,
+        r.missing || 0,
+        r.start_utc || "",
+        r.release_utc || "",
+        r.duration || ""
+      ]);
+      columnStyles = {
+        0: { cellWidth: 26, halign: "left" }, 1: { cellWidth: 24, halign: "left", fontStyle: "bold" },
+        2: { cellWidth: 16, halign: "center" }, 3: { cellWidth: 32, halign: "left" },
+        4: { cellWidth: 22, halign: "left" }, 5: { cellWidth: 16, halign: "center" },
+        6: { cellWidth: 18, halign: "center" }, 7: { cellWidth: 18, halign: "center", fontStyle: "bold", textColor: [220, 38, 38] },
+        8: { cellWidth: 26, halign: "center" }, 9: { cellWidth: 26, halign: "center" },
+        10: { cellWidth: 25, halign: "center" }
+      };
+    }
+
+    if (!exportRows.length) {
+      return setMessage(`No data available on the ${activeTab} tab to export to PDF.`, "warn");
+    }
+
+    doc.autoTable({
+      head: tableHeaders,
+      body: exportRows,
+      startY: 19,
+      margin: { left: 14, right: 14, top: 19, bottom: 14 },
+      theme: "grid",
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+        fontSize: 8.5,
+        halign: "left"
+      },
+      bodyStyles: {
+        fontSize: 8,
+        textColor: [30, 41, 59]
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252]
+      },
+      columnStyles,
+      didDrawPage: (data) => {
+        const pageCount = doc.internal.getNumberOfPages();
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text(`Page ${data.pageNumber} of ${pageCount}`, 283, 203, { align: "right" });
+        doc.text(titleText, 14, 203);
+      }
+    });
+
+    const filename = `gsrm-${activeTab}-report-${now.toISOString().slice(0, 10)}.pdf`;
+    doc.save(filename);
+    setMessage(`PDF report generated and downloaded: ${filename}`, "success");
+  } catch (err) {
+    console.error("PDF generation error:", err);
+    exportPdfFallback();
+  }
+}
+
+function exportPdfFallback() {
+  window.print();
+  setMessage("Opened print dialog for PDF export.", "info");
 }
 
 function getPlannedCoverageAssignments(actions = getGapActions()) {
@@ -3117,7 +4376,8 @@ function renderMetricBars(container, items) {
 }
 
 function snapshotGap(row) {
-  return { key: OperationsUtils.rowKey(row), date: row.date, flight: row.flight, route: row.route, sla: row.sla, required: Number(row.required || 0), assigned: Number(row.assigned || 0), missing: Number(row.missing || 0), start_utc: row.start_utc, release_utc: row.release_utc };
+  const durationMinutes = OperationsUtils.dutyMinutes(row);
+  return { key: OperationsUtils.rowKey(row), date: row.date, flight: row.flight, route: row.route, sla: row.sla, required: Number(row.required || 0), assigned: Number(row.assigned || 0), missing: Number(row.missing || 0), start_utc: row.start_utc, release_utc: row.release_utc, staff: row.staff || [], durationMinutes, missingHours: Number(((Number(row.missing || 0) * durationMinutes) / 60).toFixed(2)) };
 }
 
 function getScanHistory() {
@@ -3157,6 +4417,11 @@ function saveScanSnapshot(result, payload) {
   const history = [snapshot, ...getScanHistory().filter((item) => item.id !== snapshot.id)].slice(0, 8);
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ snapshot }),
+    }).catch((err) => console.warn("Could not sync history snapshot to backend:", err));
   } catch (error) {
     console.warn("Could not save scan history:", error);
   }
@@ -3164,7 +4429,58 @@ function saveScanSnapshot(result, payload) {
 
 function clearScanHistory() {
   localStorage.removeItem(HISTORY_KEY);
+  fetch("/api/history", { method: "DELETE" }).catch((err) => console.warn("Could not clear history on backend:", err));
   renderHistory();
+}
+
+function syncAvailabilityToBackend() {
+  fetch("/api/availability", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rules: plannerAvailabilityRules }),
+  }).catch((err) => console.warn("Could not sync availability rules to backend:", err));
+}
+
+async function initBackendSync() {
+  try {
+    const [notesRes, availRes, histRes] = await Promise.allSettled([
+      fetch("/api/notes").then((r) => r.json()),
+      fetch("/api/availability").then((r) => r.json()),
+      fetch("/api/history").then((r) => r.json()),
+    ]);
+
+    if (notesRes.status === "fulfilled" && notesRes.value?.success && notesRes.value?.notes) {
+      const local = getGapActions();
+      const merged = { ...local, ...notesRes.value.notes };
+      localStorage.setItem(ACTIONS_KEY, JSON.stringify(merged));
+      if (Object.keys(local).length > 0) {
+        fetch("/api/notes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notes: merged }),
+        }).catch(() => {});
+      }
+    }
+
+    if (availRes.status === "fulfilled" && availRes.value?.success && Array.isArray(availRes.value.rules)) {
+      if (availRes.value.rules.length > 0) {
+        plannerAvailabilityRules = availRes.value.rules;
+        localStorage.setItem("gsrmPlannerAvailabilityV1", JSON.stringify(plannerAvailabilityRules));
+        renderAvailabilityRules();
+      } else if (plannerAvailabilityRules.length > 0) {
+        syncAvailabilityToBackend();
+      }
+    }
+
+    if (histRes.status === "fulfilled" && histRes.value?.success && Array.isArray(histRes.value.history)) {
+      if (histRes.value.history.length > 0) {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(histRes.value.history));
+        renderHistory();
+      }
+    }
+  } catch (err) {
+    console.warn("Backend sync initialization warning:", err);
+  }
 }
 
 function applySnapshotConfig(snapshot) {
@@ -3198,6 +4514,7 @@ function restoreSnapshot(snapshot) {
   }
   applySnapshotConfig(snapshot);
   latestRows = snapshot.rows;
+  originalRows = JSON.parse(JSON.stringify(snapshot.rows));
   latestScannedDates = snapshot.scannedDates || [];
   latestStaffDirectory = snapshot.staffDirectory || [];
   if (snapshot.actions) localStorage.setItem(ACTIONS_KEY, JSON.stringify({ ...getGapActions(), ...snapshot.actions }));
@@ -3219,6 +4536,21 @@ function exportSnapshot(snapshot) {
   downloadBlob(`gsrm-scan-snapshot-${safeStamp}.json`, JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), snapshot: { ...snapshot, actions: { ...(snapshot.actions || {}), ...actions } } }, null, 2), "application/json;charset=utf-8");
 }
 
+function deleteSnapshot(snapshot) {
+  if (!snapshot || !snapshot.id) return;
+  const history = getScanHistory().filter((item) => item.id !== snapshot.id);
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    fetch(`/api/history?id=${encodeURIComponent(snapshot.id)}`, { method: "DELETE" })
+      .catch((err) => console.warn("Could not delete history snapshot on backend:", err));
+  } catch (error) {
+    console.warn("Could not delete scan history item:", error);
+  }
+  renderHistory();
+  updateExportButtonsState();
+  setMessage("Scan snapshot deleted from history.", "info");
+}
+
 function renderHistory() {
   const history = getScanHistory();
   const list = document.getElementById("historyList");
@@ -3227,34 +4559,142 @@ function renderHistory() {
     comparisonEl.innerHTML = "";
     list.innerHTML = '<div class="empty-selection">No saved scans yet.</div>';
     resultCount.textContent = "0";
+    flightCount.textContent = "0";
+    dateCount.textContent = "0";
+    updateExportButtonsState();
     return;
   }
-  list.innerHTML = history.map((snapshot, index) => `<div class="history-card" data-snapshot-id="${escapeHtml(snapshot.id)}"><div class="history-card-summary"><strong>${escapeHtml(new Date(snapshot.createdAt).toLocaleString())}</strong><span>${escapeHtml(snapshot.startDate)} → ${escapeHtml(snapshot.endDate)}</span><small><b>${snapshot.gaps.length}</b> gaps · <b>${snapshot.flights}</b> flights · <b>${snapshot.staffCount}</b> staff${snapshot.cancelled ? " · interrupted" : ""}${index === 0 ? '<em>Latest</em>' : ""}</small></div><div class="history-card-actions"><button type="button" class="secondary-btn" data-action="restore">Restore</button><button type="button" class="secondary-btn" data-action="rerun">Rerun</button><button type="button" class="secondary-btn" data-action="export">Export snapshot</button></div></div>`).join("");
+  list.innerHTML = history.map((snapshot, index) => `<div class="history-card" data-snapshot-id="${escapeHtml(snapshot.id)}"><div class="history-card-summary"><strong>${escapeHtml(new Date(snapshot.createdAt).toLocaleString())}</strong><span>${escapeHtml(snapshot.startDate)} → ${escapeHtml(snapshot.endDate)}</span><small><b>${snapshot.gaps.length}</b> gaps · <b>${snapshot.flights}</b> flights · <b>${snapshotDisplayStaffCount(snapshot)}</b> staff${snapshot.cancelled ? " · interrupted" : ""}${index === 0 ? '<em>Latest</em>' : ""}</small></div><div class="history-card-actions"><button type="button" class="secondary-btn" data-action="restore">Restore</button><button type="button" class="secondary-btn" data-action="rerun">Rerun</button><button type="button" class="secondary-btn" data-action="export">Export snapshot</button><button type="button" class="secondary-btn danger-btn" data-action="delete">Delete</button></div></div>`).join("");
   for (const card of list.querySelectorAll(".history-card")) {
     const snapshot = history.find((item) => item.id === card.dataset.snapshotId);
     card.querySelector('[data-action="restore"]').addEventListener("click", () => restoreSnapshot(snapshot));
     card.querySelector('[data-action="rerun"]').addEventListener("click", () => rerunSnapshot(snapshot));
     card.querySelector('[data-action="export"]').addEventListener("click", () => exportSnapshot(snapshot));
+    card.querySelector('[data-action="delete"]').addEventListener("click", () => deleteSnapshot(snapshot));
   }
   if (history.length > 1) {
-    const comparison = OperationsUtils.compareSnapshots(history[0], history[1]);
-    comparisonEl.innerHTML = `<div class="comparison-head"><strong>Latest vs previous scan</strong><span>Matched by date, flight, SLA, and duty window</span></div><div class="comparison-cards"><div class="opened"><strong>${comparison.opened.length}</strong><span>New gaps</span></div><div class="resolved"><strong>${comparison.resolved.length}</strong><span>Resolved</span></div><div class="changed"><strong>${comparison.changed.length}</strong><span>Coverage changed</span></div></div>${renderComparisonDetails(comparison)}`;
+    renderHistoryComparison(history);
   } else {
     comparisonEl.innerHTML = '<div class="empty-selection">Run another scan to see what changed.</div>';
   }
   resultCount.textContent = String(history.length);
-  csvBtn.disabled = true;
+  flightCount.textContent = String(history[0].flights || 0);
+  dateCount.textContent = String((history[0].scannedDates || []).length);
+  updateExportButtonsState();
   opsCsvBtn.disabled = !latestRows.some((row) => Number(row.missing || 0) > 0);
 }
 
-function renderComparisonDetails(comparison) {
-  const rows = [
-    ...comparison.opened.map((gap) => ["New", gap]),
-    ...comparison.resolved.map((gap) => ["Resolved", gap]),
-    ...comparison.changed.map((gap) => ["Changed", gap]),
-  ].slice(0, 30);
-  if (!rows.length) return '<div class="comparison-empty">No gap changes detected.</div>';
-  return `<div class="comparison-list">${rows.map(([kind, gap]) => `<div><span class="change-${kind.toLowerCase()}">${kind}</span><strong>${escapeHtml(gap.date)} · ${escapeHtml(gap.flight)} · ${escapeHtml(gap.sla)}</strong><small>${escapeHtml(gap.start_utc)}–${escapeHtml(gap.release_utc)} UTC · ${gap.missing} missing</small></div>`).join("")}</div>`;
+function snapshotDisplayStaffCount(snapshot) {
+  const staff = new Set(snapshot.staffDirectory || []);
+  for (const row of snapshot.rows || []) for (const label of row.staff || []) staff.add(label);
+  return staff.size || Number(snapshot.staffCount || 0);
+}
+
+function renderHistoryComparison(history, currentId = history[0]?.id, previousId = history[1]?.id) {
+  const comparisonEl = document.getElementById("historyComparison");
+  const current = history.find((item) => item.id === currentId) || history[0];
+  const previous = history.find((item) => item.id === previousId) || history.find((item) => item.id !== current.id) || history[0];
+  const comparison = OperationsUtils.compareSnapshots(current, previous);
+  const entries = buildHistoryComparisonEntries(current, previous, comparison);
+  const hours = (kind) => entries.filter((entry) => entry.kind === kind).reduce((sum, entry) => sum + Math.abs(entry.missingHoursDelta), 0);
+  const option = (snapshot) => `${new Date(snapshot.createdAt).toLocaleString()} · ${snapshot.startDate}–${snapshot.endDate} · ${snapshot.gaps.length} gaps`;
+  const rangesOverlap = current.startDate <= previous.endDate && previous.startDate <= current.endDate;
+  comparisonEl.innerHTML = `<div class="comparison-head"><div><strong>Compare saved scans</strong><span>Choose two scans to review staffing, coverage, and missing staff-hours</span></div><button id="historyComparisonToggle" class="secondary-btn" type="button" aria-expanded="true">Collapse details</button></div><div class="comparison-scan-picker"><label><span>Current scan</span><select id="historyCompareCurrent">${history.map((snapshot) => `<option value="${escapeHtml(snapshot.id)}" ${snapshot.id === current.id ? "selected" : ""}>${escapeHtml(option(snapshot))}</option>`).join("")}</select></label><span class="comparison-vs">vs</span><label><span>Baseline scan</span><select id="historyComparePrevious">${history.map((snapshot) => `<option value="${escapeHtml(snapshot.id)}" ${snapshot.id === previous.id ? "selected" : ""}>${escapeHtml(option(snapshot))}</option>`).join("")}</select></label></div>${rangesOverlap ? "" : `<div class="comparison-scope-warning"><strong>Different date ranges</strong><span>${escapeHtml(current.startDate)}–${escapeHtml(current.endDate)} does not overlap ${escapeHtml(previous.startDate)}–${escapeHtml(previous.endDate)}. New and resolved items mainly reflect the changed scan scope.</span></div>`}<div id="historyComparisonBody"><div class="comparison-cards"><button type="button" class="opened" data-comparison-kind="New"><strong>${comparison.opened.length}</strong><span>New gaps</span><small>${hours("New").toFixed(1)} staff-h</small></button><button type="button" class="resolved" data-comparison-kind="Resolved"><strong>${comparison.resolved.length}</strong><span>Resolved</span><small>${hours("Resolved").toFixed(1)} staff-h</small></button><button type="button" class="changed" data-comparison-kind="Changed"><strong>${comparison.changed.length}</strong><span>Coverage changed</span><small>${hours("Changed").toFixed(1)} staff-h delta</small></button></div>${renderComparisonDetails(entries)}</div>`;
+  document.getElementById("historyCompareCurrent").addEventListener("change", (event) => renderHistoryComparison(history, event.target.value, document.getElementById("historyComparePrevious").value));
+  document.getElementById("historyComparePrevious").addEventListener("change", (event) => renderHistoryComparison(history, document.getElementById("historyCompareCurrent").value, event.target.value));
+  bindHistoryComparisonControls(entries);
+}
+
+function buildHistoryComparisonEntries(latest, previous, comparison) {
+  const latestRows = new Map([...(latest.rows || []), ...(latest.gaps || [])].map((row) => [OperationsUtils.rowKey(row), row]));
+  const previousRows = new Map([...(previous.rows || []), ...(previous.gaps || [])].map((row) => [OperationsUtils.rowKey(row), row]));
+  const staffNames = (row) => [...new Set((row?.staff || []).map((label) => parseStaffIdentity(label)?.name || label).filter(Boolean))].sort();
+  const makeEntry = (kind, gap) => {
+    const key = gap.key || OperationsUtils.rowKey(gap);
+    const current = latestRows.get(key) || (kind === "New" || kind === "Changed" ? gap : null);
+    const before = previousRows.get(key) || (kind === "Resolved" ? gap : null);
+    const reference = current || before || gap;
+    const durationMinutes = Number(reference.durationMinutes || OperationsUtils.dutyMinutes(reference) || 0);
+    const currentMissing = Number(current?.missing || 0);
+    const previousMissing = Number(before?.missing || 0);
+    const currentStaff = staffNames(current);
+    const previousStaff = staffNames(before);
+    return {
+      key,
+      kind,
+      row: reference,
+      durationMinutes,
+      currentMissing,
+      previousMissing,
+      currentAssigned: Number(current?.assigned || 0),
+      previousAssigned: Number(before?.assigned || 0),
+      addedStaff: currentStaff.filter((name) => !previousStaff.includes(name)),
+      removedStaff: previousStaff.filter((name) => !currentStaff.includes(name)),
+      currentStaff,
+      previousStaff,
+      missingDelta: currentMissing - previousMissing,
+      missingHoursDelta: (currentMissing - previousMissing) * durationMinutes / 60,
+    };
+  };
+  return [
+    ...comparison.opened.map((gap) => makeEntry("New", gap)),
+    ...comparison.resolved.map((gap) => makeEntry("Resolved", gap)),
+    ...comparison.changed.map((gap) => makeEntry("Changed", gap)),
+  ];
+}
+
+function renderComparisonDetails(entries) {
+  if (!entries.length) return '<div class="comparison-empty">No gap changes detected.</div>';
+  const groups = [["New", "New gaps"], ["Resolved", "Resolved gaps"], ["Changed", "Coverage changes"]];
+  return `<div class="comparison-controls"><input id="historyComparisonSearch" type="search" placeholder="Filter flight, SLA, route, or staff"><select id="historyComparisonType"><option value="">All changes</option><option value="New">New gaps</option><option value="Resolved">Resolved</option><option value="Changed">Coverage changed</option></select><button id="historyComparisonSelectAll" class="secondary-btn" type="button">Select visible</button><button id="historyComparisonClear" class="secondary-btn" type="button">Clear</button><button id="historyComparisonExport" class="primary-btn" type="button" disabled>Export selected <span id="historyComparisonSelectedCount">0</span></button></div><div class="comparison-groups">${groups.map(([kind, label]) => {
+    const groupEntries = entries.filter((entry) => entry.kind === kind);
+    if (!groupEntries.length) return "";
+    return `<details class="comparison-group" data-comparison-group="${kind}" ${kind === "Changed" ? "open" : ""}><summary><span class="change-${kind.toLowerCase()}">${label}</span><b>${groupEntries.length}</b><small>${groupEntries.reduce((sum, entry) => sum + Math.abs(entry.missingHoursDelta), 0).toFixed(1)} staff-h</small></summary><div class="comparison-detail-list">${groupEntries.map((entry, index) => {
+      const row = entry.row;
+      const deltaLabel = `${entry.missingDelta > 0 ? "+" : ""}${entry.missingDelta} missing · ${entry.missingHoursDelta > 0 ? "+" : ""}${entry.missingHoursDelta.toFixed(1)} staff-h`;
+      const staffChanges = [entry.addedStaff.length ? `Added: ${entry.addedStaff.join(", ")}` : "", entry.removedStaff.length ? `Removed: ${entry.removedStaff.join(", ")}` : ""].filter(Boolean);
+      const searchText = [kind, row.date, row.flight, row.route, row.sla, ...entry.currentStaff, ...entry.previousStaff].join(" ").toLowerCase();
+      return `<label class="comparison-detail-row" data-kind="${kind}" data-entry-index="${entries.indexOf(entry)}" data-search="${escapeHtml(searchText)}"><input type="checkbox"><span class="comparison-detail-main"><strong>${escapeHtml(row.date)} · ${escapeHtml(row.flight)} · ${escapeHtml(row.sla)}</strong><small>${escapeHtml(row.route || "Route unavailable")} · ${escapeHtml(row.start_utc)}–${escapeHtml(row.release_utc)} UTC · ${(entry.durationMinutes / 60).toFixed(1)}h duty</small>${staffChanges.length ? `<em>${staffChanges.map(escapeHtml).join(" · ")}</em>` : `<em>Staff list unchanged${entry.currentStaff.length ? ` · ${escapeHtml(entry.currentStaff.join(", "))}` : ""}</em>`}</span><span class="comparison-delta ${entry.missingDelta > 0 ? "worse" : entry.missingDelta < 0 ? "better" : "neutral"}"><b>${escapeHtml(deltaLabel)}</b><small>${entry.previousAssigned}→${entry.currentAssigned} assigned</small></span></label>`;
+    }).join("")}</div></details>`;
+  }).join("")}</div>`;
+}
+
+function bindHistoryComparisonControls(entries) {
+  const body = document.getElementById("historyComparisonBody");
+  const search = document.getElementById("historyComparisonSearch");
+  const type = document.getElementById("historyComparisonType");
+  const toggle = document.getElementById("historyComparisonToggle");
+  if (!search || !type) {
+    toggle?.addEventListener("click", (event) => { const collapsed = body.hidden = !body.hidden; event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details"; event.currentTarget.setAttribute("aria-expanded", String(!collapsed)); });
+    return;
+  }
+  const rows = [...document.querySelectorAll(".comparison-detail-row")];
+  search.value = "";
+  type.value = "";
+  const updateSelection = () => {
+    const selected = rows.filter((row) => row.querySelector('input[type="checkbox"]').checked);
+    document.getElementById("historyComparisonSelectedCount").textContent = String(selected.length);
+    document.getElementById("historyComparisonExport").disabled = !selected.length;
+  };
+  const applyComparisonFilter = () => {
+    const query = search.value.trim().toLowerCase();
+    for (const row of rows) row.hidden = Boolean((type.value && row.dataset.kind !== type.value) || (query && !row.dataset.search.includes(query)));
+    for (const group of document.querySelectorAll(".comparison-group")) group.hidden = ![...group.querySelectorAll(".comparison-detail-row")].some((row) => !row.hidden);
+  };
+  search.addEventListener("input", applyComparisonFilter);
+  type.addEventListener("change", applyComparisonFilter);
+  for (const row of rows) row.querySelector('input[type="checkbox"]').addEventListener("change", updateSelection);
+  document.getElementById("historyComparisonSelectAll").addEventListener("click", () => { for (const row of rows.filter((item) => !item.hidden)) row.querySelector('input[type="checkbox"]').checked = true; updateSelection(); });
+  document.getElementById("historyComparisonClear").addEventListener("click", () => { for (const row of rows) row.querySelector('input[type="checkbox"]').checked = false; updateSelection(); });
+  toggle.addEventListener("click", (event) => { const collapsed = body.hidden = !body.hidden; event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details"; event.currentTarget.setAttribute("aria-expanded", String(!collapsed)); });
+  for (const card of document.querySelectorAll("[data-comparison-kind]")) card.addEventListener("click", () => { type.value = card.dataset.comparisonKind; body.hidden = false; document.getElementById("historyComparisonToggle").textContent = "Collapse details"; applyComparisonFilter(); document.querySelector(`[data-comparison-group="${card.dataset.comparisonKind}"]`)?.setAttribute("open", ""); });
+  document.getElementById("historyComparisonExport").addEventListener("click", () => {
+    const selectedRows = rows.filter((row) => row.querySelector('input[type="checkbox"]').checked);
+    const selectedEntries = selectedRows.map((row) => entries[Number(row.dataset.entryIndex)]).filter(Boolean);
+    const headers = ["Change", "Date", "Flight", "Route", "SLA", "Start UTC", "Release UTC", "Duty Hours", "Previous Assigned", "Current Assigned", "Previous Missing", "Current Missing", "Missing Staff-Hour Delta", "Staff Added", "Staff Removed"];
+    const lines = [headers.map(csvCell).join(","), ...selectedEntries.map((entry) => [entry.kind, entry.row.date, entry.row.flight, entry.row.route, entry.row.sla, entry.row.start_utc, entry.row.release_utc, (entry.durationMinutes / 60).toFixed(2), entry.previousAssigned, entry.currentAssigned, entry.previousMissing, entry.currentMissing, entry.missingHoursDelta.toFixed(2), entry.addedStaff.join(" | "), entry.removedStaff.join(" | ")].map(csvCell).join(","))];
+    downloadBlob(`gsrm-scan-comparison-${getLocalIsoDate()}.csv`, lines.join("\n"), "text/csv;charset=utf-8");
+  });
 }
 
 function downloadOperationalCsv() {
@@ -3273,21 +4713,17 @@ function downloadOperationalCsv() {
 
 function matchStaffMember(staffStr, searchInput) {
   if (!staffStr || !searchInput) return false;
-  const target = staffStr.trim().toUpperCase();
-  const query = searchInput.trim().toUpperCase();
+  const target = String(staffStr).trim().toUpperCase();
+  const query = String(searchInput).trim().toUpperCase();
 
-  // 1. Direct match or startsWith initials + " -"
-  if (target.startsWith(query + " -")) return true;
+  if (!query) return false;
+  if (target === query || target.includes(query)) return true;
 
-  // 2. Extract initials and name parts
-  const match = target.match(/^([A-Z0-9]+)\s+-\s+(.+)$/i);
-  if (match) {
-    const initials = match[1].toUpperCase();
-    const name = match[2].toUpperCase();
-    if (initials === query || name.includes(query)) {
-      return true;
-    }
+  const parsed = parseStaffIdentity(staffStr);
+  if (parsed) {
+    if (parsed.key && parsed.key.toUpperCase() === query) return true;
+    if (parsed.initials && parsed.initials.toUpperCase() === query) return true;
+    if (parsed.name && parsed.name.toUpperCase().includes(query)) return true;
   }
-
   return false;
 }
