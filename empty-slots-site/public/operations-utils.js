@@ -248,12 +248,18 @@
     weekday: "short",
   });
 
+  const berlinPartsCache = new Map();
   function getBerlinCalendarParts(date) {
+    const key = Math.floor(date.getTime() / 3600000);
+    if (berlinPartsCache.has(key)) return berlinPartsCache.get(key);
     const parts = Object.fromEntries(berlinDateFormatter.formatToParts(date).map((part) => [part.type, part.value]));
-    return {
+    const res = {
       isoDate: `${parts.year}-${parts.month}-${parts.day}`,
       weekday: parts.weekday,
     };
+    if (berlinPartsCache.size > 2000) berlinPartsCache.clear();
+    berlinPartsCache.set(key, res);
+    return res;
   }
 
   function summarizeDutyHours(rows, windows, holidayDates = []) {
@@ -283,8 +289,11 @@
         if (end <= start) continue;
         countedDuty = true;
 
-        for (let cursor = start.getTime(); cursor < end.getTime();) {
-          const next = Math.min(end.getTime(), cursor + 60000);
+        let cursor = start.getTime();
+        const endTime = end.getTime();
+        while (cursor < endTime) {
+          const nextHour = (Math.floor(cursor / 3600000) + 1) * 3600000;
+          const next = Math.min(endTime, nextHour);
           const minutes = (next - cursor) / 60000;
           const calendar = getBerlinCalendarParts(new Date(cursor + ((next - cursor) / 2)));
           totals.totalMinutes += minutes;

@@ -508,6 +508,9 @@ button:disabled {
 }
 
 .secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: #ffffff;
   border: 1px solid var(--line);
   color: var(--ink);
@@ -520,6 +523,37 @@ button:disabled {
 
 .secondary-btn:active:not(:disabled) {
   transform: translateY(1px);
+}
+
+.secondary-btn .filter-icon,
+.secondary-btn .filter-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.secondary-btn .filter-chevron.rotated {
+  transform: rotate(180deg);
+}
+
+.secondary-btn.has-active-filters {
+  border-color: #0284c7;
+  background: #f0f9ff;
+  color: #0369a1;
+}
+
+.filter-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 99px;
+  background: #0284c7;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .danger-btn {
@@ -2140,6 +2174,31 @@ td.missing {
   margin-top: 2px;
 }
 
+.inline-replacement-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-candidate-search {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--ink);
+  width: 180px;
+  transition: all 0.15s ease;
+}
+
+.inline-candidate-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
+}
+
 .inline-close-btn {
   background: transparent;
   border: none;
@@ -2532,15 +2591,15 @@ td.missing {
 .duty-strip .compact-duty { margin-bottom: 0; }
 
 .roster-table.single-day .duty-strip {
-  flex-direction: row;
-  align-items: stretch;
-  gap: 7px;
-  overflow-x: auto;
+  position: relative;
+  width: 100%;
+  min-height: 52px;
+  overflow: visible;
   padding-bottom: 2px;
 }
 
 .roster-table.single-day .compact-duty {
-  flex: 0 0 170px;
+  box-sizing: border-box;
 }
 
 .duty-time-field {
@@ -4657,6 +4716,42 @@ body.results-mode-fullscreen { overflow: hidden; }
   color: #ffffff !important;
 }
 
+/* Distinct SLA Colors for Roster & Schedule */
+[data-sla="CKIN"] { --sla-main: #2563eb; --sla-bg: #eff6ff; --sla-text: #1e40af; --sla-border: #93c5fd; }
+[data-sla="GATE"] { --sla-main: #7c3aed; --sla-bg: #faf5ff; --sla-text: #6b21a8; --sla-border: #c084fc; }
+[data-sla="LOFO"] { --sla-main: #d97706; --sla-bg: #fffbeb; --sla-text: #92400e; --sla-border: #fcd34d; }
+[data-sla="QH-CKI"] { --sla-main: #0891b2; --sla-bg: #ecfeff; --sla-text: #155e75; --sla-border: #67e8f9; }
+[data-sla="QH-GATE"] { --sla-main: #db2777; --sla-bg: #fdf2f8; --sla-text: #9d174d; --sla-border: #f472b6; }
+[data-sla="ASVC"] { --sla-main: #059669; --sla-bg: #ecfdf5; --sla-text: #065f46; --sla-border: #6ee7b7; }
+[data-sla="SECS"] { --sla-main: #dc2626; --sla-bg: #fef2f2; --sla-text: #991b1b; --sla-border: #fca5a5; }
+
+.compact-duty[data-sla] {
+  background: var(--sla-bg, #f8fafc);
+  border-left: 3px solid var(--sla-main, #0d9488);
+  border-color: var(--sla-border, #cbd5e1);
+}
+.compact-duty[data-sla]:hover {
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.compact-sla[data-sla] {
+  color: var(--sla-text, #0f766e);
+  font-weight: 800;
+}
+
+.duty-sla-tag[data-sla],
+.badge[data-sla] {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--sla-bg, #f1f5f9);
+  color: var(--sla-text, #334155);
+  border: 1px solid var(--sla-border, #cbd5e1);
+}
+
 /* Multi-SLA Selection Dropdown Popover */
 .multi-select-wrapper {
   position: relative;
@@ -5230,3 +5325,82 @@ table.airline-roster-table td {
   .auto-plan-action-buttons { width: 100%; }
   .auto-plan-action-buttons button { flex: 1; }
 }
+
+/* Drag and Drop inside Roster Table */
+[draggable="true"] {
+  cursor: grab !important;
+  user-select: none;
+}
+[draggable="true"]:active {
+  cursor: grabbing !important;
+  opacity: 0.6;
+}
+.roster-person-cell[draggable="true"]:hover,
+.board-staff-btn[draggable="true"]:hover,
+.compact-duty[draggable="true"]:hover {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.drag-over {
+  outline: 2px dashed var(--accent) !important;
+  outline-offset: -2px !important;
+  background: rgba(14, 165, 233, 0.12) !important;
+  border-radius: 6px !important;
+  transition: background 0.15s ease, outline 0.15s ease;
+}
+.dragging {
+  opacity: 0.4 !important;
+  filter: grayscale(0.5);
+}
+
+.warning-item {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.warning-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+.roster-highlight {
+  animation: rosterPulse 2s ease-in-out;
+}
+
+.compact-duty,
+.board-staff-btn {
+  position: relative !important;
+}
+
+.compact-duty-delete-btn,
+.board-staff-delete-btn {
+  position: absolute !important;
+  bottom: 1px !important;
+  right: 3px !important;
+  top: auto !important;
+  display: inline-block !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  color: #94a3b8 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+  padding: 0 2px !important;
+  cursor: pointer !important;
+  z-index: 10 !important;
+  transition: color 0.15s ease !important;
+}
+
+.compact-duty-delete-btn:hover,
+.board-staff-delete-btn:hover {
+  color: #ef4444 !important;
+  background: transparent !important;
+  border: none !important;
+  transform: none !important;
+}
+@keyframes rosterPulse {
+  0% { background-color: rgba(14, 165, 233, 0.25); }
+  50% { background-color: rgba(14, 165, 233, 0.15); }
+  100% { background-color: transparent; }
+}
+
+

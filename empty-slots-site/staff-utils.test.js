@@ -15,6 +15,15 @@ test("staff at the same station remain separate people", () => {
     "Alice Brown",
     "Xavier Young",
   ]);
+  assert.equal(staff[0].station, "MUC");
+  assert.equal(staff[0].key, "DANIELA NEUNER");
+});
+
+test("parses unhyphenated staff name accurately", () => {
+  const parsed = parseStaffIdentity("Daniela Neuner");
+  assert.equal(parsed.key, "DANIELA NEUNER");
+  assert.equal(parsed.name, "Daniela Neuner");
+  assert.equal(parsed.station, "");
 });
 
 test("builds a complete calendar-month range", () => {

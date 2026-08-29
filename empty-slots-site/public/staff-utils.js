@@ -4,10 +4,17 @@
   root.StaffUtils = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function createStaffUtils() {
   function parseStaffIdentity(staffString) {
-    const match = String(staffString || "").trim().match(/^([A-Z0-9]+)\s+-\s+(.+)$/i);
-    if (!match) return null;
-    const name = match[2].trim();
-    return { key: name.toUpperCase(), initials: match[1].toUpperCase(), name };
+    const str = String(staffString || "").trim();
+    if (!str) return null;
+    const match = str.match(/^([A-Z0-9]+)\s+-\s+(.+)$/i);
+    if (match) {
+      const prefix = match[1].trim().toUpperCase();
+      const name = match[2].trim();
+      const key = name.toUpperCase();
+      return { key, initials: prefix, name, station: prefix, rawString: str };
+    }
+    const key = str.toUpperCase();
+    return { key, initials: key, name: str, station: "", rawString: str };
   }
 
   function getUtcMonthRange(isoDate) {

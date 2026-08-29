@@ -11,7 +11,7 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="panel controls-panel">
+      <section id="controlsPanel" class="panel controls-panel compact">
         <div class="title-row">
           <div>
             <h1>Empty SOD Slots</h1>
@@ -23,7 +23,7 @@
           </div>
           <div class="title-actions">
             <button id="coveragePlannerBtn" class="secondary-btn" type="button" title="Open the roster coverage planner">Coverage planner</button>
-            <button id="setupToggleBtn" class="secondary-btn" type="button" aria-expanded="true" aria-controls="scanForm">Hide setup</button>
+            <button id="setupToggleBtn" class="secondary-btn" type="button" aria-expanded="false" aria-controls="scanForm">Edit setup</button>
             <label class="force-refresh-label" title="Bypass server and local cache and fetch fresh data directly from AVBIS" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;color:var(--ink-muted,#475569);">
               <input id="forceRefreshToggle" type="checkbox">
               <span>Bypass Cache</span>
@@ -41,9 +41,9 @@
           <button type="button" id="tabHistory">History</button>
         </nav>
 
-        <div id="setupSummary" class="setup-summary" hidden aria-live="polite"></div>
+        <div id="setupSummary" class="setup-summary" aria-live="polite"></div>
 
-        <form id="scanForm" autocomplete="off">
+        <form id="scanForm" autocomplete="off" hidden>
           <fieldset class="form-section-card auth-card">
             <legend class="form-section-title">AVBIS Authentication</legend>
             <div class="grid two">
@@ -234,7 +234,7 @@
       <section class="panel table-panel">
         <div id="message" class="message">Ready.</div>
         
-        <div class="table-filter-bar" id="tableFilterBar">
+        <div class="table-filter-bar filters-collapsed" id="tableFilterBar">
           <div class="results-filter-heading">
             <div>
               <strong id="resultsFilterTitle">Shift opportunity filters</strong>
@@ -250,11 +250,11 @@
                 <span>Suitable for me only</span>
               </label>
               <button id="resultsFullscreenBtn" class="secondary-btn" type="button" aria-pressed="false">Full screen</button>
-              <button id="resultsFilterToggle" class="secondary-btn" type="button" aria-expanded="true" aria-controls="resultsFilterFields">Hide filters</button>
+              <button id="resultsFilterToggle" class="secondary-btn" type="button" aria-expanded="false" aria-controls="resultsFilterFields">Show filters</button>
             </div>
           </div>
 
-          <div id="resultsFilterFields" class="results-filter-fields">
+          <div id="resultsFilterFields" class="results-filter-fields" hidden>
             <div class="filter-search-wrap">
               <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <circle cx="11" cy="11" r="8"></circle>
@@ -405,7 +405,10 @@
                 <div class="bulk-replacement-controls">
                   <select id="bulkReplacementCandidateSelect" class="bulk-select" aria-label="Select replacement candidate">
                     <option value="">Select replacement candidate...</option>
-                    <option value="auto">✨ Auto-assign best match for each shift</option>
+                    <option value="auto">Auto-assign best match for each shift</option>
+                  </select>
+                  <select id="bulkReplacementDateSelect" class="bulk-select" aria-label="Select date range for replacement">
+                    <option value="all">All scanned dates</option>
                   </select>
                   <button id="replaceAllShiftsBtn" type="button" class="primary-btn bulk-replace-btn">Replace All Shifts</button>
                 </div>
@@ -440,11 +443,11 @@
                 </div>
                 <div class="roster-filter-actions">
                   <button id="rosterClearFilters" class="secondary-btn" type="button">Reset filters</button>
-                  <button id="rosterFilterToggle" class="secondary-btn roster-filter-toggle" type="button" aria-expanded="true" aria-controls="rosterFields">Hide filters</button>
+                  <button id="rosterFilterToggle" class="secondary-btn roster-filter-toggle" type="button" aria-expanded="false" aria-controls="rosterFields">Show filters</button>
                 </div>
               </div>
             </div>
-            <div id="rosterFields" class="roster-fields">
+            <div id="rosterFields" class="roster-fields" hidden>
               <section class="roster-filter-group roster-period-group" aria-labelledby="rosterPeriodGroupTitle">
                 <strong id="rosterPeriodGroupTitle">Period</strong>
                 <div class="roster-filter-group-controls">
@@ -506,7 +509,7 @@
               <button id="rosterFullscreenBtn" class="secondary-btn roster-fullscreen-btn" type="button" aria-pressed="false" aria-keyshortcuts="Escape">Full screen</button>
             </div>
           </div>
-          <section class="auto-planner" aria-labelledby="autoPlannerTitle">
+          <section class="auto-planner collapsed" aria-labelledby="autoPlannerTitle">
             <div class="auto-planner-head">
               <div>
                 <span>What-if planning</span>
@@ -515,19 +518,19 @@
               </div>
               <div class="auto-planner-actions">
                 <button id="plannerAvailabilityBtn" class="secondary-btn" type="button">Availability <span id="plannerRulesBadge" class="button-count">0</span></button>
-                <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="true">Hide planner</button>
+                <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="false">Show planner</button>
                 <button id="autoPlannerClear" class="secondary-btn" type="button">Clear plan</button>
                 <button id="autoPlannerRun" class="primary-btn" type="button">Create plan</button>
               </div>
             </div>
             <div class="auto-planner-grid">
-              <div class="auto-planner-staff step-card" id="plannerStep1Card">
+              <div class="auto-planner-staff step-card collapsed" id="plannerStep1Card">
                 <div class="planner-field-heading">
                   <span>Step 1 · Eligible staff <mark id="plannerStaffBadge" class="step-count-badge">0 selected</mark></span>
                   <div class="step-heading-actions">
                     <button id="autoPlannerSelectFree" type="button">Use free staff</button>
                     <button id="autoPlannerSelectAll" type="button">Select all</button>
-                    <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep1Card" aria-expanded="true" title="Toggle Step 1 section">Collapse</button>
+                    <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep1Card" aria-expanded="false" title="Toggle Step 1 section">Expand</button>
                   </div>
                 </div>
                 <div class="step-card-content">
@@ -535,10 +538,10 @@
                   <div id="autoPlannerStaffList" class="auto-planner-staff-list"><span class="muted">Run a scan to load staff.</span></div>
                 </div>
               </div>
-              <div class="auto-planner-options step-card" id="plannerStep2Card">
+              <div class="auto-planner-options step-card collapsed" id="plannerStep2Card">
                 <div class="planner-field-heading auto-planner-card-heading">
                   <span>Step 2 · Planning rules <mark class="step-count-badge">Limits &amp; Buffers</mark></span>
-                  <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep2Card" aria-expanded="true" title="Toggle Step 2 section">Collapse</button>
+                  <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep2Card" aria-expanded="false" title="Toggle Step 2 section">Expand</button>
                 </div>
                 <div class="step-card-content planner-rule-groups">
                   <section class="planner-rule-group"><strong>Daily limits</strong><div>
@@ -573,6 +576,12 @@
               <button id="rosterStaffViewBtn" type="button" aria-pressed="true">Staff roster</button>
               <button id="rosterAirlineViewBtn" type="button" aria-pressed="false">Flight schedule</button>
             </div>
+            <button id="trackPersonChangesBtn" type="button" class="secondary-btn" title="Track roster changes for a selected person" style="height:32px; font-size:11px; padding:0 10px;">
+              <svg style="width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2" viewBox="0 0 24 24">
+                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              Track Person Changes
+            </button>
             <p id="rosterViewHint">People by day with local roster edits clearly marked.</p>
             <div id="rosterBoardActions" class="roster-board-actions" hidden>
               <div class="flight-schedule-filters">
@@ -609,7 +618,10 @@
                 <strong id="rosterInlineTitle">Quick Replacement Candidates</strong>
                 <span id="rosterInlineSubtitle">Find available staff without leaving the roster.</span>
               </div>
-              <button id="rosterInlineCloseBtn" type="button" class="inline-close-btn" title="Close inline replacement panel">×</button>
+              <div class="inline-replacement-actions">
+                <input id="rosterInlineCandidateSearch" type="search" placeholder="Search candidate..." class="inline-candidate-search" aria-label="Search replacement candidate">
+                <button id="rosterInlineCloseBtn" type="button" class="inline-close-btn" title="Close inline replacement panel">×</button>
+              </div>
             </div>
             <div id="rosterInlineCandidatesContent" class="inline-candidates-grid">
               <span class="muted">Select a duty or gap to load available candidates.</span>
@@ -628,13 +640,13 @@
 
         <div id="insightsLayout" class="insights-layout" style="display: none;">
           <div id="insightCards" class="insight-cards"></div>
-          <section class="roster-hours-overview insights-workload" id="insightsWorkloadSection" aria-labelledby="rosterHoursTitle">
+          <section class="roster-hours-overview insights-workload collapsed" id="insightsWorkloadSection" aria-labelledby="rosterHoursTitle">
             <div class="roster-hours-heading">
               <div>
                 <strong id="rosterHoursTitle">Staff workload &amp; duty hours</strong>
                 <span id="rosterHoursHint">Uses the selected Duty Roster period and filters. Hours are classified by Europe/Berlin calendar day; public-holiday hours may also be weekday or weekend hours.</span>
               </div>
-              <button type="button" id="workloadSectionToggle" class="secondary-btn" aria-expanded="true">Collapse workload</button>
+              <button type="button" id="workloadSectionToggle" class="secondary-btn" aria-expanded="false">Expand workload</button>
             </div>
             <div class="workload-section-body">
               <div class="roster-hours-cards">
@@ -656,14 +668,14 @@
             <section class="insight-section"><div class="column-header">Coverage by date</div><div id="coverageByDate"></div></section>
             <section class="insight-section"><div class="column-header">Coverage by SLA</div><div id="coverageBySla"></div></section>
             <section class="insight-section"><div class="column-header">Hourly pressure (UTC)</div><div id="coverageByHour"></div></section>
-            <section class="insight-section" id="insightsWarningsSection">
+            <section class="insight-section collapsed" id="insightsWarningsSection">
               <div class="column-header warnings-header">
                 <span>Roster warnings</span>
-                <button type="button" id="warningsSectionToggle" class="secondary-btn" aria-expanded="true">Collapse</button>
+                <button type="button" id="warningsSectionToggle" class="secondary-btn" aria-expanded="false">Expand</button>
               </div>
               <div id="rosterWarnings" class="warnings-container" role="region" aria-label="Roster warnings list" tabindex="0"></div>
             </section>
-          </div>
+          </div>     </div>
         </div>
 
         <div id="historyLayout" class="history-layout" style="display: none;">
@@ -720,6 +732,45 @@
           <div class="modal-footer">
             <span>Availability rules are saved locally and used by the automatic planner.</span>
             <button type="button" id="modalAvailabilityDone" class="primary-btn">Done</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="personChangesModal" class="modal-overlay" hidden aria-hidden="true">
+        <div class="modal-card person-changes-card" role="dialog" aria-modal="true" aria-labelledby="personChangesTitle" style="max-width: 680px; width: 90%;">
+          <div class="modal-header">
+            <div>
+              <span class="modal-badge">Roster Audit</span>
+              <h3 id="personChangesTitle" style="margin:0; font-size:16px; font-weight:700;">Person Roster Audit & Change History</h3>
+              <p id="personChangesSubtitle" style="margin:2px 0 0 0; font-size:11px; color:var(--muted);">Track original vs current roster changes for a selected staff member</p>
+            </div>
+            <button type="button" id="personChangesCloseBtn" class="modal-close-btn" aria-label="Close modal">&times;</button>
+          </div>
+          <div class="person-changes-body" style="padding:16px;">
+            <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+              <label style="flex:1; min-width:200px; display:flex; flex-direction:column; gap:4px;">
+                <span style="font-size:11px; font-weight:600; color:var(--muted);">Select Staff Member</span>
+                <select id="personChangesSelect" class="bulk-select" style="width:100%; height:32px;">
+                  <option value="">Select a person...</option>
+                </select>
+              </label>
+              <div style="display:flex; gap:4px; align-self:flex-end;" id="personChangesFilterGroup">
+                <button type="button" class="preset-chip active" data-change-filter="all">All Shifts</button>
+                <button type="button" class="preset-chip" data-change-filter="modified">Changes Only</button>
+              </div>
+            </div>
+
+            <div id="personTrackingControl" style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid var(--line); padding:8px 12px; border-radius:6px; margin-bottom:14px; font-size:12px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:var(--ink);">
+                <input type="checkbox" id="personTrackingToggle" checked style="cursor:pointer; width:15px; height:15px;" />
+                <span>Track roster changes for this staff member</span>
+              </label>
+              <span id="personTrackingStatus" style="font-size:11px; font-weight:700; color:#16a34a; background:#f0fdf4; border:1px solid #bbf7d0; padding:2px 8px; border-radius:12px;">Tracking Active</span>
+            </div>
+
+            <div id="personChangesContent">
+              <div class="empty-selection">Select a staff member above to track their roster changes across scanned dates.</div>
+            </div>
           </div>
         </div>
       </div>
