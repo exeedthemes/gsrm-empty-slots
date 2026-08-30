@@ -183,7 +183,12 @@ const server = http.createServer(async (req, res) => {
 
 if (require.main === module) {
   server.listen(PORT, () => {
-    console.log(`Empty Slots app running at http://localhost:${PORT}`);
+    const url = `http://localhost:${PORT}`;
+    console.log(`Empty Slots app running at ${url}`);
+    if (process.env.AUTO_OPEN !== "false") {
+      const openCmd = process.platform === "win32" ? `start ${url}` : process.platform === "darwin" ? `open ${url}` : `xdg-open ${url}`;
+      require("child_process").exec(openCmd, () => {});
+    }
   });
 }
 
