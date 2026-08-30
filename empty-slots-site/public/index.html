@@ -513,7 +513,7 @@
             <p id="rosterWindowText">Run a scan to load the duty roster.</p>
             <div class="roster-summary-actions">
               <label class="roster-scale-control" title="Adjust single-day timeline width scale" style="display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:600; color:var(--muted); background:#f1f5f9; padding:3px 8px; border-radius:6px; border:1px solid #cbd5e1; user-select:none;" hidden>
-                <span>🔍 Timeline Scale</span>
+                <span>Timeline Scale</span>
                 <input id="rosterTimelineScale" type="range" min="2000" max="8000" step="200" value="3600" style="width:85px; cursor:pointer;" aria-label="Adjust single-day timeline width scale">
                 <span id="rosterScaleValue" style="font-weight:700; color:var(--primary, #2563eb); min-width:44px; text-align:right;">3600px</span>
               </label>
@@ -529,10 +529,15 @@
                 <small>Create a local staffing proposal, review it, then add it to the edited roster.</small>
               </div>
               <div class="auto-planner-actions">
-                <button id="plannerAvailabilityBtn" class="secondary-btn" type="button">Availability <span id="plannerRulesBadge" class="button-count">0</span></button>
-                <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="false">Show planner</button>
-                <button id="autoPlannerClear" class="secondary-btn" type="button">Clear plan</button>
-                <button id="autoPlannerRun" class="primary-btn" type="button">Create plan</button>
+                <div class="auto-planner-btn-group">
+                  <button id="plannerAvailabilityBtn" class="secondary-btn" type="button">Availability <span id="plannerRulesBadge" class="button-count">0</span></button>
+                  <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="false">Show planner</button>
+                </div>
+                <div class="auto-planner-btn-group">
+                  <button id="autoPlannerClear" class="secondary-btn" type="button">Clear plan</button>
+                  <button id="autoAdjustRun" class="secondary-btn auto-adjust-btn" type="button" title="Auto-adjust planned roster to enforce minimum break times and best-fit movement">Auto-adjust shifts</button>
+                  <button id="autoPlannerRun" class="primary-btn" type="button">Create plan</button>
+                </div>
               </div>
             </div>
             <div class="auto-planner-grid">
@@ -564,6 +569,21 @@
                     <label><span>Between duties</span><div class="input-suffix"><input id="plannerBuffer" type="number" min="0" max="240" step="5" value="30"><b>min</b></div></label>
                     <label><span>Continuous work</span><div class="input-suffix"><input id="plannerBreakAfter" type="number" min="1" max="12" step="0.5" value="6"><b>hrs</b></div></label>
                     <label><span>Qualifying break</span><div class="input-suffix"><input id="plannerBreakLength" type="number" min="0" max="180" step="5" value="30"><b>min</b></div></label>
+                  </div></section>
+                  <section class="planner-rule-group auto-adjust-group"><strong>Auto-adjust options</strong><div>
+                    <label class="auto-adjust-toggle-label">
+                      <input id="autoAdjustMinBreakToggle" type="checkbox" checked>
+                      <span>Enable shift auto-adjust &amp; best movement</span>
+                    </label>
+                    <label><span>Resolve target</span>
+                      <select id="autoAdjustConflictMode">
+                        <option value="both" selected>Overlaps &amp; short breaks</option>
+                        <option value="overlaps_only">Overlaps only (collisions)</option>
+                        <option value="breaks_only">Short breaks only</option>
+                      </select>
+                    </label>
+                    <label><span>Min break enforce</span><div class="input-suffix"><input id="autoAdjustMinBreak" type="number" min="0" max="240" step="5" value="30"><b>min</b></div></label>
+                    <label><span>Max shift moves</span><div class="input-suffix"><input id="autoAdjustMaxMovements" type="number" min="0" max="50" step="1" value="0"><b>0=all</b></div></label>
                   </div></section>
                   <section class="planner-rule-group"><strong>Period limits</strong><div>
                     <label><span>Weekly hours</span><input id="plannerWeeklyHours" type="number" min="0" max="168" step="1" value="40"></label>
@@ -807,10 +827,13 @@
 
             <div id="personTrackingControl" style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid var(--line); padding:8px 12px; border-radius:6px; margin-bottom:14px; font-size:12px;">
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:var(--ink);">
-                <input type="checkbox" id="personTrackingToggle" checked style="cursor:pointer; width:15px; height:15px;" />
+                <input type="checkbox" id="personTrackingToggle" style="cursor:pointer; width:15px; height:15px;" />
                 <span>Track roster changes for this staff member</span>
               </label>
-              <span id="personTrackingStatus" style="font-size:11px; font-weight:700; color:#16a34a; background:#f0fdf4; border:1px solid #bbf7d0; padding:2px 8px; border-radius:12px;">Tracking Active</span>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span id="personTrackingStatus" style="font-size:11px; font-weight:700; color:#64748b; background:#f1f5f9; border:1px solid #cbd5e1; padding:2px 8px; border-radius:12px;">Tracking Paused</span>
+                <button id="clearAllTrackingBtn" type="button" class="secondary-btn" style="height:24px; font-size:10px; padding:0 6px;" title="Clear tracking for all staff members">Clear All Tracking</button>
+              </div>
             </div>
 
             <div id="personChangesContent">
@@ -869,7 +892,7 @@
                   </div>
                 </div>
 
-                <div class="pdf-staff-selector-group">
+              <div class="pdf-staff-selector-group">
                   <span class="pdf-layout-selector-label">Staff Scope:</span>
                   <div class="pdf-staff-select-wrapper">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -877,6 +900,58 @@
                       <option value="ALL">All Staff Members (Full Roster)</option>
                     </select>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Enhanced Customizer Section -->
+            <div class="pdf-customizer-panel">
+              <div class="pdf-customizer-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+                <span>Export Content & Layout Customizer</span>
+              </div>
+              <div class="pdf-customizer-grid">
+                <div class="pdf-customizer-col-group">
+                  <span class="customizer-subheading">Include Columns & Details</span>
+                  <div class="customizer-checkboxes">
+                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColRoute" checked><span>Route & Direction</span></label>
+                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColAircraft" checked><span>Aircraft Type</span></label>
+                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColNotes" checked><span>Planning Notes & Status</span></label>
+                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColSpan" checked><span>Duty Span & Breaks</span></label>
+                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColHolidays" checked><span>Holiday Badges</span></label>
+                  </div>
+                </div>
+                <div class="pdf-customizer-opt-group">
+                  <span class="customizer-subheading">Page Layout & Filter</span>
+                  <div class="customizer-inputs-row">
+                    <label class="customizer-field">
+                      <span>Orientation</span>
+                      <select id="pdfOrientationSelect" class="bulk-select">
+                        <option value="landscape" selected>Landscape (A4)</option>
+                        <option value="portrait">Portrait (A4)</option>
+                      </select>
+                    </label>
+                    <label class="customizer-field">
+                      <span>Table Density</span>
+                      <select id="pdfDensitySelect" class="bulk-select">
+                        <option value="standard" selected>Standard (Comfortable)</option>
+                        <option value="compact">Compact (More Rows/Page)</option>
+                      </select>
+                    </label>
+                    <label class="customizer-field">
+                      <span>Airline Filter</span>
+                      <select id="pdfAirlineFilterSelect" class="bulk-select">
+                        <option value="ALL" selected>All Airlines</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label class="customizer-field full-width" style="margin-top: 6px;">
+                    <span>Custom Station Sign-Off / Header Notes (Optional)</span>
+                    <input type="text" id="pdfCustomHeaderInput" placeholder="e.g., Station Duty Supervisor · Approved by MUC OPS Desk" class="search-input" style="height: 30px; font-size: 11px;">
+                  </label>
                 </div>
               </div>
             </div>
@@ -974,8 +1049,108 @@
           </div>
         </div>
       </div>
+
+      <!-- 1-Click Shift Swapper Modal -->
+      <div id="shiftSwapperModal" class="modal-overlay" hidden aria-hidden="true">
+        <div class="modal-card shift-swapper-card" role="dialog" aria-modal="true" aria-labelledby="shiftSwapperTitle">
+          <div class="modal-header">
+            <div>
+              <span class="modal-badge">Duty Reallocation</span>
+              <h2 id="shiftSwapperTitle">1-Click Shift Swapper</h2>
+              <p id="shiftSwapperSubtitle">Exchange duties between two staff members or transfer a shift with live rest & conflict validation.</p>
+            </div>
+            <button type="button" id="shiftSwapperCloseBtn" class="modal-close-btn" aria-label="Close modal">&times;</button>
+          </div>
+
+          <div class="modal-body shift-swapper-body">
+            <div class="swapper-grid">
+              <!-- Staff A (Source) -->
+              <div class="swapper-card swapper-card-source">
+                <div class="swapper-card-header">
+                  <span class="swapper-role-badge">Source Staff</span>
+                  <strong id="swapperSourceStaffName">Staff Member A</strong>
+                </div>
+                <div class="swapper-duty-preview" id="swapperSourceDutyBox">
+                  <div class="swapper-duty-flight" id="swapperSourceFlight">LH100 · GATE</div>
+                  <div class="swapper-duty-meta" id="swapperSourceMeta">18-Aug-2026 · 08:00–12:00 UTC (4.0h)</div>
+                  <div class="swapper-duty-badges" id="swapperSourceBadges">
+                    <span class="badge badge-info" id="swapperSourceSpan">Span: 4.0h</span>
+                    <span class="badge badge-success" id="swapperSourceBreak">Break: 0m</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Swap Indicator Icon -->
+              <div class="swapper-divider">
+                <div class="swapper-swap-icon" id="swapperDirectionIcon" title="2-Way Exchange or 1-Way Transfer">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M7 16V4m0 0L3 8m4-4l4 4m6 4v12m0 0l4-4m-4 4l-4-4"/>
+                  </svg>
+                </div>
+                <span class="swapper-mode-label" id="swapperModeLabel">2-Way Swap</span>
+              </div>
+
+              <!-- Staff B (Target) -->
+              <div class="swapper-card swapper-card-target">
+                <div class="swapper-card-header">
+                  <span class="swapper-role-badge">Target Staff</span>
+                  <label for="swapperTargetStaffSelect" class="sr-only">Target Staff Member</label>
+                  <select id="swapperTargetStaffSelect" class="bulk-select swapper-select">
+                    <option value="">Select target staff member...</option>
+                  </select>
+                </div>
+                <div class="swapper-target-controls">
+                  <label for="swapperTargetActionSelect" class="swapper-label">
+                    <span>Swap Action</span>
+                    <select id="swapperTargetActionSelect" class="bulk-select swapper-select">
+                      <option value="transfer">1-Way Transfer (Give duty to Target)</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="swapper-duty-preview" id="swapperTargetDutyBox">
+                  <div class="swapper-duty-flight" id="swapperTargetFlight">Select a staff member above</div>
+                  <div class="swapper-duty-meta" id="swapperTargetMeta">Schedule impact will appear here</div>
+                  <div class="swapper-duty-badges" id="swapperTargetBadges"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Live Conflict & Rest Validation Panel -->
+            <div class="swapper-validation-panel" id="swapperValidationPanel">
+              <div class="swapper-validation-heading">
+                <strong>Schedule & Rest Compliance Check</strong>
+                <span class="validation-status-pill pill-valid" id="swapperValidationBadge">Ready</span>
+              </div>
+              <p class="swapper-validation-text" id="swapperValidationText">Select a target staff member to validate rest hours, overlap collisions, and daily limits.</p>
+              <div class="swapper-impact-metrics" id="swapperImpactMetrics" hidden>
+                <div class="swapper-metric-box" id="swapperStaffAMetric">
+                  <strong id="swapperStaffAName">Staff A</strong>
+                  <span id="swapperStaffAStats">Hours: 0.0h · Span: 0.0h</span>
+                </div>
+                <div class="swapper-metric-box" id="swapperStaffBMetric">
+                  <strong id="swapperStaffBName">Staff B</strong>
+                  <span id="swapperStaffBStats">Hours: 0.0h · Span: 0.0h</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <span class="swapper-footer-note">All shift changes are saved locally to the Edited Roster and can be undone instantly.</span>
+            <div class="modal-footer-actions">
+              <button type="button" id="shiftSwapperCancelBtn" class="secondary-btn">Cancel</button>
+              <button type="button" id="shiftSwapperConfirmBtn" class="primary-btn swapper-confirm-btn" disabled>Confirm Shift Swap</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <script src="/holiday-utils.js?v=20260818-4"></script>
     <script src="/staff-utils.js?v=20260818-6"></script>

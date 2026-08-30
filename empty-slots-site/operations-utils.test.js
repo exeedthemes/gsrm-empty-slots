@@ -169,3 +169,95 @@ test("duty-hours overview splits weekend and public-holiday minutes in Berlin ti
   assert.equal(totals.weekdayMinutes, 120);
   assert.equal(totals.holidayMinutes, 120);
 });
+
+test("autoAdjustRoster resolves short break violations by reassigning duties to best movement candidates", () => {
+  const rows = [
+    { ...baseDuty, flight_id: "d1", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "10:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    { ...baseDuty, flight_id: "d2", flight: "LH101", sla: "GATE", start_utc: "10:15", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Available"];
+
+  const result = OperationsUtils.autoAdjustRoster(rows, directory, { minBreakMinutes: 30 });
+
+  assert.equal(result.initialViolationsCount, 1);
+  assert.equal(result.reassignments.length, 1);
+  assert.equal(result.reassignments[0].fromPerson.name, "Alice Agent");
+  assert.equal(result.reassignments[0].toPerson.name, "Bob Available");
+  assert.equal(result.resolvedViolationsCount, 1);
+  assert.equal(result.remainingViolationsCount, 0);
+  assert.deepEqual(result.adjustedRows[1].staff, ["BBB - Bob Available"]);
+});
+
+test("autoAdjustRoster respects resolveConflictType filters", () => {
+  const rows = [
+    { ...baseDuty, flight_id: "d1", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "10:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    { ...baseDuty, flight_id: "d2", flight: "LH101", sla: "GATE", start_utc: "10:15", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Available"];
+
+  // When conflictType is overlaps_only, 15m break gap (not overlap) should be ignored
+  const overlapsOnlyResult = OperationsUtils.autoAdjustRoster(rows, directory, { minBreakMinutes: 30, resolveConflictType: "overlaps_only" });
+  assert.equal(overlapsOnlyResult.reassignments.length, 0);
+  assert.equal(overlapsOnlyResult.initialViolationsCount, 0);
+
+  // When conflictType is breaks_only or both, it should be resolved
+  const breaksOnlyResult = OperationsUtils.autoAdjustRoster(rows, directory, { minBreakMinutes: 30, resolveConflictType: "breaks_only" });
+  assert.equal(breaksOnlyResult.reassignments.length, 1);
+});
+
+test("validateShiftSwap validates clean 2-way swaps, 1-way transfers, and flags conflicts", () => {
+  const rows = [
+    { ...baseDuty, flight_id: "s1", flight: "LH100", date: "18-Aug-2026", start_utc: "08:00", release_utc: "12:00", staff: ["AAA - Alice Agent"] },
+    { ...baseDuty, flight_id: "s2", flight: "LH200", date: "18-Aug-2026", start_utc: "13:00", release_utc: "17:00", staff: ["BBB - Bob Before"] },
+    { ...baseDuty, flight_id: "s3", flight: "LH300", date: "18-Aug-2026", start_utc: "11:00", release_utc: "15:00", staff: ["CCC - Carol Crew"] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Before", "CCC - Carol Crew", "DDD - Dana Free"];
+
+  // 1. Clean 2-way swap between Alice (08-12) and Bob (13-17)
+  const cleanSwap = OperationsUtils.validateShiftSwap(
+    rows[0],
+    { key: "ALICE AGENT", name: "Alice Agent" },
+    rows[1],
+    { key: "BOB BEFORE", name: "Bob Before" },
+    rows,
+    directory,
+    { maxDutyHours: 8, bufferMinutes: 30 }
+  );
+  assert.equal(cleanSwap.valid, true);
+  assert.equal(cleanSwap.isTwoWaySwap, true);
+  assert.equal(cleanSwap.staffA.valid, true);
+  assert.equal(cleanSwap.staffB.valid, true);
+
+  // 2. Conflicting 2-way swap: If Carol already has duty 11:00-15:00, swapping Alice's 08:00-12:00 to Carol creates an overlap (11:00-12:00)
+  const conflictSwap = OperationsUtils.validateShiftSwap(
+    rows[0],
+    { key: "ALICE AGENT", name: "Alice Agent" },
+    null, // Transfer duty 1 to Carol who has duty 3
+    { key: "CAROL CREW", name: "Carol Crew" },
+    rows,
+    directory,
+    { maxDutyHours: 8, bufferMinutes: 30 }
+  );
+  assert.equal(conflictSwap.valid, false);
+  assert.equal(conflictSwap.isTwoWaySwap, false);
+  assert.equal(conflictSwap.staffB.valid, false);
+  assert.ok(conflictSwap.staffB.violations.some((v) => v.includes("overlap")));
+
+  // 3. Clean 1-way transfer to Dana (free all day)
+  const transfer = OperationsUtils.validateShiftSwap(
+    rows[0],
+    { key: "ALICE AGENT", name: "Alice Agent" },
+    null,
+    { key: "DANA FREE", name: "Dana Free" },
+    rows,
+    directory,
+    { maxDutyHours: 8, bufferMinutes: 30 }
+  );
+  assert.equal(transfer.valid, true);
+  assert.equal(transfer.isTwoWaySwap, false);
+  assert.equal(transfer.staffA.simulatedDutiesCount, 0);
+  assert.equal(transfer.staffB.simulatedDutiesCount, 1);
+});
+
+
+

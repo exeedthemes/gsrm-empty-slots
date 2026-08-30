@@ -106,6 +106,8 @@ const rosterSaturdayHours = document.getElementById("rosterSaturdayHours");
 const rosterSundayHours = document.getElementById("rosterSundayHours");
 const rosterHolidayHours = document.getElementById("rosterHolidayHours");
 const autoPlannerRun = document.getElementById("autoPlannerRun");
+const autoAdjustRun = document.getElementById("autoAdjustRun");
+let currentAutoAdjustPlan = null;
 const autoPlannerToggle = document.getElementById("autoPlannerToggle");
 const autoPlannerClear = document.getElementById("autoPlannerClear");
 const autoPlannerSelectAll = document.getElementById("autoPlannerSelectAll");
@@ -398,6 +400,7 @@ if (flightScheduleCoverageFilter) flightScheduleCoverageFilter.addEventListener(
 if (flightScheduleDirectionFilter) flightScheduleDirectionFilter.addEventListener("change", renderRoster);
 if (flightScheduleSearch) flightScheduleSearch.addEventListener("input", renderRoster);
 autoPlannerRun.addEventListener("click", buildAutomaticPlan);
+if (autoAdjustRun) autoAdjustRun.addEventListener("click", buildAutoAdjustPlan);
 autoPlannerToggle.addEventListener("click", () => {
   const autoPlanner = autoPlannerToggle.closest(".auto-planner");
   const collapsed = autoPlanner.classList.toggle("collapsed");
@@ -1371,10 +1374,91 @@ function setAirlinesBusy(isBusy) {
   airlinesBtn.textContent = isBusy ? "Loading..." : "Refresh";
 }
 
+let undoActionStack = [];
+
+function showToast(messageText, { kind = "info", duration = 4500, actionText = null, onAction = null } = {}) {
+  const container = document.getElementById("toastContainer");
+  if (!container) return;
+
+  const card = document.createElement("div");
+  card.className = `toast-card toast-${kind}`;
+
+  const iconSvg = {
+    success: '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>',
+    warn: '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>',
+    error: '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>',
+    info: '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>',
+  }[kind] || '<svg viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="10" r="8"/></svg>';
+
+  card.innerHTML = `
+    <span class="toast-icon">${iconSvg}</span>
+    <div class="toast-content">
+      <span class="toast-message">${escapeHtml(messageText)}</span>
+    </div>
+    <div class="toast-actions-row">
+      ${actionText ? `<button type="button" class="toast-action-btn">${escapeHtml(actionText)}</button>` : ""}
+      <button type="button" class="toast-close-btn" aria-label="Dismiss">&times;</button>
+    </div>
+    <div class="toast-progress-bar" style="animation-duration: ${duration}ms;"></div>
+  `;
+
+  let timeoutId = null;
+
+  const removeToast = () => {
+    if (card.classList.contains("hiding")) return;
+    card.classList.add("hiding");
+    clearTimeout(timeoutId);
+    card.addEventListener("animationend", () => {
+      if (card.parentNode) card.parentNode.removeChild(card);
+    }, { once: true });
+  };
+
+  card.querySelector(".toast-close-btn")?.addEventListener("click", removeToast);
+
+  if (actionText && onAction) {
+    card.querySelector(".toast-action-btn")?.addEventListener("click", () => {
+      removeToast();
+      try {
+        onAction();
+      } catch (err) {
+        console.error("Toast action failed:", err);
+      }
+    });
+  }
+
+  if (duration > 0) {
+    timeoutId = setTimeout(removeToast, duration);
+  }
+
+  container.appendChild(card);
+}
+
+function pushUndoAction(label, undoFn) {
+  undoActionStack.push({ label, undoFn, timestamp: Date.now() });
+  if (undoActionStack.length > 20) undoActionStack.shift();
+
+  showToast(label, {
+    kind: "success",
+    duration: 6000,
+    actionText: "Undo",
+    onAction: () => {
+      const popped = undoActionStack.pop();
+      if (popped && typeof popped.undoFn === "function") {
+        popped.undoFn();
+        showToast(`Undid: ${popped.label}`, { kind: "info", duration: 3500 });
+      }
+    }
+  });
+}
+
 function setMessage(text, kind = "") {
   message.textContent = text;
   message.className = `message ${kind}`.trim();
+  if (kind === "error" || kind === "warn") {
+    showToast(text, { kind: kind === "error" ? "error" : "warn", duration: 5000 });
+  }
 }
+
 
 function createScanId() {
   const bytes = new Uint32Array(2);
@@ -2525,12 +2609,12 @@ function renderRoster() {
           const spanStr = earliestStartStr && latestReleaseStr ? `${earliestStartStr}–${latestReleaseStr} ${zoneLabel}` : "";
 
           singleDaySummaryBadgeHtml = `
-            <div class="person-single-day-badge" style="margin-top:4px; padding:3px 6px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px; font-size:10px; line-height:1.25; color:#334155; user-select:none;">
+            <div class="person-single-day-badge" style="margin-top:4px; padding:3px 6px; background:var(--bg-muted, #f8fafc); border:1px solid var(--border, #cbd5e1); border-radius:4px; font-size:10px; line-height:1.25; color:var(--text, #334155); user-select:none;">
               <div style="display:flex; justify-content:space-between; align-items:center; font-weight:700;">
-                <span style="color:#0284c7;" title="Total Active Duty Hours">⏱️ ${formatHours(totalDutyMins)}h</span>
-                <span style="color:${singleDayBreakMins > 0 ? '#d97706' : '#94a3b8'};" title="Total Rest Breaks">☕ ${formatHours(singleDayBreakMins)}h</span>
+                <span style="color:var(--primary, #2563eb);" title="Total Active Duty Hours">Duty: ${formatHours(totalDutyMins)}h</span>
+                <span style="color:${singleDayBreakMins > 0 ? 'var(--warning, #d97706)' : 'var(--muted, #94a3b8)'};" title="Total Rest Breaks">Break: ${formatHours(singleDayBreakMins)}h</span>
               </div>
-              ${spanStr ? `<div style="font-size:9px; color:#64748b; margin-top:2px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="Shift span: ${spanStr} (${formatHours(spanMins)}h total)">📅 ${spanStr} (${formatHours(spanMins)}h)</div>` : ""}
+              ${spanStr ? `<div style="font-size:9px; color:var(--muted, #64748b); margin-top:2px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="Shift span: ${spanStr} (${formatHours(spanMins)}h total)">Span: ${spanStr} (${formatHours(spanMins)}h)</div>` : ""}
             </div>
           `;
         }
@@ -2602,7 +2686,24 @@ function initRosterBodyDelegation() {
       return;
     }
 
+    const swapBtn = e.target.closest(".compact-duty-swap-btn");
+    if (swapBtn) {
+      e.stopPropagation();
+      e.preventDefault();
+      const rowKey = swapBtn.dataset.swapRowKey;
+      const staffKey = swapBtn.dataset.swapStaffKey;
+      const row = getRosterSourceRows().find((r) => OperationsUtils.rowKey(r) === rowKey);
+      const person = getPlannerPeople().find((p) => isSameStaff(p, staffKey)) ||
+                     latestStaffDirectory.find((s) => isSameStaff(s, staffKey)) ||
+                     { key: staffKey, name: staffKey, initials: staffKey };
+      if (row && person) {
+        openShiftSwapperModal(row, person);
+      }
+      return;
+    }
+
     const trackBtn = e.target.closest(".person-track-changes-btn");
+
     if (trackBtn) {
       e.stopPropagation();
       const personKey = trackBtn.dataset.personKey;
@@ -2720,7 +2821,7 @@ function renderAirlineRoster(roster) {
         }).join("");
         return `<details class="airline-flight-card ${flight.missing ? "has-gap" : "covered"}" ${flight.missing ? "open" : ""}>
           <summary class="airline-flight-head">
-            <time>${escapeHtml(flight.scheduled || "--:--")}</time>
+            <time>${escapeHtml((flight.scheduled || flight.duties[0]?.start_utc) ? getDisplayTime(day.isoDate, flight.scheduled || flight.duties[0]?.start_utc, useLocal) : "N/A")}</time>
             <div><strong>${escapeHtml(flight.flight)}</strong><span>${escapeHtml(flight.direction || "Flight")} · ${escapeHtml(flight.route || "Route unavailable")}</span></div>
             <div class="flight-meta"><span>${escapeHtml(flight.aircraft || "Aircraft unavailable")}</span><b class="${flight.missing ? "has-gap" : "covered"}">${flight.assigned}/${flight.required}${flight.missing ? ` · ${flight.missing} missing` : " · covered"}</b></div>
           </summary>
@@ -3392,7 +3493,7 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
           const breakEndStr = formatMinutesToTime(startMins);
           elements.push(`
             <div class="compact-duty break-card" style="width: ${gapPct.toFixed(2)}%;" title="In-between rest break: ${breakStartStr}–${breakEndStr} ${zoneLabel} (${formatHours(breakGapMins)}h / ${breakGapMins}m)">
-              <strong>☕ Break</strong>
+              <strong>Break</strong>
               <span class="compact-sla break-tag">${formatHours(breakGapMins)}h</span>
               <small>${escapeHtml(breakStartStr)}–${escapeHtml(breakEndStr)} ${zoneLabel}</small>
             </div>
@@ -3424,6 +3525,7 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
           <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${change.changed ? ' <b class="edited-badge">Edited</b>' : ""}</span>
           <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
           ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
+          ${person?.key ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
           ${person?.key ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}
         </button>`);
       });
@@ -3445,10 +3547,12 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
       <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${change.changed ? ' <b class="edited-badge">Edited</b>' : ""}</span>
       <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
       ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
+      ${person?.key ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
       ${person?.key ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}
     </button>
   `;
   }).join("");
+
   return `<td class="roster-day-cell"${staffKeyAttr}${dateAttr}>${showTotal ? `<span class="roster-day-total" title="Duty hours: ${dutyHours}h${breakMins > 0 ? ` · In-between break: ${formatHours(breakMins)}h` : ""}">${dutyHours}h${breakSubtext}</span>` : ""}<div class="duty-strip">${duties}</div>${assignAddBtnHtml}</td>`;
 }
 
@@ -3561,6 +3665,9 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
             <button id="rosterInlineTrackChangesBtn" type="button" class="secondary-btn" style="min-height:26px; padding:0 8px; font-size:11px; display:inline-flex; align-items:center; gap:4px;" title="View roster change history for ${escapeHtml(replaceName)}">
               <svg style="width:12px;height:12px;fill:currentColor;" viewBox="0 0 16 16"><path d="M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM2 8a6 6 0 1 1 12 0A6 6 0 0 1 2 8zm6.5-3v3.25l2.25 1.35-.75 1.2-3-1.8V5h1.5z"/></svg> Audit History
             </button>
+            <button id="rosterInlineSwapDutyBtn" type="button" class="secondary-btn" style="min-height:26px; padding:0 8px; font-size:11px; display:inline-flex; align-items:center; gap:4px;" title="Swap or transfer this duty with another staff member">
+              ⇄ Swap Shift...
+            </button>
             <button id="rosterInlineReplaceAllBtn" type="button" class="inline-bulk-replace-btn">
               <svg style="width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2" viewBox="0 0 24 24">
                 <path d="M17 1l4 4-4 4"></path>
@@ -3609,6 +3716,15 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
       openPersonChangesModal(personToReplace.key || personToReplace.initials);
     });
   }
+
+  const rosterInlineSwapDutyBtn = contentEl.querySelector("#rosterInlineSwapDutyBtn");
+  if (rosterInlineSwapDutyBtn && personToReplace) {
+    rosterInlineSwapDutyBtn.addEventListener("click", () => {
+      drawer.hidden = true;
+      openShiftSwapperModal(duty, personToReplace);
+    });
+  }
+
 
   const showMoreBtn = contentEl.querySelector("#rosterInlineShowMoreBtn");
   const moreContainer = contentEl.querySelector("#rosterInlineMoreCandidates");
@@ -4018,10 +4134,16 @@ function selectFreePlannerStaff() {
 }
 
 function getPlannerOptions() {
+  const conflictModeEl = document.getElementById("autoAdjustConflictMode");
+  const minBreakEl = document.getElementById("autoAdjustMinBreak");
+  const maxMovementsEl = document.getElementById("autoAdjustMaxMovements");
+  const minBreakToggleEl = document.getElementById("autoAdjustMinBreakToggle");
+  const bufferVal = Math.max(0, Number(document.getElementById("plannerBuffer").value) || 0);
+
   return {
     maxDutyHours: Number(document.getElementById("plannerMaxHours").value) || 8,
     maxSpanHours: Number(document.getElementById("plannerMaxSpan").value) || 10,
-    bufferMinutes: Math.max(0, Number(document.getElementById("plannerBuffer").value) || 0),
+    bufferMinutes: bufferVal,
     breakAfterHours: Number(document.getElementById("plannerBreakAfter").value) || 6,
     breakMinutes: Math.max(0, Number(document.getElementById("plannerBreakLength").value) || 0),
     maxWeeklyHours: Number(document.getElementById("plannerWeeklyHours").value) || 0,
@@ -4029,6 +4151,10 @@ function getPlannerOptions() {
     maxMonthlyHours: Number(document.getElementById("plannerMonthlyHours").value) || 0,
     availabilityRules: plannerAvailabilityRules,
     allowedSlas: [...plannerSlas.selectedOptions].map((option) => option.value),
+    resolveConflictType: conflictModeEl ? conflictModeEl.value : "both",
+    minBreakMinutes: minBreakEl && minBreakEl.value !== "" ? Math.max(0, Number(minBreakEl.value)) : (bufferVal || 30),
+    maxAdjustMovements: maxMovementsEl ? Math.max(0, Number(maxMovementsEl.value) || 0) : 0,
+    enableAutoAdjust: minBreakToggleEl ? minBreakToggleEl.checked : true,
   };
 }
 
@@ -4298,6 +4424,12 @@ function plannerViolationText(result) {
 
 function applyPlanToRosterBoard() {
   if (!currentAutoPlan) return;
+
+  // Enforce single-day view for timeline grid display
+  if (rosterDate.value && rosterEndDate.value !== rosterDate.value) {
+    rosterEndDate.value = rosterDate.value;
+  }
+
   const people = new Map(getPlannerPeople().map((person) => [person.key, person]));
   let appliedCount = 0;
   for (const slot of currentAutoPlan.slots.filter((item) => item.personKey)) {
@@ -4305,19 +4437,23 @@ function applyPlanToRosterBoard() {
     const person = people.get(slot.personKey);
     if (!targetRow || !person) continue;
     targetRow.staff = targetRow.staff || [];
-    if (targetRow.staff.some((label) => matchStaffMember(label, person.initials) || matchStaffMember(label, person.name))) continue;
+
+    // Accurately check if person is already assigned using isSameStaff
+    const isAlreadyAssigned = targetRow.staff.some((label) => isSameStaff(label, person));
+    if (isAlreadyAssigned) continue;
+
     targetRow.staff.push(formatStaffLabel(person));
     targetRow.assigned = targetRow.staff.length;
     targetRow.missing = Math.max(0, Number(targetRow.required || 0) - targetRow.assigned);
     appliedCount += 1;
   }
   currentAutoPlan = null;
-  autoPlannerResult.innerHTML = `<div class="planner-applied-message"><strong>Plan added to the edited roster</strong><span>${appliedCount} assignment${appliedCount === 1 ? "" : "s"} added locally. AVBIS was not changed.</span></div>`;
+  autoPlannerResult.innerHTML = `<div class="planner-applied-message"><strong>Plan added to the edited roster (Single Day View)</strong><span>${appliedCount} assignment${appliedCount === 1 ? "" : "s"} added locally. AVBIS was not changed.</span></div>`;
   setRosterStateMode("edited");
   setRosterViewMode("staff", false);
-  renderRoster();
-  setMessage(`Added ${appliedCount} planned assignment${appliedCount === 1 ? "" : "s"} to the edited roster.`, "success");
-  rosterStaffView.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  animateRosterTileMovements(() => renderRoster());
+  setMessage(`Added ${appliedCount} planned assignment${appliedCount === 1 ? "" : "s"} to the edited roster in Single Day View.`, "success");
+  if (rosterStaffView) rosterStaffView.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function exportAutoPlanCsv() {
@@ -4345,6 +4481,182 @@ function exportAutoPlanCsv() {
   const stamp = new Date().toISOString().slice(0, 10);
   downloadBlob(`gsrm-auto-plan-${stamp}.csv`, csvContent, "text/csv;charset=utf-8");
   setMessage("Downloaded automatic planning schedule report (CSV).");
+}
+
+function animateRosterTileMovements(renderCallback) {
+  const container = document.querySelector(".roster-table-wrap") || document.body;
+  const tileElements = container.querySelectorAll(".compact-duty[data-row-key]");
+  const firstPositions = new Map();
+
+  tileElements.forEach((el) => {
+    const key = el.getAttribute("data-row-key");
+    const staffCell = el.closest("tr")?.querySelector(".roster-person-cell");
+    const staffKey = staffCell ? (staffCell.getAttribute("data-staff-key") || staffCell.textContent.trim()) : "";
+    const dutyText = el.textContent.trim();
+    if (key) {
+      firstPositions.set(`${key}:${staffKey}:${dutyText}`, el.getBoundingClientRect());
+    }
+  });
+
+  if (typeof renderCallback === "function") {
+    renderCallback();
+  }
+
+  const newTileElements = container.querySelectorAll(".compact-duty[data-row-key]");
+  newTileElements.forEach((el) => {
+    const key = el.getAttribute("data-row-key");
+    const staffCell = el.closest("tr")?.querySelector(".roster-person-cell");
+    const staffKey = staffCell ? (staffCell.getAttribute("data-staff-key") || staffCell.textContent.trim()) : "";
+    const dutyText = el.textContent.trim();
+    const firstRect = firstPositions.get(`${key}:${staffKey}:${dutyText}`);
+    
+    if (firstRect) {
+      const lastRect = el.getBoundingClientRect();
+      const dx = firstRect.left - lastRect.left;
+      const dy = firstRect.top - lastRect.top;
+
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+        el.classList.add("moving", "duty-tile-animating", "shift-moving-highlight");
+        
+        // Trigger reflow for FLIP transition
+        void el.offsetHeight;
+
+        el.style.transform = "";
+        setTimeout(() => {
+          el.classList.remove("moving", "duty-tile-animating");
+        }, 650);
+      }
+    }
+  });
+}
+
+function buildAutoAdjustPlan() {
+  if (rosterStateMode !== "edited") setRosterStateMode("edited");
+
+  // Enforce single-day view for timeline grid adjustment
+  if (rosterDate.value && rosterEndDate.value !== rosterDate.value) {
+    rosterEndDate.value = rosterDate.value;
+  }
+
+  const roster = getRosterRows();
+  if (!roster) return setMessage("Choose a scanned roster date and time window before running auto-adjust.", "warn");
+
+  const autoPlannerCard = autoPlannerRun?.closest(".auto-planner");
+  if (autoPlannerCard && autoPlannerCard.classList.contains("collapsed")) {
+    autoPlannerCard.classList.remove("collapsed");
+    if (autoPlannerToggle) {
+      autoPlannerToggle.textContent = "Hide planner";
+      autoPlannerToggle.setAttribute("aria-expanded", "true");
+    }
+    localStorage.setItem("gsrmAutoPlannerCollapsed", "false");
+  }
+
+  const options = getPlannerOptions();
+  const activeDateIso = rosterDate.value;
+  const targetRows = latestRows.filter((r) => !activeDateIso || r.date === activeDateIso);
+
+  const adjustment = OperationsUtils.autoAdjustRoster(targetRows.length ? targetRows : latestRows, latestStaffDirectory, options);
+  currentAutoAdjustPlan = adjustment;
+  renderAutoAdjustPlan();
+
+  const conflictLabel = options.resolveConflictType === "overlaps_only" 
+    ? "duty overlaps" 
+    : options.resolveConflictType === "breaks_only" 
+    ? "short breaks" 
+    : "overlaps & short breaks";
+
+  if (adjustment.reassignments.length > 0) {
+    setMessage(`Auto-adjust proposed ${adjustment.reassignments.length} shift movement(s) to resolve ${conflictLabel} on ${activeDateIso || "active date"}.`, "success");
+  } else {
+    setMessage(`No ${conflictLabel} violations found on ${activeDateIso || "the current roster"} matching requirements (${options.minBreakMinutes}m min break).`, "info");
+  }
+  autoPlannerResult.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function renderAutoAdjustPlan() {
+  if (!currentAutoAdjustPlan) return;
+  const { reassignments, resolvedViolationsCount, conflictType, minBreakMinutes } = currentAutoAdjustPlan;
+  const conflictLabel = conflictType === "overlaps_only" 
+    ? "Overlaps Only" 
+    : conflictType === "breaks_only" 
+    ? "Short Breaks Only" 
+    : "Overlaps & Short Breaks";
+
+  if (!reassignments.length) {
+    autoPlannerResult.innerHTML = `
+      <div class="planner-result-empty" style="padding:16px; background:var(--bg-muted, #f8fafc); border:1px solid var(--border, #cbd5e1); border-radius:8px; color:var(--text, #334155);">
+        <strong style="font-size:13px; color:var(--primary, #2563eb);">No ${escapeHtml(conflictLabel)} Violations Found</strong>
+        <p style="margin:4px 0 0; font-size:12px; color:var(--muted, #64748b);">All assigned shifts on ${rosterDate.value || "this day"} satisfy the selected ${escapeHtml(conflictLabel.toLowerCase())} criteria (${minBreakMinutes || 30}m min break).</p>
+      </div>
+    `;
+    return;
+  }
+
+  const itemsHtml = reassignments.map((item) => `
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:var(--surface, #ffffff); border:1px solid var(--border, #e2e8f0); border-radius:6px; margin-bottom:6px; font-size:11px;">
+      <div>
+        <strong style="color:var(--primary, #2563eb);">${escapeHtml(item.flight)}</strong>
+        <span style="margin-left:6px; font-weight:700; color:var(--text, #334155);">(${escapeHtml(item.sla)})</span>
+        <span style="margin-left:8px; color:var(--muted, #64748b);">${escapeHtml(item.date)} ${escapeHtml(item.start_utc)}–${escapeHtml(item.release_utc)} UTC</span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="text-decoration:line-through; color:var(--danger, #ef4444); font-weight:600;">${escapeHtml(item.fromPerson.name)}</span>
+        <span style="font-weight:900; color:var(--primary, #2563eb);">&rarr;</span>
+        <span style="color:var(--primary-dark, #1d4ed8); font-weight:700; background:var(--bg-muted, #f1f5f9); padding:2px 6px; border-radius:4px; border:1px solid var(--border, #cbd5e1);">${escapeHtml(item.toPerson.name)}</span>
+        <small style="color:var(--muted, #64748b); font-weight:600;" title="${escapeHtml(item.reason)}">${escapeHtml(item.reason)}</small>
+      </div>
+    </div>
+  `).join("");
+
+  autoPlannerResult.innerHTML = `
+    <div class="auto-adjust-result-card" style="padding:14px; background:var(--bg-muted, #f8fafc); border:1px solid var(--border, #cbd5e1); border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div>
+          <strong style="font-size:13px; color:var(--text, #0f172a);">Auto-Adjust Roster Plan (${escapeHtml(conflictLabel)} &middot; ${minBreakMinutes || 30}m Min Break)</strong>
+          <p style="margin:2px 0 0; font-size:11px; color:var(--muted, #64748b);">Resolved ${resolvedViolationsCount} violation(s) across ${reassignments.length} shift movement(s).</p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button id="applyAutoAdjustBtn" type="button" class="primary-btn" style="height:32px; font-size:11px; font-weight:700;">Apply to edited roster</button>
+          <button id="clearAutoAdjustBtn" type="button" class="secondary-btn" style="height:32px; font-size:11px;">Dismiss</button>
+        </div>
+      </div>
+      <div style="max-height:220px; overflow-y:auto;">${itemsHtml}</div>
+    </div>
+  `;
+
+  document.getElementById("applyAutoAdjustBtn")?.addEventListener("click", applyAutoAdjustToRoster);
+  document.getElementById("clearAutoAdjustBtn")?.addEventListener("click", () => {
+    currentAutoAdjustPlan = null;
+    autoPlannerResult.textContent = "Adjustments dismissed.";
+  });
+}
+
+function applyAutoAdjustToRoster() {
+  if (!currentAutoAdjustPlan || !currentAutoAdjustPlan.adjustedRows) return;
+
+  // Enforce single-day view
+  if (rosterDate.value && rosterEndDate.value !== rosterDate.value) {
+    rosterEndDate.value = rosterDate.value;
+  }
+
+  const adjustedMap = new Map(currentAutoAdjustPlan.adjustedRows.map((r) => [OperationsUtils.rowKey(r), r]));
+  latestRows = latestRows.map((r) => adjustedMap.get(OperationsUtils.rowKey(r)) || r);
+
+  const count = currentAutoAdjustPlan.reassignments.length;
+  currentAutoAdjustPlan = null;
+
+  setRosterStateMode("edited");
+  setRosterViewMode("staff", false);
+
+  // Apply with smooth FLIP tile movement animation!
+  animateRosterTileMovements(() => {
+    renderRoster();
+  });
+
+  autoPlannerResult.innerHTML = `<div class="planner-applied-message"><strong>Auto-adjust plan applied (Single Day View)</strong><span>${count} shift movement(s) applied to edited roster with minimum breaks enforced.</span></div>`;
+  setMessage(`Applied ${count} shift movement(s) to edited roster in Single Day View with smooth tile animations.`, "success");
+  if (rosterStaffView) rosterStaffView.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function renderAutomaticPlan(errorText = "") {
@@ -5157,6 +5469,19 @@ function openPdfExportModal() {
     }
   }
 
+  // Populate airline filter select dropdown
+  const airlineSelect = document.getElementById("pdfAirlineFilterSelect");
+  if (airlineSelect) {
+    const airlines = [...new Set(latestRows.map((r) => OperationsUtils.airlineCode(r)).filter(Boolean))].sort();
+    const curAirline = airlineSelect.value || "ALL";
+    let optHtml = `<option value="ALL">All Airlines (${airlines.length})</option>`;
+    for (const air of airlines) {
+      optHtml += `<option value="${escapeHtml(air)}">${escapeHtml(air)}</option>`;
+    }
+    airlineSelect.innerHTML = optHtml;
+    airlineSelect.value = airlines.includes(curAirline) ? curAirline : "ALL";
+  }
+
   setPdfExportLayoutStyle(pdfExportLayoutStyle);
 
   const now = new Date();
@@ -5242,10 +5567,32 @@ function generatePdfDocument({ mode = "original" } = {}) {
   }
 
   try {
-    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const orientationSelect = document.getElementById("pdfOrientationSelect");
+    const densitySelect = document.getElementById("pdfDensitySelect");
+    const airlineSelect = document.getElementById("pdfAirlineFilterSelect");
+    const customHeaderInput = document.getElementById("pdfCustomHeaderInput");
+
+    const orientation = orientationSelect?.value || "landscape";
+    const density = densitySelect?.value || "standard";
+    const selectedAirline = airlineSelect?.value || "ALL";
+    const customHeaderNotes = customHeaderInput?.value?.trim() || "";
+
+    const incRoute = document.getElementById("pdfColRoute") ? document.getElementById("pdfColRoute").checked : true;
+    const incAircraft = document.getElementById("pdfColAircraft") ? document.getElementById("pdfColAircraft").checked : true;
+    const incNotes = document.getElementById("pdfColNotes") ? document.getElementById("pdfColNotes").checked : true;
+    const incSpan = document.getElementById("pdfColSpan") ? document.getElementById("pdfColSpan").checked : true;
+    const incHolidays = document.getElementById("pdfColHolidays") ? document.getElementById("pdfColHolidays").checked : true;
+
+    const isPortrait = orientation === "portrait";
+    const doc = new jsPDF({ orientation: isPortrait ? "portrait" : "landscape", unit: "mm", format: "a4" });
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
     const timeStr = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+    const pageWidth = isPortrait ? 210 : 297;
+    const pageHeight = isPortrait ? 297 : 210;
+    const rightMarginPos = pageWidth - 14;
+    const footerBottomPos = pageHeight - 7;
 
     const isEdited = mode === "edited";
     const modeBadge = isEdited ? "EDITED ROSTER" : "ORIGINAL SCAN";
@@ -5279,11 +5626,20 @@ function generatePdfDocument({ mode = "original" } = {}) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
-    doc.text(`Generated: ${dateStr} ${timeStr} UTC`, 283, 11, { align: "right" });
+    doc.text(`Generated: ${dateStr} ${timeStr} UTC`, rightMarginPos, 11, { align: "right" });
+
+    let headerDividerY = 17;
+    if (customHeaderNotes) {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7.5);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Notes: ${customHeaderNotes}`, 14, 18.5);
+      headerDividerY = 21;
+    }
 
     doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.3);
-    doc.line(14, 17, 283, 17);
+    doc.line(14, headerDividerY, rightMarginPos, headerDividerY);
 
     let tableHeaders = [];
     let exportRows = [];
@@ -5291,10 +5647,16 @@ function generatePdfDocument({ mode = "original" } = {}) {
 
     const actions = getGapActions();
 
+    // Filter by airline if selected
+    let sourceScanRows = (filteredRows && filteredRows.length) ? filteredRows : latestRows;
+    if (selectedAirline && selectedAirline !== "ALL") {
+      sourceScanRows = sourceScanRows.filter((r) => OperationsUtils.airlineCode(r) === selectedAirline || (r.flight || "").startsWith(selectedAirline));
+    }
+
     if (activeTab === "replacements") {
       tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Start UTC", "Release UTC", "Duration", "Candidates", "Top Candidate / Assignment", "Status"]];
       const initials = myInitialsInput.value.trim().toUpperCase();
-      const myDuties = latestRows.filter((row) => row.staff && row.staff.some((s) => matchStaffMember(s, initials)));
+      const myDuties = sourceScanRows.filter((row) => row.staff && row.staff.some((s) => matchStaffMember(s, initials)));
       const maxGapMinutes = getMaxDutyGap().minutes;
       const maxGapMs = maxGapMinutes * 60 * 1000;
 
@@ -5308,7 +5670,7 @@ function generatePdfDocument({ mode = "original" } = {}) {
         for (const candStr of getKnownStaffStrings()) {
           const identity = parseStaffIdentity(candStr);
           if (!identity || matchStaffMember(candStr, initials)) continue;
-          const shifts = latestRows.filter((r) => r.staff && r.staff.some((s) => parseStaffIdentity(s)?.key === identity.key));
+          const shifts = sourceScanRows.filter((r) => r.staff && r.staff.some((s) => parseStaffIdentity(s)?.key === identity.key));
           if (shifts.some((s) => {
             const st = parseUtcTime(s.date, s.start_utc);
             const rel = parseUtcTime(s.date, s.release_utc);
@@ -5359,64 +5721,51 @@ function generatePdfDocument({ mode = "original" } = {}) {
           statusText
         ];
       });
-      columnStyles = {
-        0: { cellWidth: 24 }, 1: { cellWidth: 22, fontStyle: "bold" }, 2: { cellWidth: 14, halign: "center" },
-        3: { cellWidth: 24 }, 4: { cellWidth: 20 }, 5: { cellWidth: 22, halign: "center" },
-        6: { cellWidth: 22, halign: "center" }, 7: { cellWidth: 18, halign: "center" },
-        8: { cellWidth: 20, halign: "center", fontStyle: "bold" }, 9: { cellWidth: 63 },
-        10: { cellWidth: 20, halign: "center", fontStyle: "bold" }
-      };
 
     } else if (activeTab === "roster") {
       const roster = getRosterRows();
       if (rosterViewMode === "airline") {
         tableHeaders = [["Date", "Flight", "Dir", "Route", "Aircraft", "Sch. UTC", "SLA", "Start UTC", "Release UTC", "Req / Asgd", "Allocated Staff"]];
         const days = getAirlineRosterDays(roster);
-        exportRows = days.flatMap((day) => day.flights.flatMap((flight) => flight.duties.map((duty) => [
-          day.isoDate || "",
-          duty.flight || "",
-          duty.direction || "",
-          duty.route || "",
-          duty.aircraft || "",
-          duty.scheduled_utc || "",
-          duty.sla || "",
-          duty.start_utc || "",
-          duty.release_utc || "",
-          `${duty.required || 0} / ${duty.assigned || 0}`,
-          (duty.staff || []).map((s) => parseStaffIdentity(s)?.name || s).join(", ") || "Unassigned"
-        ])));
-        columnStyles = {
-          0: { cellWidth: 24 }, 1: { cellWidth: 24, fontStyle: "bold" }, 2: { cellWidth: 14, halign: "center" },
-          3: { cellWidth: 26 }, 4: { cellWidth: 20 }, 5: { cellWidth: 22, halign: "center" },
-          6: { cellWidth: 20 }, 7: { cellWidth: 22, halign: "center" }, 8: { cellWidth: 22, halign: "center" },
-          9: { cellWidth: 22, halign: "center", fontStyle: "bold" }, 10: { cellWidth: 53 }
-        };
+        exportRows = days.flatMap((day) => day.flights
+          .filter((f) => selectedAirline === "ALL" || (f.airlineCode || f.flight.slice(0, 2)) === selectedAirline)
+          .flatMap((flight) => flight.duties.map((duty) => [
+            day.isoDate || "",
+            duty.flight || "",
+            duty.direction || "",
+            duty.route || "",
+            duty.aircraft || "",
+            duty.scheduled_utc || "",
+            duty.sla || "",
+            duty.start_utc || "",
+            duty.release_utc || "",
+            `${duty.required || 0} / ${duty.assigned || 0}`,
+            (duty.staff || []).map((s) => parseStaffIdentity(s)?.name || s).join(", ") || "Unassigned"
+          ])));
       } else {
         tableHeaders = [["Status", "Initials", "Staff Name", "Date", "Flight", "Direction", "Route", "SLA", "Start UTC", "Release UTC"]];
         const visible = new Set(JSON.parse(rosterBody.dataset.visibleStaffKeys || "[]"));
         const people = (roster?.rows || []).filter((person) => visible.has(person.key));
-        exportRows = people.flatMap((person) => (person.overlapping.length ? person.overlapping : [null]).map((alloc) => [
-          person.status === "free" ? "Free" : "On duty",
-          person.initials || "",
-          person.name || "",
-          alloc?.date || "—",
-          alloc?.flight || "—",
-          alloc?.direction || "—",
-          alloc?.route || "—",
-          alloc?.sla || "—",
-          alloc?.start_utc || "—",
-          alloc?.release_utc || "—",
-        ]));
-        columnStyles = {
-          0: { cellWidth: 20, halign: "center" }, 1: { cellWidth: 18, fontStyle: "bold" }, 2: { cellWidth: 42, fontStyle: "bold" },
-          3: { cellWidth: 26 }, 4: { cellWidth: 26 }, 5: { cellWidth: 18, halign: "center" },
-          6: { cellWidth: 32 }, 7: { cellWidth: 26 }, 8: { cellWidth: 30, halign: "center" }, 9: { cellWidth: 31, halign: "center" }
-        };
+        exportRows = people.flatMap((person) => {
+          const allocs = person.overlapping.filter((a) => selectedAirline === "ALL" || OperationsUtils.airlineCode(a) === selectedAirline);
+          return (allocs.length ? allocs : [null]).map((alloc) => [
+            person.status === "free" ? "Free" : "On duty",
+            person.initials || "",
+            person.name || "",
+            alloc?.date || "—",
+            alloc?.flight || "—",
+            alloc?.direction || "—",
+            alloc?.route || "—",
+            alloc?.sla || "—",
+            alloc?.start_utc || "—",
+            alloc?.release_utc || "—",
+          ]);
+        });
       }
 
     } else if (activeTab === "insights") {
       tableHeaders = [["Staff Member", "Initials", "Duties", "Total Hours", "Weekday", "Saturday", "Sunday", "Holiday", "SLAs Covered", "Max Span"]];
-      const analytics = OperationsUtils.buildAnalytics(latestRows, latestStaffDirectory);
+      const analytics = OperationsUtils.buildAnalytics(sourceScanRows, latestStaffDirectory);
       const roster = getRosterRows();
       const windows = roster?.dailyWindows || [];
       const holidayDates = HolidayUtils.getHolidaysForSelectedMonths(scanStartDate.value, scanEndDate.value).map((h) => h.date);
@@ -5436,12 +5785,6 @@ function generatePdfDocument({ mode = "original" } = {}) {
           `${(person.longestSpanHours || 0).toFixed(1)}h`,
         ];
       });
-      columnStyles = {
-        0: { cellWidth: 45, fontStyle: "bold" }, 1: { cellWidth: 18, halign: "center" }, 2: { cellWidth: 18, halign: "center" },
-        3: { cellWidth: 26, halign: "center", fontStyle: "bold" }, 4: { cellWidth: 24, halign: "center" },
-        5: { cellWidth: 24, halign: "center" }, 6: { cellWidth: 24, halign: "center" },
-        7: { cellWidth: 24, halign: "center" }, 8: { cellWidth: 46 }, 9: { cellWidth: 20, halign: "center" }
-      };
 
     } else if (activeTab === "history") {
       tableHeaders = [["Scan ID", "Scanned At", "Date Range", "Flight Count", "Empty Slots", "Missing Positions", "Status Notes"]];
@@ -5462,31 +5805,25 @@ function generatePdfDocument({ mode = "original" } = {}) {
           notesCount,
         ];
       });
-      columnStyles = {
-        0: { cellWidth: 42, fontStyle: "bold" }, 1: { cellWidth: 38, halign: "center" }, 2: { cellWidth: 42 },
-        3: { cellWidth: 30, halign: "center" }, 4: { cellWidth: 32, halign: "center" },
-        5: { cellWidth: 40, halign: "center", fontStyle: "bold", textColor: [220, 38, 38] }, 6: { cellWidth: 45, halign: "center" }
-      };
 
     } else {
       // Default: Gaps / Empty Slots
       if (isEdited) {
         tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Req", "Asgd", "Miss", "Start UTC", "Release UTC", "Action Status", "Notes / Replacement"]];
-        const sourceRows = filteredRows && filteredRows.length ? filteredRows : latestRows;
-        exportRows = sourceRows.map((r) => {
+        exportRows = sourceScanRows.map((r) => {
           const key = OperationsUtils.rowKey(r);
           const act = actions[key] || {};
           const status = act.status || (Number(r.missing || 0) === 0 ? "Covered" : "Open");
           let noteDetails = [];
-          if (act.assignedCandidate) noteDetails.push(`Candidate: ${act.assignedCandidate}`);
-          if (act.notes) noteDetails.push(act.notes);
+          if (act.assignedCandidate && incNotes) noteDetails.push(`Candidate: ${act.assignedCandidate}`);
+          if (act.notes && incNotes) noteDetails.push(act.notes);
           const noteStr = noteDetails.join(" | ") || "—";
 
           return [
             r.date || "",
             r.flight || "",
             r.direction || "",
-            r.route || "",
+            incRoute ? (r.route || "") : "—",
             r.sla || "",
             r.required || 0,
             r.assigned || 0,
@@ -5497,22 +5834,13 @@ function generatePdfDocument({ mode = "original" } = {}) {
             noteStr
           ];
         });
-        columnStyles = {
-          0: { cellWidth: 22, halign: "left" }, 1: { cellWidth: 22, halign: "left", fontStyle: "bold" },
-          2: { cellWidth: 14, halign: "center" }, 3: { cellWidth: 26, halign: "left" },
-          4: { cellWidth: 20, halign: "left" }, 5: { cellWidth: 14, halign: "center" },
-          6: { cellWidth: 14, halign: "center" }, 7: { cellWidth: 14, halign: "center", fontStyle: "bold", textColor: [220, 38, 38] },
-          8: { cellWidth: 22, halign: "center" }, 9: { cellWidth: 22, halign: "center" },
-          10: { cellWidth: 22, halign: "center", fontStyle: "bold" },
-          11: { cellWidth: 57, halign: "left" }
-        };
       } else {
         tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Req", "Assigned", "Missing", "Start UTC", "Release UTC", "Duration"]];
-        exportRows = latestRows.map((r) => [
+        exportRows = sourceScanRows.map((r) => [
           r.date || "",
           r.flight || "",
           r.direction || "",
-          r.route || "",
+          incRoute ? (r.route || "") : "—",
           r.sla || "",
           r.required || 0,
           r.assigned || 0,
@@ -5521,14 +5849,6 @@ function generatePdfDocument({ mode = "original" } = {}) {
           r.release_utc || "",
           r.duration || ""
         ]);
-        columnStyles = {
-          0: { cellWidth: 26, halign: "left" }, 1: { cellWidth: 24, halign: "left", fontStyle: "bold" },
-          2: { cellWidth: 16, halign: "center" }, 3: { cellWidth: 32, halign: "left" },
-          4: { cellWidth: 22, halign: "left" }, 5: { cellWidth: 16, halign: "center" },
-          6: { cellWidth: 18, halign: "center" }, 7: { cellWidth: 18, halign: "center", fontStyle: "bold", textColor: [220, 38, 38] },
-          8: { cellWidth: 26, halign: "center" }, 9: { cellWidth: 26, halign: "center" },
-          10: { cellWidth: 25, halign: "center" }
-        };
       }
     }
 
@@ -5549,7 +5869,7 @@ function generatePdfDocument({ mode = "original" } = {}) {
     }
 
     if (!exportRows.length) {
-      return setMessage(`No matching data available on the ${activeTab} tab to export to PDF for the selected staff member.`, "warn");
+      return setMessage(`No matching data available on the ${activeTab} tab to export to PDF.`, "warn");
     }
 
     let staffSuffixBadge = "";
@@ -5561,36 +5881,42 @@ function generatePdfDocument({ mode = "original" } = {}) {
       staffFilenameSuffix = `-${sName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
     }
 
+    const isCompact = density === "compact";
+    const bodyFontSize = isCompact ? 7 : 8;
+    const headFontSize = isCompact ? 7.5 : 8.5;
+    const cellPad = isCompact ? 1.5 : 2.5;
+
     if (pdfExportLayoutStyle === "byday") {
       generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateStr, timeStr });
     } else {
       doc.autoTable({
         head: tableHeaders,
         body: exportRows,
-        startY: 20,
-        margin: { left: 14, right: 14, top: 20, bottom: 14 },
+        startY: headerDividerY + 3,
+        margin: { left: 14, right: 14, top: headerDividerY + 3, bottom: 14 },
         theme: "grid",
         headStyles: {
           fillColor: isEdited ? [20, 83, 45] : [30, 41, 59],
           textColor: [255, 255, 255],
           fontStyle: "bold",
-          fontSize: 8.5,
+          fontSize: headFontSize,
+          cellPadding: cellPad,
           halign: "left"
         },
         bodyStyles: {
-          fontSize: 8,
+          fontSize: bodyFontSize,
+          cellPadding: cellPad,
           textColor: [30, 41, 59]
         },
         alternateRowStyles: {
           fillColor: isEdited ? [240, 253, 244] : [248, 250, 252]
         },
-        columnStyles,
         didDrawPage: (data) => {
           const pageCount = doc.internal.getNumberOfPages();
-          doc.setFontSize(8);
+          doc.setFontSize(7.5);
           doc.setTextColor(148, 163, 184);
-          doc.text(`Page ${data.pageNumber} of ${pageCount}`, 283, 203, { align: "right" });
-          doc.text(`${titleText}  |  ${modeBadge}${staffSuffixBadge}`, 14, 203);
+          doc.text(`Page ${data.pageNumber} of ${pageCount}`, rightMarginPos, footerBottomPos, { align: "right" });
+          doc.text(`${titleText}  |  ${modeBadge}${staffSuffixBadge}`, 14, footerBottomPos);
         }
       });
     }
@@ -6800,7 +7126,14 @@ function setStaffTracked(personKey, tracked) {
 
 function clearAllStaffTracking() {
   localStorage.setItem("gsrmTrackedStaffKeys", JSON.stringify([]));
+  const selectEl = document.getElementById("personChangesSelect");
+  if (selectEl && selectEl.value) {
+    renderPersonChangesContent(activePersonChangesFilter);
+  }
   if (typeof renderRoster === "function") renderRoster();
+  if (typeof setMessage === "function") {
+    setMessage("Cleared roster change tracking for all staff members.", "info");
+  }
 }
 
 let activePersonChangesFilter = "all";
@@ -6987,6 +7320,13 @@ function attachPersonChangesModalListeners() {
           renderRoster();
         }
       }
+    });
+  }
+
+  const clearAllBtn = document.getElementById("clearAllTrackingBtn");
+  if (clearAllBtn) {
+    clearAllBtn.addEventListener("click", () => {
+      clearAllStaffTracking();
     });
   }
 
@@ -7187,14 +7527,367 @@ function attachAddShiftModalListeners() {
   }
 }
 
+let currentSwapperState = {
+  sourceDuty: null,
+  sourceStaff: null,
+  targetStaff: null,
+  targetDuty: null,
+  mode: "transfer",
+};
+
+function openShiftSwapperModal(sourceDuty, sourceStaff) {
+  const modal = document.getElementById("shiftSwapperModal");
+  if (!modal || !sourceDuty || !sourceStaff) return;
+
+  const staffObj = typeof sourceStaff === "object" ? sourceStaff : (StaffUtils?.parseStaffIdentity(sourceStaff) || { key: sourceStaff, name: sourceStaff });
+  const staffName = staffObj.name || staffObj.key;
+  const staffInitials = staffObj.initials || staffObj.station || "";
+
+  currentSwapperState = {
+    sourceDuty,
+    sourceStaff: { ...staffObj, name: staffName, initials: staffInitials },
+    targetStaff: null,
+    targetDuty: null,
+    mode: "transfer",
+  };
+
+  const nameEl = document.getElementById("swapperSourceStaffName");
+  const flightEl = document.getElementById("swapperSourceFlight");
+  const metaEl = document.getElementById("swapperSourceMeta");
+  const spanEl = document.getElementById("swapperSourceSpan");
+  const breakEl = document.getElementById("swapperSourceBreak");
+
+  if (nameEl) nameEl.textContent = `${staffName} (${staffInitials || "STAFF"})`;
+  if (flightEl) flightEl.textContent = `${sourceDuty.flight} · ${sourceDuty.sla || "DUTY"}`;
+
+  const durMins = OperationsUtils.dutyMinutes(sourceDuty);
+  if (metaEl) metaEl.textContent = `${sourceDuty.date} · ${sourceDuty.start_utc}–${sourceDuty.release_utc} UTC (${formatHours(durMins)}h) · ${sourceDuty.route || ""}`;
+
+  const dayDuties = latestRows.filter((r) => r.date === sourceDuty.date && (r.staff || []).some((s) => isSameStaff(s, staffObj.key)));
+  const insp = OperationsUtils.inspectDaySchedule(dayDuties, getPlannerOptions());
+  if (spanEl) spanEl.textContent = `Span: ${formatHours(insp.daySpanMinutes || durMins)}h`;
+  if (breakEl) breakEl.textContent = `Break: ${formatHours(calculateDayBreakMinutes(dayDuties, false))}h`;
+
+  const targetSelect = document.getElementById("swapperTargetStaffSelect");
+  if (targetSelect) {
+    const knownStaff = getPlannerPeople();
+    const sourceKey = staffObj.key;
+    let optHtml = `<option value="">Select target staff member...</option>`;
+    for (const p of knownStaff) {
+      if (isSameStaff(p, sourceKey)) continue;
+      const pInitials = p.initials || p.station || "";
+      optHtml += `<option value="${escapeHtml(p.key)}">${escapeHtml(p.name)} (${escapeHtml(pInitials)})</option>`;
+    }
+    targetSelect.innerHTML = optHtml;
+    targetSelect.value = "";
+  }
+
+  resetSwapperTargetBox();
+  updateSwapperValidation();
+
+  modal.hidden = false;
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function resetSwapperTargetBox() {
+  const actionSelect = document.getElementById("swapperTargetActionSelect");
+  const targetFlight = document.getElementById("swapperTargetFlight");
+  const targetMeta = document.getElementById("swapperTargetMeta");
+  const targetBadges = document.getElementById("swapperTargetBadges");
+  const modeLabel = document.getElementById("swapperModeLabel");
+
+  if (actionSelect) {
+    actionSelect.innerHTML = `<option value="transfer">1-Way Transfer (Give duty to Target)</option>`;
+    actionSelect.value = "transfer";
+  }
+  if (targetFlight) targetFlight.textContent = "Select a staff member above";
+  if (targetMeta) targetMeta.textContent = "Schedule impact will appear here";
+  if (targetBadges) targetBadges.innerHTML = "";
+  if (modeLabel) modeLabel.textContent = "1-Way Transfer";
+}
+
+function updateSwapperTargetOptions(targetKey) {
+  const actionSelect = document.getElementById("swapperTargetActionSelect");
+
+  if (!targetKey) {
+    resetSwapperTargetBox();
+    updateSwapperValidation();
+    return;
+  }
+
+  const person = getPlannerPeople().find((p) => isSameStaff(p, targetKey)) ||
+                 latestStaffDirectory.find((s) => isSameStaff(s, targetKey)) ||
+                 { key: targetKey, name: targetKey, initials: targetKey };
+
+  currentSwapperState.targetStaff = person;
+
+  const { sourceDuty } = currentSwapperState;
+  const targetDutiesOnDate = latestRows.filter((r) => r.date === sourceDuty.date && (r.staff || []).some((s) => isSameStaff(s, targetKey)));
+
+  let actionHtml = `<option value="transfer">1-Way Transfer (Give ${sourceDuty.flight} to ${person.name})</option>`;
+  for (const td of targetDutiesOnDate) {
+    const rowKey = OperationsUtils.rowKey(td);
+    actionHtml += `<option value="swap_${escapeHtml(rowKey)}">2-Way Swap with ${escapeHtml(td.flight)} (${escapeHtml(td.start_utc)}–${escapeHtml(td.release_utc)} UTC, ${escapeHtml(td.sla || "")})</option>`;
+  }
+
+  if (actionSelect) {
+    actionSelect.innerHTML = actionHtml;
+    if (targetDutiesOnDate.length > 0) {
+      actionSelect.value = `swap_${OperationsUtils.rowKey(targetDutiesOnDate[0])}`;
+    } else {
+      actionSelect.value = "transfer";
+    }
+  }
+
+  handleSwapperActionChange();
+}
+
+function handleSwapperActionChange() {
+  const actionSelect = document.getElementById("swapperTargetActionSelect");
+  const targetFlight = document.getElementById("swapperTargetFlight");
+  const targetMeta = document.getElementById("swapperTargetMeta");
+  const targetBadges = document.getElementById("swapperTargetBadges");
+  const modeLabel = document.getElementById("swapperModeLabel");
+  const val = actionSelect?.value || "transfer";
+
+  const { sourceDuty, targetStaff } = currentSwapperState;
+  if (!targetStaff) return;
+
+  if (val.startsWith("swap_")) {
+    const targetRowKey = val.replace("swap_", "");
+    const targetDuty = latestRows.find((r) => OperationsUtils.rowKey(r) === targetRowKey);
+    currentSwapperState.targetDuty = targetDuty || null;
+    currentSwapperState.mode = "swap";
+    if (modeLabel) modeLabel.textContent = "2-Way Swap";
+
+    if (targetDuty) {
+      if (targetFlight) targetFlight.textContent = `${targetDuty.flight} · ${targetDuty.sla || "DUTY"}`;
+      const durMins = OperationsUtils.dutyMinutes(targetDuty);
+      if (targetMeta) targetMeta.textContent = `${targetDuty.date} · ${targetDuty.start_utc}–${targetDuty.release_utc} UTC (${formatHours(durMins)}h) · ${targetDuty.route || ""}`;
+      if (targetBadges) {
+        targetBadges.innerHTML = `
+          <span class="badge" style="background:#eff6ff; color:#1d4ed8; font-weight:600;">2-Way Exchange</span>
+          <span class="badge" style="background:#f1f5f9; color:#475569;">${targetDuty.sla || "SLA"}</span>
+        `;
+      }
+    }
+  } else {
+    currentSwapperState.targetDuty = null;
+    currentSwapperState.mode = "transfer";
+    if (modeLabel) modeLabel.textContent = "1-Way Transfer";
+    if (targetFlight) targetFlight.textContent = `Duty Transfer to ${targetStaff.name}`;
+    if (targetMeta) targetMeta.textContent = `${sourceDuty.flight} will be transferred to ${targetStaff.name}. ${currentSwapperState.sourceStaff.name} will have no shift on this slot.`;
+    if (targetBadges) {
+      targetBadges.innerHTML = `<span class="badge" style="background:#dcfce7; color:#166534; font-weight:600;">1-Way Assignment</span>`;
+    }
+  }
+
+  updateSwapperValidation();
+}
+
+function updateSwapperValidation() {
+  const badge = document.getElementById("swapperValidationBadge");
+  const text = document.getElementById("swapperValidationText");
+  const confirmBtn = document.getElementById("shiftSwapperConfirmBtn");
+  const metricsBox = document.getElementById("swapperImpactMetrics");
+  const staffAName = document.getElementById("swapperStaffAName");
+  const staffAStats = document.getElementById("swapperStaffAStats");
+  const staffBName = document.getElementById("swapperStaffBName");
+  const staffBStats = document.getElementById("swapperStaffBStats");
+
+  const { sourceDuty, sourceStaff, targetStaff, targetDuty, mode } = currentSwapperState;
+
+  if (!sourceDuty || !sourceStaff || !targetStaff) {
+    if (badge) {
+      badge.textContent = "Awaiting Target";
+      badge.className = "validation-status-pill pill-warning";
+    }
+    if (text) text.textContent = "Select a target staff member above to validate shift compatibility.";
+    if (confirmBtn) confirmBtn.disabled = true;
+    if (metricsBox) metricsBox.hidden = true;
+    return;
+  }
+
+  const result = OperationsUtils.validateShiftSwap(
+    sourceDuty,
+    sourceStaff,
+    targetDuty,
+    targetStaff,
+    latestRows,
+    latestStaffDirectory,
+    getPlannerOptions()
+  );
+
+  if (result.valid) {
+    if (badge) {
+      badge.textContent = "Clean Swap — Valid";
+      badge.className = "validation-status-pill pill-valid";
+    }
+    if (text) text.textContent = result.summaryText;
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = mode === "swap" ? "Confirm 2-Way Swap" : "Confirm Duty Transfer";
+    }
+  } else {
+    if (badge) {
+      badge.textContent = "Conflict Detected";
+      badge.className = "validation-status-pill pill-invalid";
+    }
+    if (text) text.textContent = `Schedule conflict: ${result.messages.join(" • ")}`;
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = mode === "swap" ? "Override & Swap (With Warning)" : "Override & Transfer (With Warning)";
+    }
+  }
+
+  if (metricsBox) {
+    metricsBox.hidden = false;
+    if (staffAName) staffAName.textContent = `${sourceStaff.name} (After)`;
+    if (staffAStats) {
+      staffAStats.textContent = `Hours: ${formatHours(result.staffA.totalDutyMinutes)}h · Span: ${formatHours(result.staffA.daySpanMinutes)}h · Duties: ${result.staffA.simulatedDutiesCount}`;
+    }
+    if (staffBName) staffBName.textContent = `${targetStaff.name} (After)`;
+    if (staffBStats) {
+      staffBStats.textContent = `Hours: ${formatHours(result.staffB.totalDutyMinutes)}h · Span: ${formatHours(result.staffB.daySpanMinutes)}h · Duties: ${result.staffB.simulatedDutiesCount}`;
+    }
+  }
+}
+
+function executeShiftSwap() {
+  const { sourceDuty, sourceStaff, targetStaff, targetDuty, mode } = currentSwapperState;
+  if (!sourceDuty || !sourceStaff || !targetStaff) return;
+
+  const modal = document.getElementById("shiftSwapperModal");
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  }
+
+  if (rosterStateMode === "original") {
+    rosterStateMode = "edited";
+    document.querySelectorAll("#rosterStateToggleGroup .state-toggle-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.stateMode === "edited");
+    });
+  }
+
+  const rowKeyA = OperationsUtils.rowKey(sourceDuty);
+  const rowKeyB = targetDuty ? OperationsUtils.rowKey(targetDuty) : null;
+
+  const targetRowA = latestRows.find((r) => OperationsUtils.rowKey(r) === rowKeyA);
+  const targetRowB = rowKeyB ? latestRows.find((r) => OperationsUtils.rowKey(r) === rowKeyB) : null;
+
+  // Snapshot before for Undo
+  const prevStaffListA = targetRowA ? [...(targetRowA.staff || [])] : [];
+  const prevStaffListB = targetRowB ? [...(targetRowB.staff || [])] : [];
+
+  const formattedTarget = formatStaffLabel(targetStaff);
+  const formattedSource = formatStaffLabel(sourceStaff);
+
+  if (targetRowA) {
+    targetRowA.staff = (targetRowA.staff || []).filter((s) => !isSameStaff(s, sourceStaff.key) && !isSameStaff(s, sourceStaff.name));
+    if (!targetRowA.staff.some((s) => isSameStaff(s, targetStaff.key))) {
+      targetRowA.staff.push(formattedTarget);
+    }
+    targetRowA.assigned = targetRowA.staff.length;
+    targetRowA.missing = Math.max(0, Number(targetRowA.required || 0) - targetRowA.assigned);
+  }
+
+  if (targetRowB) {
+    targetRowB.staff = (targetRowB.staff || []).filter((s) => !isSameStaff(s, targetStaff.key) && !isSameStaff(s, targetStaff.name));
+    if (!targetRowB.staff.some((s) => isSameStaff(s, sourceStaff.key))) {
+      targetRowB.staff.push(formattedSource);
+    }
+    targetRowB.assigned = targetRowB.staff.length;
+    targetRowB.missing = Math.max(0, Number(targetRowB.required || 0) - targetRowB.assigned);
+  }
+
+  currentAutoPlan = null;
+  autoPlannerResult.textContent = "Roster changed. Create a new plan to use the updated staffing.";
+
+  applyFilters();
+  if (typeof renderRoster === "function") renderRoster();
+  if (typeof renderReplacements === "function") renderReplacements();
+
+  const actionDescription = mode === "swap"
+    ? `Swapped ${sourceDuty.flight} (${sourceStaff.name}) with ${targetDuty.flight} (${targetStaff.name})`
+    : `Transferred ${sourceDuty.flight} from ${sourceStaff.name} to ${targetStaff.name}`;
+
+  pushUndoAction(actionDescription, () => {
+    if (targetRowA) {
+      targetRowA.staff = prevStaffListA;
+      targetRowA.assigned = targetRowA.staff.length;
+      targetRowA.missing = Math.max(0, Number(targetRowA.required || 0) - targetRowA.assigned);
+    }
+    if (targetRowB) {
+      targetRowB.staff = prevStaffListB;
+      targetRowB.assigned = targetRowB.staff.length;
+      targetRowB.missing = Math.max(0, Number(targetRowB.required || 0) - targetRowB.assigned);
+    }
+    currentAutoPlan = null;
+    applyFilters();
+    if (typeof renderRoster === "function") renderRoster();
+    if (typeof renderReplacements === "function") renderReplacements();
+  });
+}
+
+function attachShiftSwapperModalListeners() {
+  const modal = document.getElementById("shiftSwapperModal");
+  const closeBtn = document.getElementById("shiftSwapperCloseBtn");
+  const cancelBtn = document.getElementById("shiftSwapperCancelBtn");
+  const confirmBtn = document.getElementById("shiftSwapperConfirmBtn");
+  const targetSelect = document.getElementById("swapperTargetStaffSelect");
+  const actionSelect = document.getElementById("swapperTargetActionSelect");
+  const directionIcon = document.getElementById("swapperDirectionIcon");
+
+  if (closeBtn) closeBtn.addEventListener("click", () => { modal.hidden = true; modal.setAttribute("aria-hidden", "true"); });
+  if (cancelBtn) cancelBtn.addEventListener("click", () => { modal.hidden = true; modal.setAttribute("aria-hidden", "true"); });
+  if (confirmBtn) confirmBtn.addEventListener("click", executeShiftSwap);
+
+  if (targetSelect) {
+    targetSelect.addEventListener("change", (e) => {
+      updateSwapperTargetOptions(e.target.value);
+    });
+  }
+
+  if (actionSelect) {
+    actionSelect.addEventListener("change", handleSwapperActionChange);
+  }
+
+  if (directionIcon) {
+    directionIcon.addEventListener("click", () => {
+      if (actionSelect && actionSelect.options.length > 1) {
+        const currentVal = actionSelect.value;
+        if (currentVal === "transfer") {
+          actionSelect.selectedIndex = 1;
+        } else {
+          actionSelect.value = "transfer";
+        }
+        handleSwapperActionChange();
+      }
+    });
+  }
+
+  if (modal) {
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) {
+        modal.hidden = true;
+        modal.setAttribute("aria-hidden", "true");
+      }
+    });
+  }
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
     attachAddShiftModalListeners();
     attachRosterDragAndDropListeners();
+    attachShiftSwapperModalListeners();
   });
 } else {
   attachAddShiftModalListeners();
   attachRosterDragAndDropListeners();
+  attachShiftSwapperModalListeners();
 }
+
 
 
