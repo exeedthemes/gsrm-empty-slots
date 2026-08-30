@@ -73,6 +73,8 @@ const resultCountLabel = document.getElementById("resultCountLabel");
 const tableFilterBar = document.getElementById("tableFilterBar");
 const staffOptions = document.getElementById("staffOptions");
 const replacementStaffName = document.getElementById("replacementStaffName");
+const replacementStaffSelect = document.getElementById("replacementStaffSelect");
+const replacementStaffInput = document.getElementById("replacementStaffInput");
 const replacementStaffSummary = document.getElementById("replacementStaffSummary");
 const replacementCandidatesHeader = document.getElementById("replacementCandidatesHeader");
 const rosterFullscreenBtn = document.getElementById("rosterFullscreenBtn");
@@ -150,6 +152,7 @@ let selectedGap = null;
 let activeScanId = "";
 let connectedEmail = "";
 let showRosterDutyTotals = localStorage.getItem("gsrmRosterDutyTotals") === "true";
+let currentSingleDayScale = parseInt(localStorage.getItem("gsrm_roster_timeline_scale") || "3600", 10);
 let rosterViewMode = localStorage.getItem("gsrmRosterViewMode") === "airline" ? "airline" : "staff";
 let currentAutoPlan = null;
 let selectedPlannerStaff = new Set();
@@ -272,11 +275,47 @@ tabRoster.addEventListener("click", () => switchTab("roster"));
 tabInsights.addEventListener("click", () => switchTab("insights"));
 tabHistory.addEventListener("click", () => switchTab("history"));
 
+function setReplacementStaff(staffValue, triggerSource = null) {
+  const value = (staffValue || "").trim();
+  if (myInitialsInput && triggerSource !== "myInitialsInput") myInitialsInput.value = value;
+  if (gapStaffSearch && triggerSource !== "gapStaffSearch") gapStaffSearch.value = value;
+  if (replacementStaffInput && triggerSource !== "replacementStaffInput" && document.activeElement !== replacementStaffInput) {
+    replacementStaffInput.value = value;
+  }
+
+  localStorage.setItem("myInitials", value);
+
+  if (replacementStaffSelect) {
+    const identity = resolveStaffIdentity(value);
+    const targetName = identity?.name || value;
+    const matchOpt = [...replacementStaffSelect.options].find(opt =>
+      opt.value.toLowerCase() === targetName.toLowerCase() ||
+      (identity && (opt.value.toUpperCase() === identity.initials.toUpperCase() || opt.value === identity.key))
+    );
+    if (matchOpt) replacementStaffSelect.value = matchOpt.value;
+    else if (!value) replacementStaffSelect.value = "";
+  }
+
+  if (activeTab === "replacements") {
+    renderReplacements(false);
+  } else {
+    applyFilters();
+  }
+}
+
 myInitialsInput.addEventListener("input", (e) => {
-  localStorage.setItem("myInitials", e.target.value);
-  if (gapStaffSearch) gapStaffSearch.value = e.target.value;
-  applyFilters();
+  setReplacementStaff(e.target.value, "myInitialsInput");
 });
+if (replacementStaffSelect) {
+  replacementStaffSelect.addEventListener("change", (e) => {
+    setReplacementStaff(e.target.value, "replacementStaffSelect");
+  });
+}
+if (replacementStaffInput) {
+  replacementStaffInput.addEventListener("input", (e) => {
+    setReplacementStaff(e.target.value, "replacementStaffInput");
+  });
+}
 function refreshReplacementCandidates() {
   if (selectedReplacementDuty) showCandidatesForDuty(selectedReplacementDuty);
   else applyFilters();
@@ -322,6 +361,27 @@ rosterTotalsBtn.addEventListener("click", () => {
   rosterTotalsBtn.setAttribute("aria-pressed", String(showRosterDutyTotals));
   renderRoster();
 });
+
+const rosterTimelineScale = document.getElementById("rosterTimelineScale");
+const rosterScaleValue = document.getElementById("rosterScaleValue");
+if (rosterTimelineScale) {
+  rosterTimelineScale.value = currentSingleDayScale;
+  if (rosterScaleValue) rosterScaleValue.textContent = `${currentSingleDayScale}px`;
+
+  rosterTimelineScale.addEventListener("input", (e) => {
+    const val = parseInt(e.target.value, 10);
+    currentSingleDayScale = val;
+    if (rosterScaleValue) rosterScaleValue.textContent = `${val}px`;
+    localStorage.setItem("gsrm_roster_timeline_scale", String(val));
+    const rosterTable = document.querySelector(".roster-table");
+    if (rosterTable && rosterTable.classList.contains("single-day")) {
+      const reqWidth = getSingleDayRequiredWidth();
+      rosterTable.style.minWidth = `${reqWidth}px`;
+      rosterTable.style.setProperty("--single-day-width", `${reqWidth}px`);
+      if (lastRosterData) renderRosterHeader(lastRosterData.dailyWindows || []);
+    }
+  });
+}
 rosterStaffViewBtn.addEventListener("click", () => setRosterViewMode("staff"));
 rosterAirlineViewBtn.addEventListener("click", () => setRosterViewMode("airline"));
 document.getElementById("rosterExpandAll").addEventListener("click", () => setAllAirlineSections(true));
@@ -559,7 +619,14 @@ function switchTab(tab) {
   replacementDateFilterGroup.hidden = tab !== "replacements";
   resultsMissingFilterGroup.hidden = tab === "replacements";
   resultsFullscreenBtn.hidden = tab !== "gaps";
-  gapStaffSearch.closest(".personal-shift-picker").hidden = tab !== "gaps";
+  const staffPicker = gapStaffSearch.closest(".personal-shift-picker");
+  if (staffPicker) {
+    staffPicker.hidden = !["gaps", "replacements"].includes(tab);
+    const pickerLabel = staffPicker.querySelector("span");
+    if (pickerLabel) {
+      pickerLabel.textContent = tab === "replacements" ? "Replacing" : "Planning for";
+    }
+  }
   gapSuitableOnlyToggle.closest(".suitable-only-toggle").hidden = tab !== "gaps";
   resultsFilterTitle.textContent = tab === "replacements" ? "Duty filters" : "Shift opportunity filters";
   resultsFilterHint.textContent = tab === "replacements"
@@ -724,9 +791,7 @@ resultsClearFilters.addEventListener("click", clearResultFilters);
 resultsFilterToggle.addEventListener("click", () => setResultFiltersCollapsed(!tableFilterBar.classList.contains("filters-collapsed")));
 resultsFullscreenBtn.addEventListener("click", () => toggleResultsFullscreen());
 gapStaffSearch.addEventListener("input", () => {
-  myInitialsInput.value = gapStaffSearch.value;
-  localStorage.setItem("myInitials", gapStaffSearch.value);
-  applyFilters();
+  setReplacementStaff(gapStaffSearch.value, "gapStaffSearch");
 });
 gapSuitableOnlyToggle.addEventListener("change", () => {
   if (gapSuitableOnlyToggle.checked && !resolveStaffIdentity(gapStaffSearch.value.trim())) {
@@ -766,6 +831,14 @@ function clearResultFilters() {
 function setResultFiltersCollapsed(collapsed) {
   const enabled = Boolean(collapsed);
   tableFilterBar.classList.toggle("filters-collapsed", enabled);
+  const fields = document.getElementById("resultsFilterFields");
+  if (fields) {
+    if (enabled) {
+      fields.setAttribute("hidden", "");
+    } else {
+      fields.removeAttribute("hidden");
+    }
+  }
   resultsFilterToggle.textContent = enabled ? "Show filters" : "Hide filters";
   resultsFilterToggle.setAttribute("aria-expanded", String(!enabled));
   localStorage.setItem("gsrmResultFiltersCollapsed", String(enabled));
@@ -1994,17 +2067,31 @@ function renderReplacements(preserveSelectedDuty = false) {
     replacementCandidatesHeader.textContent = "Available Replacements";
   }
 
-  const initials = myInitialsInput.value.trim().toUpperCase();
+  const initials = (myInitialsInput.value || localStorage.getItem("myInitials") || "").trim().toUpperCase();
   if (!initials) {
-    replacementStaffName.textContent = "Select a staff member";
-    replacementStaffSummary.textContent = "Type a name above to load their duties.";
-    dutiesList.innerHTML = `<div class="empty-list">Please enter your initials/name to see your duties.</div>`;
+    if (replacementStaffName) replacementStaffName.textContent = "Select a staff member";
+    if (replacementStaffSelect) replacementStaffSelect.value = "";
+    if (replacementStaffInput && document.activeElement !== replacementStaffInput) replacementStaffInput.value = "";
+    replacementStaffSummary.textContent = "Select a staff member above to load their duties.";
+    dutiesList.innerHTML = `<div class="empty-list">Please select a staff member to see their duties.</div>`;
     if (bulkBar) bulkBar.hidden = true;
     return;
   }
 
   const selectedIdentity = resolveStaffIdentity(initials);
-  replacementStaffName.textContent = selectedIdentity?.name || myInitialsInput.value.trim();
+  if (replacementStaffName) replacementStaffName.textContent = selectedIdentity?.name || myInitialsInput.value.trim();
+
+  if (replacementStaffSelect) {
+    const targetName = selectedIdentity?.name || initials;
+    const matchOpt = [...replacementStaffSelect.options].find(opt =>
+      opt.value.toLowerCase() === targetName.toLowerCase() ||
+      (selectedIdentity && (opt.value.toUpperCase() === selectedIdentity.initials.toUpperCase() || opt.value === selectedIdentity.key))
+    );
+    if (matchOpt) replacementStaffSelect.value = matchOpt.value;
+  }
+  if (replacementStaffInput && document.activeElement !== replacementStaffInput) {
+    replacementStaffInput.value = selectedIdentity?.name || myInitialsInput.value.trim();
+  }
 
   // Find all of my duties
   const myDuties = latestRows.filter(row => {
@@ -2184,10 +2271,27 @@ function getRosterRows() {
 
   const sourceRows = getRosterSourceRows();
   const staff = new Map();
+
+  // Seed with ALL staff from the persistent Master Staff Directory (scanned across all dates)
+  const masterList = getMasterStaffDirectory();
+  for (const mStaff of masterList) {
+    if (mStaff && mStaff.key && !staff.has(mStaff.key)) {
+      staff.set(mStaff.key, {
+        key: mStaff.key,
+        name: mStaff.name,
+        initials: mStaff.initials || mStaff.station || "MUC",
+        station: mStaff.station || mStaff.initials || "MUC",
+        assignments: [],
+      });
+    }
+  }
+
+  // Also include staff from active scan directory
   for (const staffString of latestStaffDirectory) {
     const identity = parseStaffIdentity(staffString);
     if (identity && !staff.has(identity.key)) staff.set(identity.key, { ...identity, assignments: [] });
   }
+
   for (const assignment of sourceRows) {
     for (const staffString of assignment.staff || []) {
       const identity = parseStaffIdentity(staffString);
@@ -2220,7 +2324,12 @@ function getRosterRows() {
     };
   });
 
-  rows.sort((a, b) => a.name.localeCompare(b.name) || a.initials.localeCompare(b.initials));
+  rows.sort((a, b) => {
+    const aDuty = a.status === "duty" || (a.overlapping && a.overlapping.length > 0) ? 1 : 0;
+    const bDuty = b.status === "duty" || (b.overlapping && b.overlapping.length > 0) ? 1 : 0;
+    if (aDuty !== bDuty) return bDuty - aDuty;
+    return a.name.localeCompare(b.name) || a.initials.localeCompare(b.initials);
+  });
   return { rows, dailyWindows };
 }
 
@@ -2336,6 +2445,24 @@ function renderRoster() {
   const rosterStateLabel = rosterStateMode === "original" ? "Original scan" : rosterStateMode === "compare" ? "Edited roster with changes" : "Edited roster";
   rosterWindowText.textContent = `${rosterStateLabel} · ${dateLabel} · ${rosterStartTime.value}–${rosterEndTime.value}${overnightSuffix} UTC · times shown in ${displayZone}.`;
   const shown = filterRosterPeople(roster.rows);
+  const isSingleDay = roster.dailyWindows.length === 1;
+  const scaleControl = document.querySelector(".roster-scale-control");
+  if (scaleControl) {
+    scaleControl.hidden = !isSingleDay || rosterViewMode !== "staff";
+  }
+
+  const rosterTable = document.querySelector(".roster-table");
+  if (rosterTable) {
+    if (isSingleDay) {
+      const reqWidth = getSingleDayRequiredWidth();
+      rosterTable.classList.add("single-day");
+      rosterTable.style.setProperty("--single-day-width", `${reqWidth}px`);
+    } else {
+      rosterTable.classList.remove("single-day");
+      rosterTable.style.removeProperty("--single-day-width");
+    }
+  }
+
   renderRosterHeader(roster.dailyWindows);
 
   if (rosterViewMode === "airline") {
@@ -2358,6 +2485,54 @@ function renderRoster() {
       const displayInitials = (person.station || person.initials) && (person.station || person.initials) !== person.name && (person.station || person.initials) !== person.key
         ? (person.station || person.initials)
         : "MUC";
+      let singleDaySummaryBadgeHtml = "";
+      if (isSingleDay) {
+        const useLocal = rosterLocalTimeToggle.checked;
+        const assignments = person.byDay[0] || [];
+        if (assignments.length) {
+          const sorted = [...assignments].sort((a, b) => getDutyStartMinutes(a, useLocal) - getDutyStartMinutes(b, useLocal));
+          let totalDutyMins = 0;
+          let earliestStartMins = Infinity;
+          let latestEndMins = -Infinity;
+          let earliestStartStr = "";
+          let latestReleaseStr = "";
+
+          sorted.forEach((row) => {
+            const startMins = getDutyStartMinutes(row, useLocal);
+            const releaseDisplay = getDisplayTime(row.date, row.release_utc, useLocal);
+            const releaseMins = parseTimeToMinutes(releaseDisplay);
+            let durMins = releaseMins - startMins;
+            if (durMins <= 0) durMins += 1440;
+            const endMins = startMins + durMins;
+
+            totalDutyMins += durMins;
+            if (startMins < earliestStartMins) {
+              earliestStartMins = startMins;
+              earliestStartStr = formatMinutesToTime(startMins);
+            }
+            if (endMins > latestEndMins) {
+              latestEndMins = endMins;
+              latestReleaseStr = formatMinutesToTime(endMins % 1440);
+            }
+          });
+
+          const singleDayBreakMins = calculateDayBreakMinutes(assignments, useLocal);
+          const spanMins = (latestEndMins > earliestStartMins && latestEndMins !== -Infinity) ? (latestEndMins - earliestStartMins) : totalDutyMins;
+          const zoneLabel = useLocal ? "Local" : "Z";
+          const spanStr = earliestStartStr && latestReleaseStr ? `${earliestStartStr}–${latestReleaseStr} ${zoneLabel}` : "";
+
+          singleDaySummaryBadgeHtml = `
+            <div class="person-single-day-badge" style="margin-top:4px; padding:3px 6px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:4px; font-size:10px; line-height:1.25; color:#334155; user-select:none;">
+              <div style="display:flex; justify-content:space-between; align-items:center; font-weight:700;">
+                <span style="color:#0284c7;" title="Total Active Duty Hours">⏱️ ${formatHours(totalDutyMins)}h</span>
+                <span style="color:${singleDayBreakMins > 0 ? '#d97706' : '#94a3b8'};" title="Total Rest Breaks">☕ ${formatHours(singleDayBreakMins)}h</span>
+              </div>
+              ${spanStr ? `<div style="font-size:9px; color:#64748b; margin-top:2px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="Shift span: ${spanStr} (${formatHours(spanMins)}h total)">📅 ${spanStr} (${formatHours(spanMins)}h)</div>` : ""}
+            </div>
+          `;
+        }
+      }
+
       tr.innerHTML = `
         <td class="roster-person-cell" draggable="true" data-staff-key="${escapeHtml(person.key)}" data-staff-name="${escapeHtml(person.name)}" data-staff-initials="${escapeHtml(person.initials)}" title="Drag ${escapeHtml(person.name)} to assign/replace on a duty slot">
           <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -2365,6 +2540,8 @@ function renderRoster() {
             ${trackBtnHtml}
           </div>
           <span>${escapeHtml(displayInitials)}${hasLocalEdit ? ' <b class="edited-badge">Edited</b>' : ""}</span>
+          ${singleDaySummaryBadgeHtml}
+        </td>
         ${person.byDay.map((assignments, index) => renderRosterDayCell(assignments, roster.dailyWindows[index], showRosterDutyTotals, person, roster.dailyWindows.length === 1)).join("")}
         ${showRosterDutyTotals ? `<td class="roster-total-cell"><span class="roster-range-total" title="Duty hours in selected range">${formatHours(OperationsUtils.summarizeDutyHours(person.overlapping, roster.dailyWindows).totalMinutes)}h</span></td>` : ""}
       `;
@@ -2443,12 +2620,27 @@ function initRosterBodyDelegation() {
       return;
     }
 
-    const cell = e.target.closest(".roster-day-cell");
+    const assignBtn = e.target.closest(".roster-assign-slot-btn");
+    if (assignBtn) {
+      e.stopPropagation();
+      e.preventDefault();
+      const staffKey = assignBtn.dataset.staffKey;
+      const dateIso = assignBtn.dataset.date;
+      const person = getPlannerPeople().find((p) => isSameStaff(p, staffKey)) ||
+                     latestStaffDirectory.find((s) => isSameStaff(s, staffKey)) ||
+                     { key: staffKey, name: staffKey, initials: staffKey };
+      openAddShiftToPersonModal(person, dateIso);
+      return;
+    }
+
+    const cell = e.target.closest(".roster-day-cell.free-day");
     if (cell) {
       const staffKey = cell.dataset.staffKey;
       const dateIso = cell.dataset.date;
       if (staffKey) {
-        const person = getPlannerPeople().find((p) => isSameStaff(p, staffKey));
+        const person = getPlannerPeople().find((p) => isSameStaff(p, staffKey)) ||
+                       latestStaffDirectory.find((s) => isSameStaff(s, staffKey)) ||
+                       { key: staffKey, name: staffKey, initials: staffKey };
         if (person) {
           openAddShiftToPersonModal(person, dateIso);
           return;
@@ -2968,21 +3160,34 @@ function formatHours(minutes) {
   return (Number(minutes || 0) / 60).toFixed(1);
 }
 
-function formatMinutesToHHMM(mins) {
-  let m = Math.round(mins) % 1440;
-  if (m < 0) m += 1440;
-  const hrs = Math.floor(m / 60);
-  const remMins = m % 60;
-  return `${String(hrs).padStart(2, "0")}:${String(remMins).padStart(2, "0")}`;
-}
-
 function parseTimeToMinutes(timeStr) {
   if (!timeStr) return 0;
-  const parts = String(timeStr).trim().split(":");
-  if (parts.length < 2) return 0;
-  const h = parseInt(parts[0], 10) || 0;
-  const m = parseInt(parts[1], 10) || 0;
+  const match = String(timeStr).match(/(\d{1,2}):(\d{2})/);
+  if (!match) return 0;
+  const h = parseInt(match[1], 10) || 0;
+  const m = parseInt(match[2], 10) || 0;
   return h * 60 + m;
+}
+
+function formatMinutesToTime(mins) {
+  let m = Math.round(mins) % 1440;
+  if (m < 0) m += 1440;
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+function getFilterWindowMinutes() {
+  const startStr = rosterStartTime?.value || "00:00";
+  const endStr = rosterEndTime?.value || "24:00";
+  const winStart = parseTimeToMinutes(startStr);
+  let winEnd = parseTimeToMinutes(endStr);
+  if (winEnd <= winStart || endStr === "24:00" || endStr === "00:00") {
+    if (endStr === "24:00") winEnd = 1440;
+    else if (winEnd <= winStart) winEnd += 1440;
+  }
+  const winDur = Math.max(60, winEnd - winStart);
+  return { winStart, winEnd, winDur, startStr, endStr };
 }
 
 function getDutyStartMinutes(row, useLocal) {
@@ -2990,110 +3195,249 @@ function getDutyStartMinutes(row, useLocal) {
   return parseTimeToMinutes(displayStart);
 }
 
+function getSingleDayRequiredWidth() {
+  const { winDur } = getFilterWindowMinutes();
+  const pxPerMin = currentSingleDayScale / 1440;
+  const calculatedWidth = Math.ceil(winDur * pxPerMin);
+  return Math.max(currentSingleDayScale, calculatedWidth);
+}
+
 function renderRosterHeader(windows) {
   const table = rosterHead.closest("table");
   const isSingleDay = windows.length === 1;
+  const scaleControl = document.querySelector(".roster-scale-control");
+  if (scaleControl) {
+    scaleControl.hidden = !isSingleDay || rosterViewMode !== "staff";
+  }
   table.classList.toggle("single-day", isSingleDay);
   if (!windows.length) {
     table.style.minWidth = "100%";
     rosterHead.innerHTML = "<tr><th>Staff member</th><th>Duty list by day</th></tr>";
     return;
   }
-  table.style.minWidth = isSingleDay ? "100%" : `${190 + (windows.length * 180) + (showRosterDutyTotals ? 90 : 0)}px`;
+  const reqWidth = isSingleDay ? getSingleDayRequiredWidth() : (190 + (windows.length * 180) + (showRosterDutyTotals ? 90 : 0));
+  table.style.minWidth = `${reqWidth}px`;
+  table.style.setProperty("--single-day-width", `${reqWidth}px`);
   const weekdayFormatter = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" });
   const dateFormatter = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
 
   let timelineTicksHtml = "";
   if (isSingleDay) {
-    const startStr = (rosterStartTime && rosterStartTime.value) ? rosterStartTime.value : "00:00";
-    const endStr = (rosterEndTime && rosterEndTime.value) ? rosterEndTime.value : "24:00";
-    const winStartMins = parseTimeToMinutes(startStr);
-    let winEndMins = parseTimeToMinutes(endStr);
-    if (winEndMins <= winStartMins) winEndMins += 1440;
-    const totalWinMins = Math.max(60, winEndMins - winStartMins);
+    const { winStart, winDur } = getFilterWindowMinutes();
+    const totalHours = Math.max(1, Math.round(winDur / 60));
+    const stepHours = totalHours <= 12 ? 1 : 2;
+    const tickElements = [];
 
-    const ticks = [];
-    for (let i = 0; i <= 4; i++) {
-      const tMins = winStartMins + (totalWinMins * i) / 4;
-      ticks.push(formatMinutesToHHMM(tMins));
+    for (let h = 0; h <= totalHours; h += stepHours) {
+      const tMins = winStart + h * 60;
+      const ratio = (h * 60) / winDur;
+      if (ratio > 1.02) break;
+      const actualRatio = Math.min(1.0, ratio);
+      const timeLabel = formatMinutesToTime(tMins);
+      let transform = "translateX(-50%)";
+      if (actualRatio === 0) transform = "translateX(0)";
+      else if (actualRatio >= 1.0) transform = "translateX(-100%)";
+      tickElements.push(`<span style="position:absolute; left:${(actualRatio * 100).toFixed(2)}%; ${transform ? `transform:${transform};` : ""}">${timeLabel}</span>`);
     }
 
     timelineTicksHtml = `
-      <div class="roster-timeline-ticks" style="position:relative; width:100%; height:18px; font-size:10px; color:var(--muted); font-weight:700; margin-top:6px; border-top:1.5px solid #cbd5e1; padding-top:2px;">
-        <span style="position:absolute; left:0%; transform:translateX(0%);">│ ${ticks[0]}</span>
-        <span style="position:absolute; left:25%; transform:translateX(-50%);">│ ${ticks[1]}</span>
-        <span style="position:absolute; left:50%; transform:translateX(-50%);">│ ${ticks[2]}</span>
-        <span style="position:absolute; left:75%; transform:translateX(-50%);">│ ${ticks[3]}</span>
-        <span style="position:absolute; left:100%; transform:translateX(-100%);">│ ${ticks[4]}</span>
+      <div class="roster-timeline-ticks" style="position:relative; width:100%; height:18px; font-size:11px; color:var(--muted); font-weight:600; margin-top:4px; border-top:1px dashed #cbd5e1; padding-top:2px;">
+        ${tickElements.join("")}
       </div>
     `;
   }
 
   rosterHead.innerHTML = `<tr><th>Staff member</th>${windows.map((window) => `
     <th class="roster-date-heading">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <span>${escapeHtml(weekdayFormatter.format(window.start))}</span>
-        <strong>${escapeHtml(dateFormatter.format(window.start))}</strong>
-      </div>
+      <span>${escapeHtml(weekdayFormatter.format(window.start))}</span>
+      <strong>${escapeHtml(dateFormatter.format(window.start))}</strong>
       ${timelineTicksHtml}
     </th>
   `).join("")}${showRosterDutyTotals ? '<th class="roster-date-heading"><span>Selected</span><strong>Range hours</strong></th>' : ""}</tr>`;
 }
 
+function hasAvailableShiftsForDate(isoDate) {
+  if (!isoDate || !Array.isArray(latestRows)) return false;
+  return latestRows.some((duty) => duty.date === isoDate && (Number(duty.missing || 0) > 0 || !duty.staff || duty.staff.length === 0));
+}
+
+function hasAssignableShiftForPersonOnDate(personKey, isoDate, personAssignments = []) {
+  if (!isoDate || !Array.isArray(latestRows) || !personKey) return false;
+  const openDuties = latestRows.filter((row) => row.date === isoDate && Number(row.missing || 0) > 0);
+  if (!openDuties.length) return false;
+
+  const unassignedDuties = openDuties.filter((duty) => !(duty.staff || []).some((s) => isSameStaff(s, personKey)));
+  if (!unassignedDuties.length) return false;
+  if (!personAssignments.length) return true;
+
+  const parseTime = (date, timeStr) => parseUtcTime(date, timeStr);
+
+  return unassignedDuties.some((duty) => {
+    const dStart = parseTime(duty.date, duty.start_utc);
+    let dEnd = parseTime(duty.date, duty.release_utc);
+    if (!dStart || !dEnd) return false;
+    if (dEnd <= dStart) dEnd = new Date(dEnd.getTime() + 86400000);
+
+    const conflict = personAssignments.some((a) => {
+      const aStart = parseTime(a.date, a.start_utc);
+      let aEnd = parseTime(a.date, a.release_utc);
+      if (!aStart || !aEnd) return false;
+      if (aEnd <= aStart) aEnd = new Date(aEnd.getTime() + 86400000);
+      return dStart < aEnd && dEnd > aStart;
+    });
+
+    return !conflict;
+  });
+}
+
+function calculateDayBreakMinutes(assignments, useLocal = false) {
+  if (!assignments || assignments.length < 2) return 0;
+  const sorted = [...assignments].map((row) => {
+    const startMins = getDutyStartMinutes(row, useLocal);
+    const releaseDisplay = getDisplayTime(row.date, row.release_utc, useLocal);
+    const releaseMins = parseTimeToMinutes(releaseDisplay);
+    let durMins = releaseMins - startMins;
+    if (durMins <= 0) durMins += 1440;
+    return { startMins, endMins: startMins + durMins };
+  }).sort((a, b) => a.startMins - b.startMins);
+
+  let breakMins = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i].startMins - sorted[i - 1].endMins;
+    if (gap > 0) breakMins += gap;
+  }
+  return breakMins;
+}
+
 function renderRosterDayCell(assignments, window, showTotal = false, person = null, isSingleDay = false) {
+  const useLocal = rosterLocalTimeToggle.checked;
   const dutyHours = showTotal ? formatHours(OperationsUtils.summarizeDutyHours(assignments, [window]).totalMinutes) : "";
+  const breakMins = calculateDayBreakMinutes(assignments, useLocal);
+  const breakSubtext = breakMins > 0 ? ` <small class="break-subtext" style="opacity:0.85; font-weight:normal; font-size:10px;" title="Shift break in-between: ${formatHours(breakMins)}h (${breakMins}m)">(+${formatHours(breakMins)}h break)</small>` : "";
   const staffKeyAttr = person?.key ? ` data-staff-key="${escapeHtml(person.key)}"` : "";
   const dateAttr = window?.isoDate ? ` data-date="${escapeHtml(window.isoDate)}"` : "";
-  if (!assignments.length) return `<td class="roster-day-cell free-day"${staffKeyAttr}${dateAttr}><div class="roster-free-day-content">${showTotal ? '<span class="roster-day-total">0.0h</span>' : ""}<span>Free</span></div></td>`;
-  const useLocal = rosterLocalTimeToggle.checked;
-  const zoneLabel = useLocal ? "Local" : "Z";
 
-  let sortedAssignments = [...assignments];
+  const canAssignMore = hasAssignableShiftForPersonOnDate(person?.key, window?.isoDate, assignments);
+  const assignAddBtnHtml = canAssignMore
+    ? `<button type="button" class="roster-assign-slot-btn add-more-btn" data-staff-key="${escapeHtml(person?.key || "")}" data-date="${escapeHtml(window?.isoDate || "")}" title="Assign another non-conflicting available shift during break to ${escapeHtml(person?.name || "staff member")}">
+         <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-right:2px; vertical-align:-1px;"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>
+         <span>+ Assign</span>
+       </button>`
+    : "";
+
+  if (!assignments.length) {
+    const isoDate = window?.isoDate;
+    const hasSlots = hasAvailableShiftsForDate(isoDate);
+    const assignBtnHtml = hasSlots
+      ? `<button type="button" class="roster-assign-slot-btn" data-staff-key="${escapeHtml(person?.key || person?.initials || person?.name || "")}" data-date="${escapeHtml(isoDate || "")}" title="Assign available duty slot to ${escapeHtml(person?.name || "staff member")}">
+           <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-right:2px; vertical-align:-1px;"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>
+           <span>Assign</span>
+         </button>`
+      : `<span>Free</span>`;
+    return `<td class="roster-day-cell free-day"${staffKeyAttr}${dateAttr}><div class="roster-free-day-content">${showTotal ? '<span class="roster-day-total">0.0h</span>' : ""}${assignBtnHtml}</div></td>`;
+  }
+  const zoneLabel = useLocal ? "Local" : "Z";
+  const { winStart, winDur } = getFilterWindowMinutes();
+
   if (isSingleDay) {
-    sortedAssignments.sort((a, b) => getDutyStartMinutes(a, useLocal) - getDutyStartMinutes(b, useLocal));
+    const sorted = [...assignments].sort((a, b) => getDutyStartMinutes(a, useLocal) - getDutyStartMinutes(b, useLocal));
+    const tracks = [];
+
+    for (const row of sorted) {
+      const startMins = getDutyStartMinutes(row, useLocal);
+      const releaseDisplay = getDisplayTime(row.date, row.release_utc, useLocal);
+      const releaseMins = parseTimeToMinutes(releaseDisplay);
+      let durMins = releaseMins - startMins;
+      if (durMins <= 0) durMins += 1440;
+      const endMins = startMins + durMins;
+
+      let placed = false;
+      for (const track of tracks) {
+        if (startMins >= track.lastEndMins) {
+          track.items.push({ row, startMins, endMins });
+          track.lastEndMins = endMins;
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        tracks.push({ items: [{ row, startMins, endMins }], lastEndMins: endMins });
+      }
+    }
+
+    const rowsHtml = tracks.map((track) => {
+      let prevEndMins = winStart;
+      const elements = [];
+
+      track.items.forEach(({ row, startMins, endMins }, idx) => {
+        const change = rosterStateMode === "original" ? { changed: false, added: [], removed: [] } : getDutyRosterChange(row);
+        const changeText = formatRosterChange(change);
+        const rowKey = OperationsUtils.rowKey(row);
+
+        let relStart = startMins - winStart;
+        if (relStart < 0) relStart += 1440;
+
+        let relPrevEnd = prevEndMins - winStart;
+        if (relPrevEnd < 0) relPrevEnd += 1440;
+
+        const breakGapMins = Math.max(0, relStart - relPrevEnd);
+        let insertedBreakCard = false;
+
+        if (breakGapMins >= 15 && idx > 0 && prevEndMins >= winStart) {
+          const gapPct = (breakGapMins / winDur) * 100;
+          const breakStartStr = formatMinutesToTime(prevEndMins);
+          const breakEndStr = formatMinutesToTime(startMins);
+          elements.push(`
+            <div class="compact-duty break-card" style="width: ${gapPct.toFixed(2)}%;" title="In-between rest break: ${breakStartStr}–${breakEndStr} ${zoneLabel} (${formatHours(breakGapMins)}h / ${breakGapMins}m)">
+              <strong>☕ Break</strong>
+              <span class="compact-sla break-tag">${formatHours(breakGapMins)}h</span>
+              <small>${escapeHtml(breakStartStr)}–${escapeHtml(breakEndStr)} ${zoneLabel}</small>
+            </div>
+          `);
+          insertedBreakCard = true;
+        }
+
+        let durMins = endMins - startMins;
+        if (durMins <= 0) durMins += 1440;
+        const durPct = (durMins / winDur) * 100;
+
+        let styleAttr = `style="width: ${durPct.toFixed(2)}%;`;
+        if (idx === 0) {
+          const offsetPct = Math.max(0, (relStart / winDur) * 100);
+          styleAttr += ` margin-left: ${offsetPct.toFixed(2)}%;"`;
+        } else if (!insertedBreakCard && breakGapMins > 0) {
+          const gapPct = (breakGapMins / winDur) * 100;
+          styleAttr += ` margin-left: ${gapPct.toFixed(2)}%;"`;
+        } else {
+          styleAttr += ` margin-left: 0;"`;
+        }
+
+        prevEndMins = endMins;
+        const breakTitle = breakGapMins > 0 ? ` · Break from prev duty: ${formatHours(breakGapMins)}h (${breakGapMins}m)` : "";
+
+        elements.push(`
+        <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""}${styleAttr} title="${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}${breakTitle}">
+          <strong>${escapeHtml(row.flight)}</strong>
+          <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${change.changed ? ' <b class="edited-badge">Edited</b>' : ""}</span>
+          <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
+          ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
+          ${person?.key ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}
+        </button>`);
+      });
+
+      return `<div class="duty-strip-row">${elements.join("")}</div>`;
+    }).join("");
+
+    return `<td class="roster-day-cell"${staffKeyAttr}${dateAttr}><div class="duty-strip">${rowsHtml}</div>${assignAddBtnHtml}</td>`;
   }
 
-  const startStr = (rosterStartTime && rosterStartTime.value) ? rosterStartTime.value : "00:00";
-  const endStr = (rosterEndTime && rosterEndTime.value) ? rosterEndTime.value : "24:00";
-  const winStartMins = parseTimeToMinutes(startStr);
-  let winEndMins = parseTimeToMinutes(endStr);
-  if (winEndMins <= winStartMins) winEndMins += 1440;
-  const totalWinMins = Math.max(60, winEndMins - winStartMins);
-
-  const rowEndMins = [];
-
+  let sortedAssignments = [...assignments];
   const duties = sortedAssignments.map((row) => {
     const change = rosterStateMode === "original" ? { changed: false, added: [], removed: [] } : getDutyRosterChange(row);
     const changeText = formatRosterChange(change);
     const rowKey = OperationsUtils.rowKey(row);
-
-    let styleAttr = "";
-    if (isSingleDay) {
-      const dutyStartMins = getDutyStartMinutes(row, useLocal);
-      const releaseDisplay = getDisplayTime(row.date, row.release_utc, useLocal);
-      const dutyReleaseMins = parseTimeToMinutes(releaseDisplay);
-      let durMins = dutyReleaseMins - dutyStartMins;
-      if (durMins <= 0) durMins += 1440;
-      const dutyEndMins = dutyStartMins + durMins;
-
-      let relStart = dutyStartMins - winStartMins;
-      if (relStart < 0 && winEndMins > 1440) relStart += 1440;
-
-      let leftPct = Math.max(0, Math.min(95, (relStart / totalWinMins) * 100));
-      let widthPct = Math.max(12, Math.min(100 - leftPct, (durMins / totalWinMins) * 100));
-
-      let subRowIndex = 0;
-      while (subRowIndex < rowEndMins.length && dutyStartMins < rowEndMins[subRowIndex]) {
-        subRowIndex++;
-      }
-      rowEndMins[subRowIndex] = dutyEndMins;
-
-      const topPx = subRowIndex * 54;
-      styleAttr = ` style="position: absolute !important; left: ${leftPct.toFixed(1)}%; width: calc(${widthPct.toFixed(1)}% - 4px); min-width: 145px; top: ${topPx}px; margin: 0 !important;"`;
-    }
-
     return `
-    <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""}${styleAttr} title="${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
+    <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""} title="${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
       <strong>${escapeHtml(row.flight)}</strong>
       <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${change.changed ? ' <b class="edited-badge">Edited</b>' : ""}</span>
       <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
@@ -3102,18 +3446,12 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
     </button>
   `;
   }).join("");
-
-  const stripStyle = isSingleDay
-    ? ` style="position: relative; width: 100%; min-height: ${Math.max(1, rowEndMins.length) * 54}px; display: block;"`
-    : "";
-
-  return `<td class="roster-day-cell"${staffKeyAttr}${dateAttr}>${showTotal ? `<span class="roster-day-total">${dutyHours}h</span>` : ""}<div class="duty-strip"${stripStyle}>${duties}</div></td>`;
+  return `<td class="roster-day-cell"${staffKeyAttr}${dateAttr}>${showTotal ? `<span class="roster-day-total" title="Duty hours: ${dutyHours}h${breakMins > 0 ? ` · In-between break: ${formatHours(breakMins)}h` : ""}">${dutyHours}h${breakSubtext}</span>` : ""}<div class="duty-strip">${duties}</div>${assignAddBtnHtml}</td>`;
 }
 
 function openReplacementFinder(person, duty) {
   const staffKey = person.initials || person.name;
-  myInitialsInput.value = staffKey;
-  localStorage.setItem("myInitials", staffKey);
+  setReplacementStaff(staffKey);
   switchTab("replacements");
   renderReplacements(true);
   showCandidatesForDuty(duty);
@@ -3531,8 +3869,7 @@ function executeBulkReplacement(overridePerson = null, overrideCandidateKey = nu
 function openBulkReplacementForPerson(personToReplace) {
   if (!personToReplace) return;
   const staffKey = personToReplace.initials || personToReplace.name || personToReplace.key;
-  myInitialsInput.value = staffKey;
-  localStorage.setItem("myInitials", staffKey);
+  setReplacementStaff(staffKey);
   switchTab("replacements");
   renderReplacements(false);
   closeRosterInlineReplacement();
@@ -3563,13 +3900,42 @@ function updateStaffOptions() {
     .sort((a, b) => a.name.localeCompare(b.name));
   const seen = new Set();
   staffOptions.innerHTML = "";
-  for (const person of people) {
-    if (seen.has(person.key)) continue;
-    seen.add(person.key);
-    const option = document.createElement("option");
-    option.value = person.name;
-    option.label = `${person.initials} - ${person.name}`;
-    staffOptions.appendChild(option);
+
+  if (replacementStaffSelect) {
+    const currentVal = replacementStaffSelect.value || myInitialsInput?.value || localStorage.getItem("myInitials") || "";
+    replacementStaffSelect.innerHTML = '<option value="">Select staff member...</option>';
+    for (const person of people) {
+      if (seen.has(person.key)) continue;
+      seen.add(person.key);
+
+      const option = document.createElement("option");
+      option.value = person.name;
+      option.label = `${person.initials} - ${person.name}`;
+      staffOptions.appendChild(option);
+
+      const selOption = document.createElement("option");
+      selOption.value = person.name;
+      selOption.textContent = `${person.name} (${person.initials})`;
+      replacementStaffSelect.appendChild(selOption);
+    }
+    if (currentVal) {
+      const identity = resolveStaffIdentity(currentVal);
+      const targetName = identity?.name || currentVal;
+      const matchOpt = [...replacementStaffSelect.options].find(opt =>
+        opt.value.toLowerCase() === targetName.toLowerCase() ||
+        (identity && (opt.value.toUpperCase() === identity.initials.toUpperCase() || opt.value === identity.key))
+      );
+      if (matchOpt) replacementStaffSelect.value = matchOpt.value;
+    }
+  } else {
+    for (const person of people) {
+      if (seen.has(person.key)) continue;
+      seen.add(person.key);
+      const option = document.createElement("option");
+      option.value = person.name;
+      option.label = `${person.initials} - ${person.name}`;
+      staffOptions.appendChild(option);
+    }
   }
   renderPlannerStaffList();
 }
@@ -4286,11 +4652,6 @@ function showCandidatesForDuty(duty) {
 
   const summaryEl = document.createElement("div");
   summaryEl.className = "candidates-summary";
-  summaryEl.style.padding = "8px 12px";
-  summaryEl.style.fontSize = "0.85rem";
-  summaryEl.style.color = "var(--text-light)";
-  summaryEl.style.borderBottom = "1px solid var(--border)";
-  summaryEl.style.marginBottom = "10px";
   summaryEl.innerHTML = `Found <strong>${candidates.length}</strong> available candidate(s): fully free staff plus people with another duty within <strong>${escapeHtml(maxGapLabel)}</strong>.`;
   candidatesList.appendChild(summaryEl);
 
@@ -4313,8 +4674,6 @@ function showCandidatesForDuty(duty) {
     let detailsHtml = "";
     if (cand.isWorkingOnDay) {
       detailsHtml += renderCandidateShiftStrip(cand.shiftsOnSameDay, duty, cand.closestDuty, useLocal);
-    } else {
-      detailsHtml += `<div class="candidate-shifts-panel"><div class="candidate-shifts-title">Today's duties</div><div class="candidate-no-shifts">No duties today</div></div>`;
     }
 
     detailsHtml += `<div class="candidate-detail-item"><strong>SLA Experience:</strong> Worked ${cand.slaExperience} shift(s) of type "${escapeHtml(duty.sla)}"</div>`;
@@ -4327,14 +4686,22 @@ function showCandidatesForDuty(duty) {
       const connectedRaw = cand.closestPosition === "before" ? cand.closestDuty.release_utc : cand.closestDuty.start_utc;
       const connectedAt = getDisplayTime(cand.closestDuty.date, connectedRaw, useLocal);
       detailsHtml += `<div class="candidate-detail-item connection-detail"><strong>Closest duty:</strong> ${escapeHtml(cand.closestDuty.flight)} ${escapeHtml(cand.closestDuty.sla)} · ${escapeHtml(cand.connectionGapMinutes)} min ${escapeHtml(cand.closestPosition)} (${escapeHtml(connectedAt)} ${zoneLabel})</div>`;
-    } else {
-      detailsHtml += `<div class="candidate-detail-item connection-detail"><strong>Availability:</strong> No allocated duties on this date.</div>`;
     }
 
     card.innerHTML = `
       <div class="candidate-card-header">
-        <span class="candidate-name">${escapeHtml(cand.initials)} - ${escapeHtml(cand.name)}</span>
-        <span class="score-badge ${scoreClass}">Match: ${cand.score}/10</span>
+        <div class="candidate-name-wrap">
+          <span class="candidate-name">${escapeHtml(cand.initials)} - ${escapeHtml(cand.name)}</span>
+          <span class="score-badge ${scoreClass}">Match: ${cand.score}/10</span>
+        </div>
+        <button type="button" class="candidate-assign-btn" data-cand-initials="${escapeHtml(cand.initials)}" data-cand-name="${escapeHtml(cand.name)}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="8.5" cy="7" r="4"/>
+            <polyline points="17 11 19 13 23 9"/>
+          </svg>
+          <span>Assign Replacement</span>
+        </button>
       </div>
       <div class="candidate-status-row">
         <span class="status-dot"></span>
@@ -4345,8 +4712,40 @@ function showCandidatesForDuty(duty) {
       </div>
     `;
 
+    card.querySelector(".candidate-assign-btn")?.addEventListener("click", () => {
+      assignCandidateToDuty(duty, cand);
+    });
+
     candidatesList.appendChild(card);
   });
+}
+
+function assignCandidateToDuty(duty, cand) {
+  const targetRow = latestRows.find((r) => OperationsUtils.rowKey(r) === OperationsUtils.rowKey(duty));
+  const initials = (myInitialsInput.value || localStorage.getItem("myInitials") || "").trim();
+  const replaceIdentity = resolveStaffIdentity(initials);
+  const replaceName = replaceIdentity?.name || initials;
+
+  if (targetRow) {
+    targetRow.staff = targetRow.staff || [];
+    const formatted = formatStaffLabel(cand);
+    const oldIndex = targetRow.staff.findIndex((label) => isSameStaff(label, replaceName) || isSameStaff(label, initials));
+    if (oldIndex >= 0) {
+      targetRow.staff[oldIndex] = formatted;
+    } else if (!targetRow.staff.some((label) => isSameStaff(label, cand.key))) {
+      targetRow.staff.push(formatted);
+    }
+    targetRow.assigned = targetRow.staff.length;
+    targetRow.missing = Math.max(0, Number(targetRow.required || 0) - targetRow.assigned);
+  }
+
+  currentAutoPlan = null;
+  if (autoPlannerResult) autoPlannerResult.textContent = "Roster changed. Create a new plan to use the updated staffing.";
+
+  applyFilters();
+  if (typeof renderRoster === "function") renderRoster();
+  renderReplacements(true);
+  setMessage(`Assigned ${cand.name} (${cand.initials}) to replace ${replaceName} on ${duty.flight} (${duty.sla}).`, "success");
 }
 
 function renderCandidateShiftStrip(shifts, replacementDuty, closestDuty, useLocal) {
@@ -5071,6 +5470,14 @@ function renderInsights() {
     const range = rosterDate.value === rosterEndDate.value ? rosterDate.value : `${rosterDate.value} to ${rosterEndDate.value}`;
     rosterHoursHint.textContent = `${range} · Uses the selected Duty Roster time window and filters. Hours are classified by Europe/Berlin calendar day; public-holiday hours may also be weekday or weekend hours.`;
   }
+
+  renderMasterStaffDirectoryTable();
+  const masterStaffSearchInput = document.getElementById("masterStaffSearch");
+  if (masterStaffSearchInput && !masterStaffSearchInput.dataset.listenerAttached) {
+    masterStaffSearchInput.dataset.listenerAttached = "true";
+    masterStaffSearchInput.addEventListener("input", renderMasterStaffDirectoryTable);
+  }
+
   resultCount.textContent = String(analytics.warnings.length);
   csvBtn.disabled = latestRows.length === 0;
   opsCsvBtn.disabled = !latestRows.some((row) => Number(row.missing || 0) > 0);
@@ -5130,6 +5537,174 @@ function snapshotGap(row) {
   return { key: OperationsUtils.rowKey(row), date: row.date, flight: row.flight, route: row.route, sla: row.sla, required: Number(row.required || 0), assigned: Number(row.assigned || 0), missing: Number(row.missing || 0), start_utc: row.start_utc, release_utc: row.release_utc, staff: row.staff || [], durationMinutes, missingHours: Number(((Number(row.missing || 0) * durationMinutes) / 60).toFixed(2)) };
 }
 
+const MASTER_STAFF_KEY = "gsrmMasterStaffDirectoryV1";
+
+function getMasterStaffDirectory() {
+  try {
+    const raw = localStorage.getItem(MASTER_STAFF_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.warn("Error reading master staff directory:", e);
+  }
+  return [];
+}
+
+function syncMasterStaffDirectory(staffDirectoryList = [], rowsList = [], scannedDates = []) {
+  const masterMap = new Map();
+
+  // 1. Load existing master staff
+  const existing = getMasterStaffDirectory();
+  for (const item of existing) {
+    if (item && item.key) masterMap.set(item.key, { ...item, slas: new Set(item.slas || []) });
+  }
+
+  const ensureStaff = (identity, date = "") => {
+    if (!identity || !identity.key) return null;
+    if (!masterMap.has(identity.key)) {
+      masterMap.set(identity.key, {
+        key: identity.key,
+        name: identity.name,
+        initials: identity.initials || identity.station || "MUC",
+        station: identity.station || identity.initials || "MUC",
+        slas: new Set(),
+        dutyCount: 0,
+        lastSeenDate: date || today,
+        firstSeenDate: date || today,
+      });
+    }
+    const record = masterMap.get(identity.key);
+    if (date) {
+      if (!record.lastSeenDate || date > record.lastSeenDate) record.lastSeenDate = date;
+      if (!record.firstSeenDate || date < record.firstSeenDate) record.firstSeenDate = date;
+    }
+    return record;
+  };
+
+  // 2. Active scan staff directory list
+  for (const staffStr of staffDirectoryList) {
+    const identity = parseStaffIdentity(staffStr);
+    if (identity) ensureStaff(identity, scannedDates[0] || today);
+  }
+
+  // 3. Active scan rows
+  for (const row of rowsList) {
+    const rowDate = row.date || today;
+    const rowSla = row.sla || "";
+    for (const staffStr of row.staff || []) {
+      const identity = parseStaffIdentity(staffStr);
+      if (!identity) continue;
+      const record = ensureStaff(identity, rowDate);
+      if (record) {
+        if (rowSla) record.slas.add(rowSla);
+        record.dutyCount = (record.dutyCount || 0) + 1;
+      }
+    }
+  }
+
+  // 4. Cumulative Scan History Snapshots
+  const history = getScanHistory();
+  for (const snap of history) {
+    const snapDates = snap.scannedDates || [snap.startDate];
+    const snapDate = snapDates[0] || today;
+    for (const staffStr of snap.staffDirectory || []) {
+      const identity = parseStaffIdentity(staffStr);
+      if (identity) ensureStaff(identity, snapDate);
+    }
+    for (const row of snap.rows || []) {
+      const rDate = row.date || snapDate;
+      const rSla = row.sla || "";
+      for (const staffStr of row.staff || []) {
+        const identity = parseStaffIdentity(staffStr);
+        if (!identity) continue;
+        const record = ensureStaff(identity, rDate);
+        if (record) {
+          if (rSla) record.slas.add(rSla);
+        }
+      }
+    }
+  }
+
+  const resultList = [...masterMap.values()].map((rec) => ({
+    ...rec,
+    slas: Array.from(rec.slas),
+  })).sort((a, b) => a.name.localeCompare(b.name));
+
+  try {
+    localStorage.setItem(MASTER_STAFF_KEY, JSON.stringify(resultList));
+  } catch (e) {
+    console.warn("Could not save master staff directory:", e);
+  }
+  return resultList;
+}
+
+function renderMasterStaffDirectoryTable() {
+  const tbody = document.getElementById("masterStaffBody");
+  const badge = document.getElementById("masterStaffTotalBadge");
+  const searchInput = document.getElementById("masterStaffSearch");
+  if (!tbody) return;
+
+  const masterList = getMasterStaffDirectory();
+  const query = (searchInput?.value || "").toLowerCase().trim();
+
+  const filtered = masterList.filter((person) => {
+    if (!query) return true;
+    const nameMatch = (person.name || "").toLowerCase().includes(query);
+    const stationMatch = (person.initials || person.station || "").toLowerCase().includes(query);
+    const slaMatch = (person.slas || []).some((s) => s.toLowerCase().includes(query));
+    return nameMatch || stationMatch || slaMatch;
+  });
+
+  if (badge) badge.textContent = `${masterList.length} Known Staff`;
+
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">${query ? "No staff members match search filter." : "No staff members recorded in master directory yet. Run a scan to populate."}</td></tr>`;
+    return;
+  }
+
+  const roster = getRosterRows();
+  const activeDutyStaffKeys = new Set();
+  if (roster && roster.rows) {
+    roster.rows.forEach((r) => {
+      if (r.overlapping && r.overlapping.length > 0) {
+        activeDutyStaffKeys.add(r.key);
+      }
+    });
+  }
+
+  tbody.innerHTML = filtered.map((person) => {
+    const isTracked = typeof isStaffTracked === "function" ? isStaffTracked(person.key) : false;
+    const trackTitle = `View change history for ${escapeHtml(person.name)}`;
+    const trackBtnHtml = isTracked
+      ? `<button type="button" class="person-track-changes-btn" data-person-key="${escapeHtml(person.key)}" title="${trackTitle}" style="border:none; background:transparent; cursor:pointer; padding:0 2px; color:var(--primary, #2563eb); display:inline-flex; align-items:center;" aria-label="Tracked"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM2 8a6 6 0 1 1 12 0A6 6 0 0 1 2 8zm6.5-3v3.25l2.25 1.35-.75 1.2-3-1.8V5h1.5z"/></svg></button>`
+      : "";
+
+    const slaChips = (person.slas || []).length
+      ? person.slas.map((sla) => `<span class="compact-sla" data-sla="${escapeHtml(sla)}" style="margin-right:3px; font-size:10px;">${escapeHtml(sla)}</span>`).join("")
+      : '<span style="color:#94a3b8; font-size:11px;">General</span>';
+
+    const isOnActiveDuty = activeDutyStaffKeys.has(person.key);
+    const statusHtml = isOnActiveDuty
+      ? `<span class="badge" style="background:#dcfce7; color:#15803d; font-weight:600; padding:2px 6px; font-size:10px;">On Active Roster</span>`
+      : `<span class="badge" style="background:#f1f5f9; color:#64748b; font-weight:500; padding:2px 6px; font-size:10px;">Available (No Duty)</span>`;
+
+    return `
+      <tr>
+        <td style="font-weight:600; color:#1e293b;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <span>${escapeHtml(person.name)}</span>
+            ${trackBtnHtml}
+          </div>
+        </td>
+        <td style="text-align:center;"><span style="background:#f1f5f9; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600; color:#475569;">${escapeHtml(person.initials || person.station || "MUC")}</span></td>
+        <td>${slaChips}</td>
+        <td style="text-align:center; font-weight:700; color:#0284c7;">${person.dutyCount || 0}</td>
+        <td style="text-align:center; font-size:11px; color:#64748b;">${escapeHtml(person.lastSeenDate || "—")}</td>
+        <td style="text-align:center;">${statusHtml}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
 function getScanHistory() {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
 }
@@ -5175,6 +5750,7 @@ function saveScanSnapshot(result, payload) {
   } catch (error) {
     console.warn("Could not save scan history:", error);
   }
+  syncMasterStaffDirectory(result.staffDirectory, result.rows, result.scannedDates);
 }
 
 function clearScanHistory() {
@@ -5228,6 +5804,7 @@ async function initBackendSync() {
         renderHistory();
       }
     }
+    syncMasterStaffDirectory();
   } catch (err) {
     console.warn("Backend sync initialization warning:", err);
   }
@@ -5270,6 +5847,7 @@ function restoreSnapshot(snapshot) {
   if (snapshot.actions) localStorage.setItem(ACTIONS_KEY, JSON.stringify({ ...getGapActions(), ...snapshot.actions }));
   flightCount.textContent = String(snapshot.flights || 0);
   dateCount.textContent = String(latestScannedDates.length);
+  syncMasterStaffDirectory(snapshot.staffDirectory, snapshot.rows, snapshot.scannedDates);
   updateStaffOptions();
   updateResultsSlaFilter();
   updateRosterFilters();

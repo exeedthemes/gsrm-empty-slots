@@ -2448,7 +2448,22 @@ td.missing {
 .roster-hours-table th:not(:first-child),
 .roster-hours-table td:not(:first-child) { text-align: right; }
 
-.roster-table th,
+.roster-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.roster-table th {
+  padding: 7px 9px;
+  vertical-align: top;
+  white-space: normal;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #f8fafc;
+}
+
 .roster-table td {
   padding: 7px 9px;
   vertical-align: top;
@@ -2459,13 +2474,17 @@ td.missing {
 .roster-person-cell {
   position: sticky;
   left: 0;
-  z-index: 2;
-  background: #fff;
   border-right: 1px solid var(--line);
 }
 
+.roster-person-cell {
+  z-index: 10;
+  background: #fff;
+}
+
 .roster-table th:first-child {
-  z-index: 3;
+  top: 0;
+  z-index: 30;
   background: #f1f5f9;
 }
 
@@ -2559,6 +2578,31 @@ td.missing {
 
 .roster-free-day-content .roster-day-total { margin-bottom: 0; }
 
+.roster-assign-slot-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border: 1px dashed var(--accent-strong);
+  border-radius: 6px;
+  background: #f0fdfa;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1.2;
+  transition: all 0.15s ease;
+}
+
+.roster-assign-slot-btn:hover {
+  background: var(--accent-strong);
+  color: #ffffff;
+  border-style: solid;
+  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.25);
+  transform: translateY(-1px);
+}
+
 .compact-duty {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -2590,16 +2634,90 @@ td.missing {
 
 .duty-strip .compact-duty { margin-bottom: 0; }
 
+.compact-duty.break-card {
+  background: #f8fafc !important;
+  border-left: 3px solid #94a3b8 !important;
+  border-top: 1px dashed #cbd5e1 !important;
+  border-right: 1px dashed #cbd5e1 !important;
+  border-bottom: 1px dashed #cbd5e1 !important;
+  color: #64748b !important;
+  box-shadow: none !important;
+  cursor: default !important;
+  opacity: 0.92;
+  user-select: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.compact-duty.break-card:hover {
+  background: #f1f5f9 !important;
+  border-color: #64748b !important;
+  color: #334155 !important;
+}
+
+.compact-duty.break-card strong {
+  color: #475569 !important;
+  font-weight: 600;
+}
+
+.compact-duty.break-card .compact-sla.break-tag {
+  background: #e2e8f0 !important;
+  color: #334155 !important;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.roster-table.single-day {
+  min-width: var(--single-day-width, 3600px) !important;
+}
+
+.roster-table.single-day th:not(:first-child),
+.roster-table.single-day td:not(:first-child) {
+  min-width: var(--single-day-width, 3600px) !important;
+  width: auto;
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+  box-sizing: border-box;
+}
+
+.roster-single-day-summary {
+  position: sticky;
+  left: 190px;
+  z-index: 8;
+  width: fit-content;
+  max-width: calc(100vw - 230px);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
 .roster-table.single-day .duty-strip {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   width: 100%;
-  min-height: 52px;
-  overflow: visible;
+  box-sizing: border-box;
   padding-bottom: 2px;
 }
 
-.roster-table.single-day .compact-duty {
+.roster-table.single-day .duty-strip-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
   box-sizing: border-box;
+}
+
+.roster-table.single-day .compact-duty {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  margin-bottom: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .duty-time-field {
@@ -2869,7 +2987,7 @@ body.roster-mode-fullscreen { overflow: hidden; }
 .replacements-layout {
   display: grid;
   grid-template-columns: 350px 1fr;
-  min-height: 480px;
+  min-height: calc(100vh - 200px);
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -2914,6 +3032,64 @@ body.roster-mode-fullscreen { overflow: hidden; }
   font-size: 11px;
 }
 
+.replacement-staff-picker-label {
+  display: block;
+  width: 100%;
+}
+
+.replacement-staff-picker-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.replacement-staff-select {
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line, #cbd5e1);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink, #0f172a);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: var(--transition, all 0.2s ease);
+}
+
+.replacement-staff-select:hover {
+  border-color: var(--accent, #0d9488);
+}
+
+.replacement-staff-select:focus {
+  outline: none;
+  border-color: var(--accent, #0d9488);
+  box-shadow: 0 0 0 3px var(--accent-glow, rgba(13, 148, 136, 0.2));
+}
+
+.replacement-staff-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line, #cbd5e1);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink, #0f172a);
+  font-family: inherit;
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: var(--transition, all 0.2s ease);
+}
+
+.replacement-staff-input:focus {
+  outline: none;
+  border-color: var(--accent, #0d9488);
+  box-shadow: 0 0 0 3px var(--accent-glow, rgba(13, 148, 136, 0.2));
+}
+
 .replacement-duty-context {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -2947,7 +3123,8 @@ body.roster-mode-fullscreen { overflow: hidden; }
   padding: 12px;
   overflow-y: auto;
   flex: 1;
-  max-height: calc(100vh - 360px);
+  max-height: calc(100vh - 200px);
+  min-height: 480px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3019,49 +3196,117 @@ body.roster-mode-fullscreen { overflow: hidden; }
   background: #ffffff;
 }
 
+.candidates-summary {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
 .candidates-list {
-  padding: 16px;
+  padding: 10px 12px;
   overflow-y: auto;
   flex: 1;
-  max-height: calc(100vh - 360px);
+  max-height: calc(100vh - 200px);
+  min-height: 480px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .candidate-card {
-  padding: 16px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   transition: var(--transition);
+  background: #ffffff;
 }
 
 .candidate-card:hover {
   border-color: rgba(13, 148, 136, 0.3);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.03);
 }
 
 .candidate-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.candidate-name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.candidate-assign-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--accent);
+  color: #ffffff;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  box-shadow: 0 1px 2px rgba(13, 148, 136, 0.15);
+}
+
+.candidate-assign-btn:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.35);
+  transform: translateY(-1px);
+}
+
+.candidate-assign-btn:active {
+  transform: translateY(0);
+}
+
+.quick-assign-suitable-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent);
+  color: #ffffff;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--transition);
+}
+
+.quick-assign-suitable-btn:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.3);
 }
 
 .candidate-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--ink);
 }
 
 .score-badge {
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -3087,49 +3332,48 @@ body.roster-mode-fullscreen { overflow: hidden; }
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #166534;
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: #22c55e;
 }
 
 .candidate-details-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 8px;
-  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
   border-top: 1px dashed var(--line);
 }
 
 .candidate-detail-item {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
   text-align: left;
 }
 
 .candidate-detail-item strong {
   color: var(--ink);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .candidate-shifts-panel {
-  grid-column: 1 / -1;
   min-width: 0;
 }
 
 .candidate-shifts-title {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 6px;
+  gap: 6px;
+  margin-bottom: 4px;
   color: var(--ink);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -3138,28 +3382,28 @@ body.roster-mode-fullscreen { overflow: hidden; }
 .candidate-shifts-title span {
   display: inline-grid;
   place-items: center;
-  min-width: 19px;
-  height: 19px;
-  padding: 0 5px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
   border-radius: 999px;
   background: #e2e8f0;
   color: #475569;
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .candidate-shift-strip {
   display: flex;
-  gap: 7px;
+  gap: 6px;
   overflow-x: auto;
-  padding: 1px 1px 5px;
+  padding: 1px 1px 3px;
 }
 
 .candidate-shift-chip {
-  min-width: 150px;
-  padding: 8px 9px;
+  min-width: 135px;
+  padding: 5px 7px;
   border: 1px solid var(--line);
   border-left: 3px solid #94a3b8;
-  border-radius: 7px;
+  border-radius: 6px;
   background: #f8fafc;
 }
 
@@ -3176,7 +3420,7 @@ body.roster-mode-fullscreen { overflow: hidden; }
   gap: 8px;
 }
 
-.candidate-shift-top strong { color: var(--ink); font-size: 12px; }
+.candidate-shift-top strong { color: var(--ink); font-size: 11px; }
 .candidate-shift-top span {
   color: var(--accent-strong);
   font-size: 9px;
@@ -3187,7 +3431,7 @@ body.roster-mode-fullscreen { overflow: hidden; }
 .candidate-shift-chip small,
 .candidate-shift-chip em {
   display: block;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--muted);
   font-size: 9px;
   font-style: normal;
@@ -3203,19 +3447,19 @@ body.roster-mode-fullscreen { overflow: hidden; }
 .candidate-shift-chip.closest em { color: var(--accent-strong); }
 
 .candidate-no-shifts {
-  padding: 9px;
-  border-radius: 7px;
+  padding: 6px;
+  border-radius: 6px;
   background: #f8fafc;
   color: var(--muted);
   font-size: 11px;
 }
 
 .candidate-detail-item.connection-detail {
-  grid-column: 1 / -1;
-  padding: 7px 9px;
-  border-radius: 6px;
+  padding: 4px 8px;
+  border-radius: 5px;
   background: #f0fdfa;
   color: var(--accent-strong);
+  font-size: 11px;
 }
 
 .candidate-detail-item.connection-detail strong {
@@ -5013,12 +5257,13 @@ body.results-mode-fullscreen { overflow: hidden; }
 
 .bulk-replacement-controls {
   display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .bulk-replacement-controls select.bulk-select {
-  flex: 1;
+  width: 100%;
   min-height: 36px;
   border-radius: 7px;
   border: 1px solid var(--line);
@@ -5037,6 +5282,7 @@ body.results-mode-fullscreen { overflow: hidden; }
 }
 
 .bulk-replacement-controls .bulk-replace-btn {
+  width: 100%;
   min-height: 36px;
   padding: 0 16px;
   font-size: 12px;
@@ -5386,7 +5632,7 @@ table.airline-roster-table td {
   margin: 0 !important;
   padding: 0 2px !important;
   cursor: pointer !important;
-  z-index: 10 !important;
+  z-index: 2 !important;
   transition: color 0.15s ease !important;
 }
 

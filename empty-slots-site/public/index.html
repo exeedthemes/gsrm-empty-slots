@@ -388,9 +388,17 @@
           <div class="duties-column">
             <div class="replacement-person-banner">
               <div class="replacement-banner-top">
-                <span>Staff member being replaced</span>
-                <strong id="replacementStaffName">Select a staff member</strong>
-                <small id="replacementStaffSummary">Type a name above to load their duties.</small>
+                <label for="replacementStaffSelect" class="replacement-staff-picker-label">
+                  <span>Staff member being replaced</span>
+                  <div class="replacement-staff-picker-controls">
+                    <select id="replacementStaffSelect" class="replacement-staff-select" aria-label="Select staff member to replace">
+                      <option value="">Select staff member...</option>
+                    </select>
+                    <input id="replacementStaffInput" type="text" list="staffOptions" placeholder="Or type name/initials..." class="replacement-staff-input" aria-label="Type staff name or initials" autocomplete="off">
+                  </div>
+                </label>
+                <strong id="replacementStaffName" hidden>Select a staff member</strong>
+                <small id="replacementStaffSummary">Select or type a staff member to load their duties.</small>
               </div>
               <div id="bulkReplacementBar" class="bulk-replacement-bar" hidden>
                 <div class="bulk-replacement-header">
@@ -505,6 +513,11 @@
             <div class="roster-summary-card duty"><span class="roster-summary-value" id="rosterDutyCount">0</span><span id="rosterDutyLabel">On duty</span></div>
             <p id="rosterWindowText">Run a scan to load the duty roster.</p>
             <div class="roster-summary-actions">
+              <label class="roster-scale-control" title="Adjust single-day timeline width scale" style="display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:600; color:var(--muted); background:#f1f5f9; padding:3px 8px; border-radius:6px; border:1px solid #cbd5e1; user-select:none;" hidden>
+                <span>🔍 Timeline Scale</span>
+                <input id="rosterTimelineScale" type="range" min="2000" max="8000" step="200" value="3600" style="width:85px; cursor:pointer;" aria-label="Adjust single-day timeline width scale">
+                <span id="rosterScaleValue" style="font-weight:700; color:var(--primary, #2563eb); min-width:44px; text-align:right;">3600px</span>
+              </label>
               <button id="rosterTotalsBtn" class="secondary-btn roster-totals-btn" type="button" aria-pressed="false">Show duty hours</button>
               <button id="rosterFullscreenBtn" class="secondary-btn roster-fullscreen-btn" type="button" aria-pressed="false" aria-keyshortcuts="Escape">Full screen</button>
             </div>
@@ -675,7 +688,40 @@
               </div>
               <div id="rosterWarnings" class="warnings-container" role="region" aria-label="Roster warnings list" tabindex="0"></div>
             </section>
-          </div>     </div>
+          </div>
+
+          <section class="insight-section master-staff-section" id="insightsMasterStaffSection" style="margin-top: 16px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+              <div>
+                <strong style="font-size: 14px; color: #1e293b; display: inline-flex; align-items: center; gap: 6px;">
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" style="color: #2563eb;"><path d="M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1 1H7zm4-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-5.784 6A2.238 2.238 0 0 1 5 13c0-1.355.68-2.75 1.936-3.72A6.325 6.325 0 0 0 5 9c-4 0-5 3-5 4s1 1 1 1h4.216zM4.5 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/></svg>
+                  Station Master Staff Directory
+                </strong>
+                <span style="font-size: 11px; color: #64748b; margin-left: 8px;" id="masterStaffCountHint">Cumulative list updated automatically across all scanned dates</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="search" id="masterStaffSearch" placeholder="Search staff or SLA..." style="padding: 3px 8px; font-size: 11px; border: 1px solid #cbd5e1; border-radius: 4px; width: 180px;">
+                <span class="badge" id="masterStaffTotalBadge" style="background: #eff6ff; color: #1d4ed8; font-weight: 700; padding: 3px 8px; border-radius: 12px; font-size: 11px;">0 Staff</span>
+              </div>
+            </div>
+            <div class="table-wrap" style="max-height: 320px; overflow-y: auto;">
+              <table class="roster-hours-table" id="masterStaffTable">
+                <thead>
+                  <tr>
+                    <th>Staff Member</th>
+                    <th style="text-align:center;">Station</th>
+                    <th>SLA History</th>
+                    <th style="text-align:center;">Total Scanned Duties</th>
+                    <th style="text-align:center;">Last Scanned Date</th>
+                    <th style="text-align:center;">Active Roster Status</th>
+                  </tr>
+                </thead>
+                <tbody id="masterStaffBody">
+                  <tr><td colspan="6" class="empty">No staff members recorded in master directory yet. Run a scan to populate.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
 
         <div id="historyLayout" class="history-layout" style="display: none;">
