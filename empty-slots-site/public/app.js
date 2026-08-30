@@ -74,7 +74,6 @@ const tableFilterBar = document.getElementById("tableFilterBar");
 const staffOptions = document.getElementById("staffOptions");
 const replacementStaffName = document.getElementById("replacementStaffName");
 const replacementStaffSelect = document.getElementById("replacementStaffSelect");
-const replacementStaffInput = document.getElementById("replacementStaffInput");
 const replacementStaffSummary = document.getElementById("replacementStaffSummary");
 const replacementCandidatesHeader = document.getElementById("replacementCandidatesHeader");
 const rosterFullscreenBtn = document.getElementById("rosterFullscreenBtn");
@@ -180,7 +179,7 @@ document.querySelectorAll("#rosterStateToggleGroup .state-toggle-btn").forEach((
 
 const replaceAllShiftsBtn = document.getElementById("replaceAllShiftsBtn");
 if (replaceAllShiftsBtn) {
-  replaceAllShiftsBtn.addEventListener("click", executeBulkReplacement);
+  replaceAllShiftsBtn.addEventListener("click", () => executeBulkReplacement());
 }
 
 if (resultsSlaBtn) {
@@ -242,11 +241,27 @@ if (availModalOverlay) {
     if (e.target === availModalOverlay) closeAvailabilityModal();
   });
 }
+
+document.getElementById("pdfExportModalClose")?.addEventListener("click", closePdfExportModal);
+document.getElementById("pdfDownloadOriginal")?.addEventListener("click", () => generatePdfDocument({ mode: "original" }));
+document.getElementById("pdfDownloadEdited")?.addEventListener("click", () => generatePdfDocument({ mode: "edited" }));
+document.getElementById("pdfLayoutTableBtn")?.addEventListener("click", () => setPdfExportLayoutStyle("table"));
+document.getElementById("pdfLayoutByDayBtn")?.addEventListener("click", () => setPdfExportLayoutStyle("byday"));
+
+const pdfExportModalOverlay = document.getElementById("pdfExportModal");
+if (pdfExportModalOverlay) {
+  pdfExportModalOverlay.addEventListener("click", (e) => {
+    if (e.target === pdfExportModalOverlay) closePdfExportModal();
+  });
+}
+
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && availModalOverlay && !availModalOverlay.hidden) {
-    closeAvailabilityModal();
+  if (e.key === "Escape") {
+    if (availModalOverlay && !availModalOverlay.hidden) closeAvailabilityModal();
+    if (pdfExportModalOverlay && !pdfExportModalOverlay.hidden) closePdfExportModal();
   }
 });
+
 
 document.getElementById("gapPlannerClose").addEventListener("click", closeGapPlanner);
 document.getElementById("rosterInlineCloseBtn")?.addEventListener("click", closeRosterInlineReplacement);
@@ -279,9 +294,6 @@ function setReplacementStaff(staffValue, triggerSource = null) {
   const value = (staffValue || "").trim();
   if (myInitialsInput && triggerSource !== "myInitialsInput") myInitialsInput.value = value;
   if (gapStaffSearch && triggerSource !== "gapStaffSearch") gapStaffSearch.value = value;
-  if (replacementStaffInput && triggerSource !== "replacementStaffInput" && document.activeElement !== replacementStaffInput) {
-    replacementStaffInput.value = value;
-  }
 
   localStorage.setItem("myInitials", value);
 
@@ -309,11 +321,6 @@ myInitialsInput.addEventListener("input", (e) => {
 if (replacementStaffSelect) {
   replacementStaffSelect.addEventListener("change", (e) => {
     setReplacementStaff(e.target.value, "replacementStaffSelect");
-  });
-}
-if (replacementStaffInput) {
-  replacementStaffInput.addEventListener("input", (e) => {
-    setReplacementStaff(e.target.value, "replacementStaffInput");
   });
 }
 function refreshReplacementCandidates() {
@@ -2071,7 +2078,6 @@ function renderReplacements(preserveSelectedDuty = false) {
   if (!initials) {
     if (replacementStaffName) replacementStaffName.textContent = "Select a staff member";
     if (replacementStaffSelect) replacementStaffSelect.value = "";
-    if (replacementStaffInput && document.activeElement !== replacementStaffInput) replacementStaffInput.value = "";
     replacementStaffSummary.textContent = "Select a staff member above to load their duties.";
     dutiesList.innerHTML = `<div class="empty-list">Please select a staff member to see their duties.</div>`;
     if (bulkBar) bulkBar.hidden = true;
@@ -2088,9 +2094,6 @@ function renderReplacements(preserveSelectedDuty = false) {
       (selectedIdentity && (opt.value.toUpperCase() === selectedIdentity.initials.toUpperCase() || opt.value === selectedIdentity.key))
     );
     if (matchOpt) replacementStaffSelect.value = matchOpt.value;
-  }
-  if (replacementStaffInput && document.activeElement !== replacementStaffInput) {
-    replacementStaffInput.value = selectedIdentity?.name || myInitialsInput.value.trim();
   }
 
   // Find all of my duties
@@ -5053,6 +5056,182 @@ function clearGapCandidate() {
 }
 
 function exportPdf() {
+  openPdfExportModal();
+}
+
+let pdfExportLayoutStyle = "table"; // "table" | "byday"
+let pdfExportStaffFilter = "ALL"; // "ALL" or staff identity key
+
+function setPdfExportLayoutStyle(style) {
+  pdfExportLayoutStyle = style === "byday" ? "byday" : "table";
+  const tableBtn = document.getElementById("pdfLayoutTableBtn");
+  const byDayBtn = document.getElementById("pdfLayoutByDayBtn");
+  const pdfMetaFormat = document.getElementById("pdfMetaFormat");
+
+  if (tableBtn) tableBtn.classList.toggle("active", pdfExportLayoutStyle === "table");
+  if (byDayBtn) byDayBtn.classList.toggle("active", pdfExportLayoutStyle === "byday");
+  if (pdfMetaFormat) {
+    pdfMetaFormat.textContent = pdfExportLayoutStyle === "byday" ? "A4 Landscape · Staff Schedule (By Day)" : "A4 Landscape · Detailed List";
+  }
+
+  updatePdfModalMetaAndPreviews();
+}
+
+function updatePdfModalMetaAndPreviews() {
+  const pdfMetaRecords = document.getElementById("pdfMetaRecords");
+  const staffSelect = document.getElementById("pdfStaffFilterSelect");
+  if (staffSelect) {
+    pdfExportStaffFilter = staffSelect.value || "ALL";
+  }
+
+  if (pdfMetaRecords) {
+    if (pdfExportStaffFilter === "ALL") {
+      const totalRecords = activeTab === "history" ? getScanHistory().length : latestRows.length;
+      pdfMetaRecords.textContent = `${totalRecords} rows (All Staff)`;
+    } else {
+      const filterTarget = parseStaffIdentity(pdfExportStaffFilter);
+      const staffName = filterTarget ? filterTarget.name : pdfExportStaffFilter;
+      pdfMetaRecords.textContent = `Filtered for ${staffName}`;
+    }
+  }
+
+  updatePdfModalMockPreviews();
+}
+
+function updatePdfModalMockPreviews() {
+  const origMock = document.querySelector("#pdfCardOriginal .pdf-page-mock");
+  const editMock = document.querySelector("#pdfCardEdited .pdf-page-mock");
+  if (!origMock || !editMock) return;
+
+  if (pdfExportLayoutStyle === "byday") {
+    origMock.innerHTML = `<div class="pdf-page-header-mock"><div class="pdf-mock-title"></div><div class="pdf-mock-date"></div></div><div class="pdf-mock-divider"></div><div class="pdf-mock-table"><div class="pdf-mock-thead"><div></div><div></div><div></div><div></div></div><div class="pdf-mock-row"></div><div class="pdf-mock-row alt"></div><div class="pdf-mock-row"></div><div class="pdf-mock-row alt"></div></div>`;
+    editMock.innerHTML = `<div class="pdf-page-header-mock edited"><div class="pdf-mock-title edited"></div><div class="pdf-mock-date"></div></div><div class="pdf-mock-divider edited"></div><div class="pdf-mock-table"><div class="pdf-mock-thead edited"><div></div><div></div><div></div><div></div></div><div class="pdf-mock-row"></div><div class="pdf-mock-row alt"></div><div class="pdf-mock-row covered"></div><div class="pdf-mock-row alt"></div></div>`;
+  } else {
+    origMock.innerHTML = `<div class="pdf-page-header-mock"><div class="pdf-mock-title"></div><div class="pdf-mock-date"></div></div><div class="pdf-mock-divider"></div><div class="pdf-mock-table"><div class="pdf-mock-thead"><div></div><div></div><div></div><div></div><div></div></div><div class="pdf-mock-row"></div><div class="pdf-mock-row alt"></div><div class="pdf-mock-row"></div><div class="pdf-mock-row alt"></div></div>`;
+    editMock.innerHTML = `<div class="pdf-page-header-mock edited"><div class="pdf-mock-title edited"></div><div class="pdf-mock-date"></div></div><div class="pdf-mock-divider edited"></div><div class="pdf-mock-table"><div class="pdf-mock-thead edited"><div></div><div></div><div></div><div></div><div></div></div><div class="pdf-mock-row"></div><div class="pdf-mock-row alt"></div><div class="pdf-mock-row covered"></div><div class="pdf-mock-row alt"></div></div>`;
+  }
+}
+
+function openPdfExportModal() {
+  if (!latestRows.length && activeTab !== "history") {
+    return setMessage("No scan data available to export to PDF.", "warn");
+  }
+
+  const modal = document.getElementById("pdfExportModal");
+  if (!modal) return;
+
+  // Populate staff filter select dropdown
+  const staffSelect = document.getElementById("pdfStaffFilterSelect");
+  if (staffSelect) {
+    const knownStaff = [...getKnownStaffStrings()]
+      .map(parseStaffIdentity)
+      .filter(Boolean);
+
+    const uniqueStaff = [];
+    const seenKeys = new Set();
+    knownStaff.forEach((s) => {
+      if (!seenKeys.has(s.key)) {
+        seenKeys.add(s.key);
+        uniqueStaff.push(s);
+      }
+    });
+    uniqueStaff.sort((a, b) => a.name.localeCompare(b.name));
+
+    const currentVal = pdfExportStaffFilter || "ALL";
+    staffSelect.innerHTML = `<option value="ALL">All Staff Members (${uniqueStaff.length})</option>`;
+    uniqueStaff.forEach((person) => {
+      const opt = document.createElement("option");
+      opt.value = person.key;
+      opt.textContent = `${person.name} (${person.station || person.initials || "MUC"})`;
+      staffSelect.appendChild(opt);
+    });
+    staffSelect.value = uniqueStaff.some((p) => p.key === currentVal) ? currentVal : "ALL";
+    pdfExportStaffFilter = staffSelect.value;
+
+    if (!staffSelect.dataset.listenerBound) {
+      staffSelect.dataset.listenerBound = "true";
+      staffSelect.addEventListener("change", (e) => {
+        pdfExportStaffFilter = e.target.value;
+        updatePdfModalMetaAndPreviews();
+      });
+    }
+  }
+
+  setPdfExportLayoutStyle(pdfExportLayoutStyle);
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  const timeStr = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+  const tabLabels = {
+    gaps: "Empty Slots (Gaps)",
+    replacements: "Duty Replacements",
+    roster: rosterViewMode === "airline" ? "Flight Schedule Roster" : "Staff Duty Roster",
+    insights: "Coverage & Workload Insights",
+    history: "Scan Snapshots History",
+  };
+
+  const reportTypeName = tabLabels[activeTab] || "Operational Report";
+
+  const pdfMetaType = document.getElementById("pdfMetaType");
+  const pdfMetaDate = document.getElementById("pdfMetaDate");
+  const pdfOriginalRowCount = document.getElementById("pdfOriginalRowCount");
+  const pdfOriginalGapCount = document.getElementById("pdfOriginalGapCount");
+  const pdfEditedCoveredCount = document.getElementById("pdfEditedCoveredCount");
+  const pdfEditedContactedCount = document.getElementById("pdfEditedContactedCount");
+  const pdfEditedOpenCount = document.getElementById("pdfEditedOpenCount");
+
+  const totalRecords = activeTab === "history" ? getScanHistory().length : latestRows.length;
+  const gaps = latestRows.filter((r) => Number(r.missing || 0) > 0);
+  const actions = getGapActions();
+
+  let coveredCount = 0;
+  let contactedCount = 0;
+  let openCount = 0;
+
+  gaps.forEach((g) => {
+    const key = OperationsUtils.rowKey(g);
+    const act = actions[key];
+    const status = act?.status || "Open";
+    if (status === "Covered") coveredCount++;
+    else if (status === "Contacted") contactedCount++;
+    else openCount++;
+  });
+
+  if (pdfMetaType) pdfMetaType.textContent = reportTypeName;
+  if (pdfMetaDate) pdfMetaDate.textContent = `${dateStr} ${timeStr}`;
+
+  if (pdfOriginalRowCount) pdfOriginalRowCount.textContent = totalRecords;
+  if (pdfOriginalGapCount) pdfOriginalGapCount.textContent = gaps.length;
+
+  if (pdfEditedCoveredCount) pdfEditedCoveredCount.textContent = coveredCount;
+  if (pdfEditedContactedCount) pdfEditedContactedCount.textContent = contactedCount;
+  if (pdfEditedOpenCount) pdfEditedOpenCount.textContent = openCount;
+
+  updatePdfModalMetaAndPreviews();
+
+  modal.hidden = false;
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closePdfExportModal() {
+  const modal = document.getElementById("pdfExportModal");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function exportPdfOriginal() {
+  generatePdfDocument({ mode: "original" });
+}
+
+function exportPdfEdited() {
+  generatePdfDocument({ mode: "edited" });
+}
+
+function generatePdfDocument({ mode = "original" } = {}) {
+  closePdfExportModal();
+
   if (!latestRows.length && activeTab !== "history") {
     return setMessage("No scan data available to export to PDF.", "warn");
   }
@@ -5068,35 +5247,52 @@ function exportPdf() {
     const dateStr = now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
     const timeStr = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
+    const isEdited = mode === "edited";
+    const modeBadge = isEdited ? "EDITED ROSTER" : "ORIGINAL SCAN";
+    const modeDesc = isEdited ? "Working Plan with Gap Edits & Coverage Assignments" : "Raw AVBIS Scan Snapshot";
+
     const titles = {
-      gaps: "GSRM Empty Slots Report",
-      replacements: "GSRM Duty Replacements Report",
-      roster: rosterViewMode === "airline" ? "GSRM Flight Allocation Schedule Report" : "GSRM Staff Duty Roster Report",
-      insights: "GSRM Coverage & Workload Insights Report",
+      gaps: isEdited ? "GSRM Empty Slots Report (Edited Working Plan)" : "GSRM Empty Slots Report (Original Scan Data)",
+      replacements: isEdited ? "GSRM Duty Replacements Report (Edited)" : "GSRM Duty Replacements Report (Original)",
+      roster: rosterViewMode === "airline"
+        ? (isEdited ? "GSRM Flight Schedule Report (Edited)" : "GSRM Flight Schedule Report (Original)")
+        : (isEdited ? "GSRM Staff Duty Roster (Edited)" : "GSRM Staff Duty Roster (Original)"),
+      insights: isEdited ? "GSRM Workload & Coverage Insights (Edited)" : "GSRM Workload & Coverage Insights (Original)",
       history: "GSRM Scan Snapshots History Report",
     };
-    const titleText = titles[activeTab] || "GSRM Operational Report";
+    const titleText = titles[activeTab] || `GSRM Operational Report (${modeBadge})`;
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
+    doc.setFontSize(13);
     doc.setTextColor(15, 23, 42);
-    doc.text(titleText, 14, 12);
+    doc.text(titleText, 14, 11);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    if (isEdited) {
+      doc.setTextColor(22, 101, 52);
+    } else {
+      doc.setTextColor(51, 65, 85);
+    }
+    doc.text(`[ ${modeBadge} — ${modeDesc} ]`, 14, 15);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
+    doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
-    doc.text(`Generated: ${dateStr} ${timeStr} UTC`, 283, 12, { align: "right" });
+    doc.text(`Generated: ${dateStr} ${timeStr} UTC`, 283, 11, { align: "right" });
 
     doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.3);
-    doc.line(14, 15, 283, 15);
+    doc.line(14, 17, 283, 17);
 
     let tableHeaders = [];
     let exportRows = [];
     let columnStyles = {};
 
+    const actions = getGapActions();
+
     if (activeTab === "replacements") {
-      tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Start UTC", "Release UTC", "Duration", "Candidates", "Top Candidate Match"]];
+      tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Start UTC", "Release UTC", "Duration", "Candidates", "Top Candidate / Assignment", "Status"]];
       const initials = myInitialsInput.value.trim().toUpperCase();
       const myDuties = latestRows.filter((row) => row.staff && row.staff.some((s) => matchStaffMember(s, initials)));
       const maxGapMinutes = getMaxDutyGap().minutes;
@@ -5105,6 +5301,9 @@ function exportPdf() {
       exportRows = myDuties.map((duty) => {
         const dutyStart = parseUtcTime(duty.date, duty.start_utc);
         const dutyRelease = parseUtcTime(duty.date, duty.release_utc);
+        const key = OperationsUtils.rowKey(duty);
+        const act = actions[key];
+
         const candidates = [];
         for (const candStr of getKnownStaffStrings()) {
           const identity = parseStaffIdentity(candStr);
@@ -5133,7 +5332,19 @@ function exportPdf() {
           candidates.push({ initials: identity.initials, name: identity.name, score, freeAllDay, connectionGapMinutes: Number.isFinite(closestGapMs) ? Math.round(closestGapMs / 60000) : null });
         }
         candidates.sort((a, b) => b.score - a.score || (a.connectionGapMinutes ?? Infinity) - (b.connectionGapMinutes ?? Infinity));
-        const topMatch = candidates[0] ? `${candidates[0].name} (${candidates[0].freeAllDay ? "Free all day" : `${formatHours(candidates[0].connectionGapMinutes)}h gap`})` : "None available";
+        
+        let matchText = candidates[0] ? `${candidates[0].name} (${candidates[0].freeAllDay ? "Free all day" : `${formatHours(candidates[0].connectionGapMinutes)}h gap`})` : "None available";
+        let statusText = "Unassigned";
+
+        if (isEdited && act) {
+          if (act.assignedCandidate) {
+            matchText = `ASSIGNED: ${act.assignedCandidate}`;
+          }
+          if (act.status) {
+            statusText = act.status;
+          }
+        }
+
         return [
           duty.date || "",
           duty.flight || "",
@@ -5144,14 +5355,16 @@ function exportPdf() {
           duty.release_utc || "",
           duty.duration || "",
           candidates.length,
-          topMatch
+          matchText,
+          statusText
         ];
       });
       columnStyles = {
-        0: { cellWidth: 26 }, 1: { cellWidth: 24, fontStyle: "bold" }, 2: { cellWidth: 16, halign: "center" },
-        3: { cellWidth: 28 }, 4: { cellWidth: 22 }, 5: { cellWidth: 24, halign: "center" },
-        6: { cellWidth: 24, halign: "center" }, 7: { cellWidth: 20, halign: "center" },
-        8: { cellWidth: 22, halign: "center", fontStyle: "bold" }, 9: { cellWidth: 59 }
+        0: { cellWidth: 24 }, 1: { cellWidth: 22, fontStyle: "bold" }, 2: { cellWidth: 14, halign: "center" },
+        3: { cellWidth: 24 }, 4: { cellWidth: 20 }, 5: { cellWidth: 22, halign: "center" },
+        6: { cellWidth: 22, halign: "center" }, 7: { cellWidth: 18, halign: "center" },
+        8: { cellWidth: 20, halign: "center", fontStyle: "bold" }, 9: { cellWidth: 63 },
+        10: { cellWidth: 20, halign: "center", fontStyle: "bold" }
       };
 
     } else if (activeTab === "roster") {
@@ -5257,77 +5470,413 @@ function exportPdf() {
 
     } else {
       // Default: Gaps / Empty Slots
-      tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Req", "Assigned", "Missing", "Start UTC", "Release UTC", "Duration"]];
-      exportRows = filteredRows.map((r) => [
-        r.date || "",
-        r.flight || "",
-        r.direction || "",
-        r.route || "",
-        r.sla || "",
-        r.required || 0,
-        r.assigned || 0,
-        r.missing || 0,
-        r.start_utc || "",
-        r.release_utc || "",
-        r.duration || ""
-      ]);
-      columnStyles = {
-        0: { cellWidth: 26, halign: "left" }, 1: { cellWidth: 24, halign: "left", fontStyle: "bold" },
-        2: { cellWidth: 16, halign: "center" }, 3: { cellWidth: 32, halign: "left" },
-        4: { cellWidth: 22, halign: "left" }, 5: { cellWidth: 16, halign: "center" },
-        6: { cellWidth: 18, halign: "center" }, 7: { cellWidth: 18, halign: "center", fontStyle: "bold", textColor: [220, 38, 38] },
-        8: { cellWidth: 26, halign: "center" }, 9: { cellWidth: 26, halign: "center" },
-        10: { cellWidth: 25, halign: "center" }
-      };
+      if (isEdited) {
+        tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Req", "Asgd", "Miss", "Start UTC", "Release UTC", "Action Status", "Notes / Replacement"]];
+        const sourceRows = filteredRows && filteredRows.length ? filteredRows : latestRows;
+        exportRows = sourceRows.map((r) => {
+          const key = OperationsUtils.rowKey(r);
+          const act = actions[key] || {};
+          const status = act.status || (Number(r.missing || 0) === 0 ? "Covered" : "Open");
+          let noteDetails = [];
+          if (act.assignedCandidate) noteDetails.push(`Candidate: ${act.assignedCandidate}`);
+          if (act.notes) noteDetails.push(act.notes);
+          const noteStr = noteDetails.join(" | ") || "—";
+
+          return [
+            r.date || "",
+            r.flight || "",
+            r.direction || "",
+            r.route || "",
+            r.sla || "",
+            r.required || 0,
+            r.assigned || 0,
+            r.missing || 0,
+            r.start_utc || "",
+            r.release_utc || "",
+            status,
+            noteStr
+          ];
+        });
+        columnStyles = {
+          0: { cellWidth: 22, halign: "left" }, 1: { cellWidth: 22, halign: "left", fontStyle: "bold" },
+          2: { cellWidth: 14, halign: "center" }, 3: { cellWidth: 26, halign: "left" },
+          4: { cellWidth: 20, halign: "left" }, 5: { cellWidth: 14, halign: "center" },
+          6: { cellWidth: 14, halign: "center" }, 7: { cellWidth: 14, halign: "center", fontStyle: "bold", textColor: [220, 38, 38] },
+          8: { cellWidth: 22, halign: "center" }, 9: { cellWidth: 22, halign: "center" },
+          10: { cellWidth: 22, halign: "center", fontStyle: "bold" },
+          11: { cellWidth: 57, halign: "left" }
+        };
+      } else {
+        tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Req", "Assigned", "Missing", "Start UTC", "Release UTC", "Duration"]];
+        exportRows = latestRows.map((r) => [
+          r.date || "",
+          r.flight || "",
+          r.direction || "",
+          r.route || "",
+          r.sla || "",
+          r.required || 0,
+          r.assigned || 0,
+          r.missing || 0,
+          r.start_utc || "",
+          r.release_utc || "",
+          r.duration || ""
+        ]);
+        columnStyles = {
+          0: { cellWidth: 26, halign: "left" }, 1: { cellWidth: 24, halign: "left", fontStyle: "bold" },
+          2: { cellWidth: 16, halign: "center" }, 3: { cellWidth: 32, halign: "left" },
+          4: { cellWidth: 22, halign: "left" }, 5: { cellWidth: 16, halign: "center" },
+          6: { cellWidth: 18, halign: "center" }, 7: { cellWidth: 18, halign: "center", fontStyle: "bold", textColor: [220, 38, 38] },
+          8: { cellWidth: 26, halign: "center" }, 9: { cellWidth: 26, halign: "center" },
+          10: { cellWidth: 25, halign: "center" }
+        };
+      }
+    }
+
+    // Apply staff scope filter if selected
+    if (pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
+      const filterTarget = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter, name: pdfExportStaffFilter };
+      const targetKey = filterTarget.key;
+      const targetName = (filterTarget.name || filterTarget.key).toLowerCase();
+
+      exportRows = exportRows.filter((row) => {
+        return row.some((cell) => {
+          const strCell = String(cell || "");
+          const cellId = parseStaffIdentity(strCell);
+          if (cellId && cellId.key === targetKey) return true;
+          return strCell.toLowerCase().includes(targetName);
+        });
+      });
     }
 
     if (!exportRows.length) {
-      return setMessage(`No data available on the ${activeTab} tab to export to PDF.`, "warn");
+      return setMessage(`No matching data available on the ${activeTab} tab to export to PDF for the selected staff member.`, "warn");
     }
 
-    doc.autoTable({
-      head: tableHeaders,
-      body: exportRows,
-      startY: 19,
-      margin: { left: 14, right: 14, top: 19, bottom: 14 },
-      theme: "grid",
-      headStyles: {
-        fillColor: [30, 41, 59],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        fontSize: 8.5,
-        halign: "left"
-      },
-      bodyStyles: {
-        fontSize: 8,
-        textColor: [30, 41, 59]
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252]
-      },
-      columnStyles,
-      didDrawPage: (data) => {
-        const pageCount = doc.internal.getNumberOfPages();
-        doc.setFontSize(8);
-        doc.setTextColor(148, 163, 184);
-        doc.text(`Page ${data.pageNumber} of ${pageCount}`, 283, 203, { align: "right" });
-        doc.text(titleText, 14, 203);
-      }
-    });
+    let staffSuffixBadge = "";
+    let staffFilenameSuffix = "";
+    if (pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
+      const filterTarget = parseStaffIdentity(pdfExportStaffFilter);
+      const sName = filterTarget ? filterTarget.name : pdfExportStaffFilter;
+      staffSuffixBadge = ` · Staff: ${sName}`;
+      staffFilenameSuffix = `-${sName.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    }
 
-    const filename = `gsrm-${activeTab}-report-${now.toISOString().slice(0, 10)}.pdf`;
+    if (pdfExportLayoutStyle === "byday") {
+      generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateStr, timeStr });
+    } else {
+      doc.autoTable({
+        head: tableHeaders,
+        body: exportRows,
+        startY: 20,
+        margin: { left: 14, right: 14, top: 20, bottom: 14 },
+        theme: "grid",
+        headStyles: {
+          fillColor: isEdited ? [20, 83, 45] : [30, 41, 59],
+          textColor: [255, 255, 255],
+          fontStyle: "bold",
+          fontSize: 8.5,
+          halign: "left"
+        },
+        bodyStyles: {
+          fontSize: 8,
+          textColor: [30, 41, 59]
+        },
+        alternateRowStyles: {
+          fillColor: isEdited ? [240, 253, 244] : [248, 250, 252]
+        },
+        columnStyles,
+        didDrawPage: (data) => {
+          const pageCount = doc.internal.getNumberOfPages();
+          doc.setFontSize(8);
+          doc.setTextColor(148, 163, 184);
+          doc.text(`Page ${data.pageNumber} of ${pageCount}`, 283, 203, { align: "right" });
+          doc.text(`${titleText}  |  ${modeBadge}${staffSuffixBadge}`, 14, 203);
+        }
+      });
+    }
+
+    const styleName = pdfExportLayoutStyle === "byday" ? "staff-schedule-by-day" : "list";
+    const filename = `gsrm-${activeTab}-${mode}-${styleName}${staffFilenameSuffix}-${now.toISOString().slice(0, 10)}.pdf`;
     doc.save(filename);
-    setMessage(`PDF report generated and downloaded: ${filename}`, "success");
+    setMessage(`PDF report (${modeBadge} · ${pdfExportLayoutStyle === "byday" ? "Staff Schedule By Day" : "Detailed List"}${staffSuffixBadge}) generated: ${filename}`, "success");
   } catch (err) {
     console.error("PDF generation error:", err);
     exportPdfFallback();
   }
 }
 
+function getSlaColorStyle(slaRaw) {
+  const sla = String(slaRaw || "").trim().toUpperCase();
+  const slaColorMap = {
+    "CKIN":    { bg: [239, 246, 255], text: [30, 64, 175],  accent: [37, 99, 235] },   // Blue
+    "GATE":    { bg: [250, 245, 255], text: [107, 33, 168], accent: [124, 58, 237] },  // Purple
+    "LOFO":    { bg: [255, 251, 235], text: [146, 64, 14],  accent: [217, 119, 6] },   // Amber
+    "QH-CKI":  { bg: [236, 254, 255], text: [21, 94, 117],  accent: [8, 145, 178] },   // Cyan
+    "QH-GATE": { bg: [253, 242, 248], text: [157, 23, 77],  accent: [219, 39, 119] },  // Pink
+    "ASVC":    { bg: [236, 253, 245], text: [6, 95, 70],    accent: [5, 150, 105] },   // Emerald
+    "SECS":    { bg: [254, 242, 242], text: [153, 27, 27],  accent: [220, 38, 38] }    // Red
+  };
+
+  if (slaColorMap[sla]) return slaColorMap[sla];
+
+  if (sla.includes("CKIN") || sla.includes("CHECK")) return slaColorMap["CKIN"];
+  if (sla.includes("GATE")) return slaColorMap["GATE"];
+  if (sla.includes("LOFO") || sla.includes("BAG") || sla.includes("RAMP")) return slaColorMap["LOFO"];
+  if (sla.includes("SEC")) return slaColorMap["SECS"];
+  if (sla.includes("ASVC") || sla.includes("ARR") || sla.includes("DEP")) return slaColorMap["ASVC"];
+
+  return { bg: [241, 245, 249], text: [15, 23, 42], accent: [100, 116, 139] };
+}
+
+function extractSlaFromCellRaw(cellRaw) {
+  const str = String(cellRaw || "");
+  const match = str.match(/\(([^)]+)\)/);
+  return match ? match[1].trim() : str;
+}
+
+function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateStr, timeStr }) {
+  const rosterData = typeof getRosterRows === "function" ? getRosterRows() : null;
+  let datesList = [];
+  let staffList = [];
+
+  if (rosterData && rosterData.dailyWindows && rosterData.dailyWindows.length > 0 && rosterData.rows && rosterData.rows.length > 0) {
+    datesList = rosterData.dailyWindows.map((w) => w.isoDate);
+    staffList = rosterData.rows.map((person) => {
+      const dayDutyCells = rosterData.dailyWindows.map((w, idx) => {
+        const assignments = person.byDay[idx] || [];
+        if (!assignments.length) return "OFF";
+        return assignments.map((a) => `${a.flight || "Duty"} (${a.sla || "SLA"})\n${a.start_utc || ""}–${a.release_utc || ""} UTC`).join("\n---\n");
+      });
+      const summary = typeof OperationsUtils !== "undefined" && OperationsUtils.summarizeDutyHours ? OperationsUtils.summarizeDutyHours(person.overlapping, rosterData.dailyWindows) : null;
+      const totalHours = summary && summary.totalMinutes ? `${formatHours(summary.totalMinutes)}h` : "0.0h";
+      return [
+        person.name || "Unknown Staff",
+        person.station || person.initials || "MUC",
+        ...dayDutyCells,
+        totalHours
+      ];
+    });
+  } else {
+    // Fallback: aggregate staff assignments directly from latestRows / filteredRows
+    const sourceRows = (typeof filteredRows !== "undefined" && filteredRows && filteredRows.length) ? filteredRows : latestRows;
+    const dateSet = new Set();
+    const staffMap = new Map();
+
+    if (typeof latestStaffDirectory !== "undefined") {
+      latestStaffDirectory.forEach((sStr) => {
+        const id = parseStaffIdentity(sStr);
+        if (id && !staffMap.has(id.key)) {
+          staffMap.set(id.key, { name: id.name, station: id.station || "MUC", assignmentsByDate: {} });
+        }
+      });
+    }
+
+    sourceRows.forEach((r) => {
+      if (r.date) dateSet.add(r.date);
+      (r.staff || []).forEach((sStr) => {
+        const id = parseStaffIdentity(sStr);
+        if (!id) return;
+        if (!staffMap.has(id.key)) {
+          staffMap.set(id.key, { name: id.name, station: id.station || "MUC", assignmentsByDate: {} });
+        }
+        const person = staffMap.get(id.key);
+        if (!person.assignmentsByDate[r.date]) person.assignmentsByDate[r.date] = [];
+        person.assignmentsByDate[r.date].push(r);
+      });
+    });
+
+    datesList = Array.from(dateSet).sort();
+    if (!datesList.length) datesList = [new Date().toISOString().slice(0, 10)];
+
+    staffList = Array.from(staffMap.values()).map((person) => {
+      let totalMins = 0;
+      const dayCells = datesList.map((d) => {
+        const duties = person.assignmentsByDate[d] || [];
+        if (!duties.length) return "OFF";
+        return duties.map((r) => {
+          if (r.duration) {
+            const parts = String(r.duration).split(":");
+            if (parts.length === 2) totalMins += parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+          }
+          return `${r.flight || "Flight"} (${r.sla || "SLA"})\n${r.start_utc || ""}–${r.release_utc || ""} UTC`;
+        }).join("\n---\n");
+      });
+      const totalHours = totalMins > 0 ? `${(totalMins / 60).toFixed(1)}h` : "0.0h";
+      return [
+        person.name || "Unknown Staff",
+        person.station || "MUC",
+        ...dayCells,
+        totalHours
+      ];
+    });
+  }
+
+  // Filter staffList if staff filter is active
+  let staffSuffixBadge = "";
+  if (pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
+    const filterTarget = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter, name: pdfExportStaffFilter };
+    const targetKey = filterTarget.key;
+    const targetName = (filterTarget.name || filterTarget.key).toLowerCase();
+
+    staffList = staffList.filter((row) => {
+      const rowKey = parseStaffIdentity(row[0])?.key;
+      return rowKey === targetKey || row[0].toLowerCase().includes(targetName);
+    });
+    staffSuffixBadge = ` · Staff: ${filterTarget.name || filterTarget.key}`;
+  }
+
+  // Format date header strings
+  const dateHeaders = datesList.map((d) => {
+    try {
+      const dt = new Date(`${d}T00:00:00Z`);
+      return dt.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+    } catch (e) {
+      return d;
+    }
+  });
+
+  const tableHeaders = [["Staff Member", "Station", ...dateHeaders, "Total Duty"]];
+
+  doc.autoTable({
+    head: tableHeaders,
+    body: staffList,
+    startY: 20,
+    margin: { left: 14, right: 14, top: 20, bottom: 14 },
+    theme: "grid",
+    headStyles: {
+      fillColor: isEdited ? [20, 83, 45] : [30, 41, 59],
+      textColor: [255, 255, 255],
+      fontStyle: "bold",
+      fontSize: 8.5,
+      halign: "center"
+    },
+    bodyStyles: {
+      fontSize: 7.5,
+      textColor: [30, 41, 59],
+      valign: "middle"
+    },
+    alternateRowStyles: {
+      fillColor: isEdited ? [240, 253, 244] : [248, 250, 252]
+    },
+    didParseCell: (data) => {
+      if (data.section === "body") {
+        if (data.column.index === 0) {
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.textColor = [15, 23, 42];
+        } else if (data.column.index === 1) {
+          data.cell.styles.halign = "center";
+          data.cell.styles.textColor = [100, 116, 139];
+        } else if (data.column.index === data.table.columns.length - 1) {
+          data.cell.styles.halign = "center";
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.textColor = [2, 132, 199];
+        } else {
+          data.cell.styles.cellPadding = { top: 2.0, right: 2.0, bottom: 2.0, left: 2.5 };
+        }
+      }
+    },
+    willDrawCell: (data) => {
+      if (data.section === "body" && data.column.index >= 2 && data.column.index < data.table.columns.length - 1) {
+        const raw = data.cell.raw;
+        if (typeof raw === "string" && raw) {
+          const cellX = data.cell.x;
+          const cellY = data.cell.y;
+          const cellWidth = data.cell.width;
+          const cellHeight = data.cell.height;
+
+          // Clear cell background to standard row color
+          const rowBg = data.row.index % 2 === 1
+            ? (isEdited ? [240, 253, 244] : [248, 250, 252])
+            : [255, 255, 255];
+          doc.setFillColor(rowBg[0], rowBg[1], rowBg[2]);
+          doc.rect(cellX, cellY, cellWidth, cellHeight, "F");
+
+          if (raw === "OFF") {
+            doc.setFontSize(7);
+            doc.setFont("helvetica", "italic");
+            doc.setTextColor(148, 163, 184);
+            doc.text("OFF", cellX + cellWidth / 2, cellY + cellHeight / 2 + 1, { align: "center" });
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.1);
+            doc.rect(cellX, cellY, cellWidth, cellHeight, "S");
+            return false;
+          }
+
+          // Handle single or multi-shift blocks individually
+          const shiftBlocks = raw.split(/\n?---\n?/).map((s) => s.trim()).filter(Boolean);
+          const numShifts = shiftBlocks.length;
+          const paddingY = 1.0;
+          const availHeight = cellHeight - paddingY * 2;
+          const gapY = numShifts > 1 ? 1.5 : 0;
+          const blockHeight = numShifts > 1 ? Math.max(5.0, (availHeight - (numShifts - 1) * gapY) / numShifts) : availHeight;
+
+          shiftBlocks.forEach((block, idx) => {
+            const blockLines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+            const line0 = blockLines[0] || ""; // e.g. "DE1234 (CKIN)"
+            const line1 = blockLines[1] || ""; // e.g. "08:00–12:00 UTC"
+
+            const slaStr = extractSlaFromCellRaw(line0);
+            const slaStyle = getSlaColorStyle(slaStr);
+
+            const blockY = cellY + paddingY + idx * (blockHeight + gapY);
+
+            // 1. Fill Shift Box Background with SLA Tint
+            doc.setFillColor(slaStyle.bg[0], slaStyle.bg[1], slaStyle.bg[2]);
+            doc.rect(cellX + 0.6, blockY, cellWidth - 1.2, blockHeight, "F");
+
+            // 2. Fill Left SLA Accent Stripe
+            doc.setFillColor(slaStyle.accent[0], slaStyle.accent[1], slaStyle.accent[2]);
+            doc.rect(cellX + 0.6, blockY, 1.4, blockHeight, "F");
+
+            // 3. Render Shift Header (Flight + SLA)
+            doc.setFontSize(numShifts > 1 ? 6.2 : 6.8);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(slaStyle.text[0], slaStyle.text[1], slaStyle.text[2]);
+            const headerY = line1 ? (blockY + (numShifts > 1 ? 2.6 : 3.2)) : (blockY + blockHeight / 2 + 1);
+            doc.text(line0, cellX + 2.8, headerY);
+
+            // 4. Render Time Window (UTC)
+            if (line1) {
+              doc.setFont("helvetica", "normal");
+              doc.setFontSize(numShifts > 1 ? 5.6 : 6.2);
+              doc.setTextColor(51, 65, 85);
+              const timeY = blockY + (numShifts > 1 ? 5.4 : 6.8);
+              doc.text(line1, cellX + 2.8, timeY);
+            }
+
+            // 5. Divider line between multiple shifts
+            if (idx < numShifts - 1) {
+              const divY = blockY + blockHeight + (gapY / 2);
+              doc.setDrawColor(203, 213, 225);
+              doc.setLineWidth(0.15);
+              doc.line(cellX + 1.2, divY, cellX + cellWidth - 1.2, divY);
+            }
+          });
+
+          // Outer Grid Border Line
+          doc.setDrawColor(226, 232, 240);
+          doc.setLineWidth(0.1);
+          doc.rect(cellX, cellY, cellWidth, cellHeight, "S");
+
+          return false; // Skip autoTable default drawing for this cell
+        }
+      }
+    },
+    didDrawPage: (data) => {
+      const pageCount = doc.internal.getNumberOfPages();
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Page ${data.pageNumber} of ${pageCount}`, 283, 203, { align: "right" });
+      doc.text(`${titleText}  |  ${modeBadge}${staffSuffixBadge} (Staff Schedule By Day)`, 14, 203);
+    }
+  });
+}
+
 function exportPdfFallback() {
   window.print();
   setMessage("Opened print dialog for PDF export.", "info");
 }
+
 
 function getPlannedCoverageAssignments(actions = getGapActions()) {
   const rowKeys = new Set(latestRows.map((item) => OperationsUtils.rowKey(item)));

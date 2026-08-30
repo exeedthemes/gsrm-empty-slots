@@ -394,11 +394,10 @@
                     <select id="replacementStaffSelect" class="replacement-staff-select" aria-label="Select staff member to replace">
                       <option value="">Select staff member...</option>
                     </select>
-                    <input id="replacementStaffInput" type="text" list="staffOptions" placeholder="Or type name/initials..." class="replacement-staff-input" aria-label="Type staff name or initials" autocomplete="off">
                   </div>
                 </label>
                 <strong id="replacementStaffName" hidden>Select a staff member</strong>
-                <small id="replacementStaffSummary">Select or type a staff member to load their duties.</small>
+                <small id="replacementStaffSummary">Select a staff member to load their duties.</small>
               </div>
               <div id="bulkReplacementBar" class="bulk-replacement-bar" hidden>
                 <div class="bulk-replacement-header">
@@ -817,6 +816,161 @@
             <div id="personChangesContent">
               <div class="empty-selection">Select a staff member above to track their roster changes across scanned dates.</div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PDF Export Preview Modal -->
+      <div id="pdfExportModal" class="modal-overlay pdf-export-modal-overlay" hidden aria-hidden="true">
+        <div class="modal-card pdf-export-modal-card" role="dialog" aria-modal="true" aria-labelledby="pdfExportModalTitle">
+          <div class="modal-header pdf-export-header">
+            <div class="pdf-export-header-left">
+              <span class="modal-badge">Export</span>
+              <h2 id="pdfExportModalTitle" class="pdf-export-title">Export PDF Report</h2>
+              <p class="pdf-export-subtitle" id="pdfExportSubtitle">Choose which version to export as a PDF document</p>
+            </div>
+            <button type="button" id="pdfExportModalClose" class="modal-close-btn" aria-label="Close PDF export modal">&times;</button>
+          </div>
+
+          <div class="pdf-export-body">
+            <!-- Preview strip & Layout selector -->
+            <div class="pdf-export-controls-row">
+              <div class="pdf-export-meta" id="pdfExportMeta">
+                <div class="pdf-meta-item">
+                  <span class="pdf-meta-label">Report type</span>
+                  <strong class="pdf-meta-value" id="pdfMetaType">—</strong>
+                </div>
+                <div class="pdf-meta-item">
+                  <span class="pdf-meta-label">Records</span>
+                  <strong class="pdf-meta-value" id="pdfMetaRecords">—</strong>
+                </div>
+                <div class="pdf-meta-item">
+                  <span class="pdf-meta-label">Generated</span>
+                  <strong class="pdf-meta-value" id="pdfMetaDate">—</strong>
+                </div>
+                <div class="pdf-meta-item">
+                  <span class="pdf-meta-label">Format</span>
+                  <strong class="pdf-meta-value" id="pdfMetaFormat">A4 Landscape · Table</strong>
+                </div>
+              </div>
+
+              <div class="pdf-layout-selector-bar">
+                <div class="pdf-layout-selector-group">
+                  <span class="pdf-layout-selector-label">PDF Layout:</span>
+                  <div class="pdf-layout-toggle-group" role="radiogroup" aria-label="PDF Layout Style">
+                    <button type="button" class="pdf-layout-option-btn active" id="pdfLayoutTableBtn" data-layout="table">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                      <span>Detailed List</span>
+                    </button>
+                    <button type="button" class="pdf-layout-option-btn" id="pdfLayoutByDayBtn" data-layout="byday">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                      <span>Staff Schedule (By Day)</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="pdf-staff-selector-group">
+                  <span class="pdf-layout-selector-label">Staff Scope:</span>
+                  <div class="pdf-staff-select-wrapper">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    <select id="pdfStaffFilterSelect" class="pdf-staff-filter-select" aria-label="Filter export by staff member">
+                      <option value="ALL">All Staff Members (Full Roster)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Two PDF cards -->
+            <div class="pdf-export-cards">
+
+              <!-- Original PDF -->
+              <div class="pdf-export-card" id="pdfCardOriginal">
+                <div class="pdf-card-preview">
+                  <div class="pdf-page-mock">
+                    <div class="pdf-page-header-mock">
+                      <div class="pdf-mock-title"></div>
+                      <div class="pdf-mock-date"></div>
+                    </div>
+                    <div class="pdf-mock-divider"></div>
+                    <div class="pdf-mock-table">
+                      <div class="pdf-mock-thead">
+                        <div></div><div></div><div></div><div></div><div></div>
+                      </div>
+                      <div class="pdf-mock-row"></div>
+                      <div class="pdf-mock-row alt"></div>
+                      <div class="pdf-mock-row"></div>
+                      <div class="pdf-mock-row alt"></div>
+                      <div class="pdf-mock-row"></div>
+                      <div class="pdf-mock-row alt"></div>
+                      <div class="pdf-mock-row"></div>
+                    </div>
+                  </div>
+                  <div class="pdf-card-badge original-badge">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    Original
+                  </div>
+                </div>
+                <div class="pdf-card-body">
+                  <h3 class="pdf-card-title">Original Scan</h3>
+                  <p class="pdf-card-desc">Raw AVBIS data as scanned — no edits, notes, or coverage assignments applied. The ground truth snapshot.</p>
+                  <div class="pdf-card-stats" id="pdfOriginalStats">
+                    <div><span>Rows</span><strong id="pdfOriginalRowCount">—</strong></div>
+                    <div><span>Gaps</span><strong id="pdfOriginalGapCount">—</strong></div>
+                    <div><span>Status</span><strong>Unedited</strong></div>
+                  </div>
+                  <button id="pdfDownloadOriginal" type="button" class="pdf-download-btn original-btn">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download Original PDF
+                  </button>
+                </div>
+              </div>
+
+              <!-- Edited PDF -->
+              <div class="pdf-export-card" id="pdfCardEdited">
+                <div class="pdf-card-preview edited-preview">
+                  <div class="pdf-page-mock">
+                    <div class="pdf-page-header-mock edited">
+                      <div class="pdf-mock-title edited"></div>
+                      <div class="pdf-mock-date"></div>
+                    </div>
+                    <div class="pdf-mock-divider edited"></div>
+                    <div class="pdf-mock-table">
+                      <div class="pdf-mock-thead edited">
+                        <div></div><div></div><div></div><div></div><div></div>
+                      </div>
+                      <div class="pdf-mock-row"></div>
+                      <div class="pdf-mock-row alt"></div>
+                      <div class="pdf-mock-row covered"></div>
+                      <div class="pdf-mock-row alt"></div>
+                      <div class="pdf-mock-row covered"></div>
+                      <div class="pdf-mock-row alt"></div>
+                      <div class="pdf-mock-row"></div>
+                    </div>
+                  </div>
+                  <div class="pdf-card-badge edited-badge">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    Edited
+                  </div>
+                </div>
+                <div class="pdf-card-body">
+                  <h3 class="pdf-card-title">Edited Roster</h3>
+                  <p class="pdf-card-desc">Includes all gap notes, coverage status changes, and candidate assignments. The working plan view.</p>
+                  <div class="pdf-card-stats" id="pdfEditedStats">
+                    <div><span>Covered</span><strong id="pdfEditedCoveredCount">—</strong></div>
+                    <div><span>Contacted</span><strong id="pdfEditedContactedCount">—</strong></div>
+                    <div><span>Open</span><strong id="pdfEditedOpenCount">—</strong></div>
+                  </div>
+                  <button id="pdfDownloadEdited" type="button" class="pdf-download-btn edited-btn">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download Edited PDF
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            <p class="pdf-export-note">Both files are generated locally in your browser — nothing is sent to AVBIS or any external server.</p>
           </div>
         </div>
       </div>
