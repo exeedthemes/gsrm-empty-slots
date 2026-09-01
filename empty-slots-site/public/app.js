@@ -940,6 +940,7 @@ async function connectToAvbis() {
     updateConnectionState(false, "AVBIS connection failed");
     connectionHint.textContent = error.message || String(error);
     setMessage(error.message || String(error), "error");
+    showToast(`AVBIS Connection Failed: ${error.message || String(error)}`, { kind: "error", duration: 7000 });
   } finally {
     connectBtn.disabled = false;
     connectBtn.textContent = "Connect to AVBIS";
@@ -1045,6 +1046,9 @@ async function runScan(forceRefresh = false, options = {}) {
     const completionLead = result.cancelled ? "Scan cancelled." : (isAutoScan ? "Auto-scan completed." : "Done.");
     const preserved = result.cancelled ? ` Preserved ${latestScannedDates.length} completed date(s); rerun to continue from cache.` : "";
     setMessage(`${completionLead}${preserved}${cacheSuffix} Found ${latestStaffDirectory.length} known staff member(s), ${assignedStaffCount} allocated staff member(s), and ${latestRows.length} duty group(s).${errorSuffix}${incompleteSuffix}`, result.cancelled || result.errors?.length ? "warn" : "");
+    if (result.errors?.length) {
+      showToast(`${result.errors.length} endpoint request(s) failed during scan. Check log details.`, { kind: "warn", duration: 6000 });
+    }
     const finalProgress = await pollProgress(payload.scanId);
     renderFinishedProgress(result, finalProgress);
     if (!isAutoScan) setSetupCollapsed(true, payload);
@@ -1063,6 +1067,8 @@ async function runScan(forceRefresh = false, options = {}) {
     dateCount.textContent = "0";
     if (!isAutoScan) setSetupCollapsed(false);
     setMessage(error.message || String(error), "error");
+    showToast(`Scan Failed: ${error.message || String(error)}`, { kind: "error", duration: 7000 });
+    sendDesktopNotification("GSRM Scan Failed", error.message || String(error));
     throw error;
   } finally {
     stopProgressPolling();
@@ -1385,9 +1391,15 @@ function setAirlinesBusy(isBusy) {
 
 let undoActionStack = [];
 
-function showToast(messageText, { kind = "info", duration = 4500, actionText = null, onAction = null } = {}) {
+function showToast(messageText, options = {}) {
   const container = document.getElementById("toastContainer");
   if (!container) return;
+
+  const opts = typeof options === "string" ? { kind: options } : (options || {});
+  const kind = opts.kind || "info";
+  const duration = typeof opts.duration === "number" ? opts.duration : 4500;
+  const actionText = opts.actionText || null;
+  const onAction = opts.onAction || null;
 
   const card = document.createElement("div");
   card.className = `toast-card toast-${kind}`;
@@ -8263,6 +8275,8 @@ let autoScanCountdownSeconds = 0;
 let autoScanIsRunning = false;
 let lastAutoScanResult = null;
 
+let lastUnconnectedAlertTime = 0;
+
 function loadAutoScanSettings() {
   try {
     const raw = localStorage.getItem(AUTO_SCAN_SETTINGS_KEY);
@@ -8276,6 +8290,7 @@ function loadAutoScanSettings() {
 }
 
 function saveAutoScanSettings(newSettings) {
+  const wasEnabled = autoScanSettings.enabled;
   autoScanSettings = { ...autoScanSettings, ...newSettings };
   try {
     localStorage.setItem(AUTO_SCAN_SETTINGS_KEY, JSON.stringify(autoScanSettings));
@@ -8284,6 +8299,14 @@ function saveAutoScanSettings(newSettings) {
   }
   syncAutoScanUI();
   restartAutoScanTimer();
+
+  if (autoScanSettings.enabled && !connectedEmail) {
+    showToast("Auto-Scan is Enabled (PAUSED): AVBIS is not connected. Please enter your credentials and click 'Connect to AVBIS'.", { kind: "warn", duration: 7000 });
+    setMessage("Auto-Scan paused: AVBIS connection required. Please connect to AVBIS to start auto-scanning.", "warn");
+    setSetupCollapsed(false);
+  } else if (autoScanSettings.enabled && !wasEnabled) {
+    showToast("Auto-Scan turned ON", { kind: "success", duration: 3500 });
+  }
 }
 
 function getEffectiveIntervalMinutes() {
@@ -8421,11 +8444,22 @@ function tickAutoScanTimer() {
 async function triggerAutoScanCycle(isManualNow = false) {
   if (autoScanIsRunning) return;
 
+  // Refresh server AVBIS session state
+  if (typeof refreshConnectionState === "function") {
+    await refreshConnectionState();
+  }
+
   if (!isManualNow) {
     if (!autoScanSettings.enabled) return;
 
     if (!connectedEmail) {
       updateAutoScanStatusText("Paused: Connect to AVBIS first");
+      const now = Date.now();
+      if (now - lastUnconnectedAlertTime > 15 * 60 * 1000) {
+        lastUnconnectedAlertTime = now;
+        showToast("Auto-Scan is paused because AVBIS is not connected. Please connect to AVBIS to start auto-scanning.", { kind: "warn", duration: 7000 });
+        setMessage("Auto-Scan paused: Not connected to AVBIS. Click 'Connect to AVBIS' in setup.", "warn");
+      }
       return;
     }
 
@@ -8444,6 +8478,15 @@ async function triggerAutoScanCycle(isManualNow = false) {
     if (!isWithinActiveHours()) {
       autoScanCountdownSeconds = 300;
       updateAutoScanStatusText(`Paused: Outside active UTC hours (${autoScanSettings.startHour}:00-${autoScanSettings.endHour}:00 UTC)`);
+      return;
+    }
+  } else {
+    // Manual "Scan Now" triggered by user
+    if (!connectedEmail) {
+      updateAutoScanStatusText("Paused: Connect to AVBIS first");
+      showToast("Cannot run scan: Not connected to AVBIS. Please enter your credentials and click 'Connect to AVBIS'.", { kind: "error", duration: 7000 });
+      setMessage("Scan failed: Not connected to AVBIS. Please enter your credentials and click 'Connect to AVBIS'.", "error");
+      setSetupCollapsed(false);
       return;
     }
   }
@@ -8478,17 +8521,29 @@ async function triggerAutoScanCycle(isManualNow = false) {
       sendDesktopNotification("GSRM Empty Slots Alert", msg);
       if (autoScanSettings.playSound) playAutoScanChime();
     } else if (typeof showToast === "function") {
-      showToast(`Auto-Scan complete: ${latestRows.length} gap(s) monitored.`, "info");
+      showToast(`Auto-Scan complete: ${latestRows.length} gap(s) monitored.`, { kind: "info", duration: 4000 });
     }
 
   } catch (err) {
     console.error("Auto-scan error:", err);
+    const errMsg = err.message || String(err);
     lastAutoScanResult = {
       timestamp: new Date().toISOString(),
       timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       status: "error",
-      error: err.message,
+      error: errMsg,
     };
+
+    showToast(`Auto-Scan Error: ${errMsg}`, { kind: "error", duration: 8000 });
+    setMessage(`Auto-Scan failed: ${errMsg}`, "error");
+    sendDesktopNotification("GSRM Auto-Scan Failure", `Scan failed: ${errMsg}`);
+
+    if (/login|session|auth|unauthorized|401|credentials/i.test(errMsg)) {
+      connectedEmail = "";
+      updateConnectionState(false, "AVBIS session expired");
+      showToast("AVBIS session expired. Please reconnect to AVBIS to resume Auto-Scan.", { kind: "error", duration: 9000 });
+      setSetupCollapsed(false);
+    }
   } finally {
     autoScanIsRunning = false;
     const intervalMins = getEffectiveIntervalMinutes();
