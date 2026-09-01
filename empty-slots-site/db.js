@@ -125,7 +125,7 @@ function saveStaffAvailability(data, customDb) {
 // Scan History CRUD
 function getScanHistory(customDb) {
   const db = customDb || getDb();
-  const stmt = db.prepare("SELECT data_json FROM scan_history ORDER BY scanned_at DESC LIMIT 15");
+  const stmt = db.prepare("SELECT data_json FROM scan_history ORDER BY scanned_at DESC");
   const rows = stmt.all();
   return rows.map((r) => {
     try {

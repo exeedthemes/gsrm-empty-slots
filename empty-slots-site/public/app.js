@@ -1779,6 +1779,31 @@ function formatRosterChange(change) {
   return "";
 }
 
+function getRosterCellBadge(change, person) {
+  if (!change || !change.changed) return "";
+  const personKey = person?.key || "";
+  const personName = person?.name || "";
+  const wasAdded = change.added && change.added.some((p) => (p.key && p.key === personKey) || (p.name && p.name === personName));
+  const wasRemoved = change.removed && change.removed.some((p) => (p.key && p.key === personKey) || (p.name && p.name === personName));
+
+  const iconSwap = `<svg class="badge-icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 11.5L1 8l3.5-3.5v2.5H11V8.5H4.5v3zM11.5 4.5L15 8l-3.5 3.5V9H5V7.5h6.5V4.5z"/></svg>`;
+  const iconAdd = `<svg class="badge-icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>`;
+  const iconRemove = `<svg class="badge-icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M2 8a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 8z"/></svg>`;
+  const iconEdit = `<svg class="badge-icon" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474L5.126 14.434a1.75 1.75 0 0 1-.726.434l-3.1.9a.75.75 0 0 1-.924-.924l.9-3.1a1.75 1.75 0 0 1 .434-.726L11.013 1.427zM12.427 2.487a.25.25 0 0 0-.354 0L11 3.56 12.44 5l1.073-1.073a.25.25 0 0 0 0-.354L12.427 2.487z"/></svg>`;
+
+  if (wasAdded && change.removed.length > 0) {
+    const replacedNames = change.removed.map((p) => p.name).join(", ");
+    return `<b class="cell-change-badge badge-replaced" title="Replaced ${escapeHtml(replacedNames)}">${iconSwap}Swapped</b>`;
+  }
+  if (wasAdded) {
+    return `<b class="cell-change-badge badge-added" title="Newly assigned shift">${iconAdd}Added</b>`;
+  }
+  if (wasRemoved) {
+    return `<b class="cell-change-badge badge-removed" title="Removed shift">${iconRemove}Removed</b>`;
+  }
+  return `<b class="cell-change-badge badge-modified" title="${escapeHtml(formatRosterChange(change))}">${iconEdit}Modified</b>`;
+}
+
 function formatStaffLabel(person) {
   if (!person) return "";
   if (typeof person === "string") return person;
@@ -3522,7 +3547,7 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
         elements.push(`
         <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""}${styleAttr} title="${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}${breakTitle}">
           <strong>${escapeHtml(row.flight)}</strong>
-          <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${change.changed ? ' <b class="edited-badge">Edited</b>' : ""}</span>
+          <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}</span>
           <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
           ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
           ${person?.key ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
@@ -3544,7 +3569,7 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
     return `
     <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""} title="${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
       <strong>${escapeHtml(row.flight)}</strong>
-      <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${change.changed ? ' <b class="edited-badge">Edited</b>' : ""}</span>
+      <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}</span>
       <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
       ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
       ${person?.key ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
@@ -6614,7 +6639,7 @@ function saveScanSnapshot(result, payload) {
       slas: payload.slas || [],
     },
   };
-  const history = [snapshot, ...getScanHistory().filter((item) => item.id !== snapshot.id)].slice(0, 8);
+  const history = [snapshot, ...getScanHistory().filter((item) => item.id !== snapshot.id)];
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
     fetch("/api/history", {
@@ -6793,19 +6818,345 @@ function snapshotDisplayStaffCount(snapshot) {
   return staff.size || Number(snapshot.staffCount || 0);
 }
 
+let historyComparisonActiveTab = "gaps";
+let historyPersonSelectedKey = "ALL";
+let historyPersonFilterType = "ALL";
+let historyPersonSearchQuery = "";
+
 function renderHistoryComparison(history, currentId = history[0]?.id, previousId = history[1]?.id) {
   const comparisonEl = document.getElementById("historyComparison");
+  if (!comparisonEl || !history || !history.length) return;
+
   const current = history.find((item) => item.id === currentId) || history[0];
   const previous = history.find((item) => item.id === previousId) || history.find((item) => item.id !== current.id) || history[0];
-  const comparison = OperationsUtils.compareSnapshots(current, previous);
-  const entries = buildHistoryComparisonEntries(current, previous, comparison);
-  const hours = (kind) => entries.filter((entry) => entry.kind === kind).reduce((sum, entry) => sum + Math.abs(entry.missingHoursDelta), 0);
-  const option = (snapshot) => `${new Date(snapshot.createdAt).toLocaleString()} · ${snapshot.startDate}–${snapshot.endDate} · ${snapshot.gaps.length} gaps`;
+
+  const optionLabel = (snapshot) => `${new Date(snapshot.createdAt).toLocaleString()} · ${snapshot.startDate}–${snapshot.endDate} · ${snapshot.gaps.length} gaps`;
   const rangesOverlap = current.startDate <= previous.endDate && previous.startDate <= current.endDate;
-  comparisonEl.innerHTML = `<div class="comparison-head"><div><strong>Compare saved scans</strong><span>Choose two scans to review staffing, coverage, and missing staff-hours</span></div><button id="historyComparisonToggle" class="secondary-btn" type="button" aria-expanded="true">Collapse details</button></div><div class="comparison-scan-picker"><label><span>Current scan</span><select id="historyCompareCurrent">${history.map((snapshot) => `<option value="${escapeHtml(snapshot.id)}" ${snapshot.id === current.id ? "selected" : ""}>${escapeHtml(option(snapshot))}</option>`).join("")}</select></label><span class="comparison-vs">vs</span><label><span>Baseline scan</span><select id="historyComparePrevious">${history.map((snapshot) => `<option value="${escapeHtml(snapshot.id)}" ${snapshot.id === previous.id ? "selected" : ""}>${escapeHtml(option(snapshot))}</option>`).join("")}</select></label></div>${rangesOverlap ? "" : `<div class="comparison-scope-warning"><strong>Different date ranges</strong><span>${escapeHtml(current.startDate)}–${escapeHtml(current.endDate)} does not overlap ${escapeHtml(previous.startDate)}–${escapeHtml(previous.endDate)}. New and resolved items mainly reflect the changed scan scope.</span></div>`}<div id="historyComparisonBody"><div class="comparison-cards"><button type="button" class="opened" data-comparison-kind="New"><strong>${comparison.opened.length}</strong><span>New gaps</span><small>${hours("New").toFixed(1)} staff-h</small></button><button type="button" class="resolved" data-comparison-kind="Resolved"><strong>${comparison.resolved.length}</strong><span>Resolved</span><small>${hours("Resolved").toFixed(1)} staff-h</small></button><button type="button" class="changed" data-comparison-kind="Changed"><strong>${comparison.changed.length}</strong><span>Coverage changed</span><small>${hours("Changed").toFixed(1)} staff-h delta</small></button></div>${renderComparisonDetails(entries)}</div>`;
+
+  let bodyHtml = "";
+
+  if (historyComparisonActiveTab === "person") {
+    bodyHtml = renderPersonRosterAuditHtml(current, previous);
+  } else {
+    const comparison = OperationsUtils.compareSnapshots(current, previous);
+    const entries = buildHistoryComparisonEntries(current, previous, comparison);
+    const hours = (kind) => entries.filter((entry) => entry.kind === kind).reduce((sum, entry) => sum + Math.abs(entry.missingHoursDelta), 0);
+
+    bodyHtml = `
+      <div class="comparison-cards">
+        <button type="button" class="opened" data-comparison-kind="New">
+          <strong>${comparison.opened.length}</strong>
+          <span>New gaps</span>
+          <small>${hours("New").toFixed(1)} staff-h</small>
+        </button>
+        <button type="button" class="resolved" data-comparison-kind="Resolved">
+          <strong>${comparison.resolved.length}</strong>
+          <span>Resolved</span>
+          <small>${hours("Resolved").toFixed(1)} staff-h</small>
+        </button>
+        <button type="button" class="changed" data-comparison-kind="Changed">
+          <strong>${comparison.changed.length}</strong>
+          <span>Coverage changed</span>
+          <small>${hours("Changed").toFixed(1)} staff-h delta</small>
+        </button>
+      </div>
+      ${renderComparisonDetails(entries)}
+    `;
+  }
+
+  comparisonEl.innerHTML = `
+    <div class="comparison-head">
+      <div>
+        <strong>Compare saved scans</strong>
+        <span>Choose two scans to review coverage gaps, staff replacements, and workload deltas</span>
+      </div>
+      <div class="comparison-mode-switcher">
+        <button type="button" class="history-mode-btn ${historyComparisonActiveTab === "gaps" ? "active" : ""}" id="historyModeGapsBtn">
+          Coverage & Gaps
+        </button>
+        <button type="button" class="history-mode-btn ${historyComparisonActiveTab === "person" ? "active" : ""}" id="historyModePersonBtn">
+          Person Roster Audit
+        </button>
+      </div>
+      <button id="historyComparisonToggle" class="secondary-btn" type="button" aria-expanded="true">Collapse details</button>
+    </div>
+    <div class="comparison-scan-picker">
+      <label>
+        <span>Current scan</span>
+        <select id="historyCompareCurrent">
+          ${history.map((snapshot) => `<option value="${escapeHtml(snapshot.id)}" ${snapshot.id === current.id ? "selected" : ""}>${escapeHtml(optionLabel(snapshot))}</option>`).join("")}
+        </select>
+      </label>
+      <span class="comparison-vs">vs</span>
+      <label>
+        <span>Baseline scan</span>
+        <select id="historyComparePrevious">
+          ${history.map((snapshot) => `<option value="${escapeHtml(snapshot.id)}" ${snapshot.id === previous.id ? "selected" : ""}>${escapeHtml(optionLabel(snapshot))}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    ${rangesOverlap ? "" : `<div class="comparison-scope-warning"><strong>Different date ranges</strong><span>${escapeHtml(current.startDate)}–${escapeHtml(current.endDate)} does not overlap ${escapeHtml(previous.startDate)}–${escapeHtml(previous.endDate)}. Items reflect different scan scopes.</span></div>`}
+    <div id="historyComparisonBody">${bodyHtml}</div>
+  `;
+
   document.getElementById("historyCompareCurrent").addEventListener("change", (event) => renderHistoryComparison(history, event.target.value, document.getElementById("historyComparePrevious").value));
   document.getElementById("historyComparePrevious").addEventListener("change", (event) => renderHistoryComparison(history, document.getElementById("historyCompareCurrent").value, event.target.value));
-  bindHistoryComparisonControls(entries);
+
+  document.getElementById("historyModeGapsBtn").addEventListener("click", () => {
+    historyComparisonActiveTab = "gaps";
+    renderHistoryComparison(history, current.id, previous.id);
+  });
+  document.getElementById("historyModePersonBtn").addEventListener("click", () => {
+    historyComparisonActiveTab = "person";
+    renderHistoryComparison(history, current.id, previous.id);
+  });
+
+  if (historyComparisonActiveTab === "person") {
+    bindPersonRosterAuditControls(current, previous);
+  } else {
+    const comparison = OperationsUtils.compareSnapshots(current, previous);
+    const entries = buildHistoryComparisonEntries(current, previous, comparison);
+    bindHistoryComparisonControls(entries);
+  }
+}
+
+function renderPersonRosterAuditHtml(current, previous) {
+  const rangesOverlap = current.startDate <= previous.endDate && previous.startDate <= current.endDate;
+  const audit = OperationsUtils.comparePersonRosters(current, previous);
+  const summary = audit.getStaffAuditSummary(historyPersonSelectedKey);
+
+  let entries = summary.entries;
+
+  if (historyPersonFilterType && historyPersonFilterType !== "ALL") {
+    entries = entries.filter((e) => e.personKind === historyPersonFilterType);
+  }
+
+  if (historyPersonSearchQuery) {
+    const q = historyPersonSearchQuery.toLowerCase();
+    entries = entries.filter((e) => {
+      const text = [
+        e.row.date, e.row.flight, e.row.sla, e.row.route, e.row.aircraft,
+        e.personKind, e.personDetail,
+        ...e.prevStaff.map((p) => p.name), ...e.currStaff.map((p) => p.name)
+      ].join(" ").toLowerCase();
+      return text.includes(q);
+    });
+  }
+
+  return `
+    <div class="person-audit-container">
+      ${!rangesOverlap ? `
+        <div class="person-audit-notice">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+          <span>Non-overlapping scan dates (${escapeHtml(current.startDate)}–${escapeHtml(current.endDate)} vs ${escapeHtml(previous.startDate)}–${escapeHtml(previous.endDate)}): Duties are automatically matched by <strong>Day of Week + Flight + SLA</strong> for cross-period audit tracking.</span>
+        </div>
+      ` : ""}
+      <div class="person-audit-controls">
+        <label class="person-audit-field">
+          <span>Select Staff Member</span>
+          <select id="historyPersonSelect">
+            <option value="ALL" ${historyPersonSelectedKey === "ALL" ? "selected" : ""}>All Staff Members (${audit.allStaff.length} staff)</option>
+            ${audit.allStaff.map((p) => `<option value="${escapeHtml(p.key)}" ${p.key === historyPersonSelectedKey ? "selected" : ""}>${escapeHtml(p.name)}${p.initials ? ` [${escapeHtml(p.initials)}]` : ""}</option>`).join("")}
+          </select>
+        </label>
+
+        <label class="person-audit-field">
+          <span>Filter Change Type</span>
+          <select id="historyPersonFilter">
+            <option value="ALL" ${historyPersonFilterType === "ALL" ? "selected" : ""}>All Shifts & Changes</option>
+            <option value="REPLACED" ${historyPersonFilterType === "REPLACED" ? "selected" : ""}>Replaced / Swapped Only</option>
+            <option value="ADDED" ${historyPersonFilterType === "ADDED" ? "selected" : ""}>Duty Added Only</option>
+            <option value="REMOVED" ${historyPersonFilterType === "REMOVED" ? "selected" : ""}>Duty Removed Only</option>
+            <option value="HOURS_MODIFIED" ${historyPersonFilterType === "HOURS_MODIFIED" ? "selected" : ""}>Hours Modified Only</option>
+          </select>
+        </label>
+
+        <div class="person-audit-field search-field" style="flex: 1;">
+          <span>Search Shifts</span>
+          <input id="historyPersonSearchInput" type="search" placeholder="Search flight, SLA, route, staff name..." value="${escapeHtml(historyPersonSearchQuery)}">
+        </div>
+
+        <button id="historyPersonExportCsvBtn" type="button" class="primary-btn" style="align-self: flex-end; height: 34px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Export Roster Audit CSV
+        </button>
+      </div>
+
+      <div class="person-audit-kpis">
+        <div class="person-kpi-card">
+          <span class="kpi-label">Baseline Workload</span>
+          <strong class="kpi-value">${summary.prevTotalHours.toFixed(1)} <small>hrs</small></strong>
+          <span class="kpi-sub">${summary.prevDutyCount} duties assigned</span>
+        </div>
+
+        <div class="person-kpi-card">
+          <span class="kpi-label">Current Scan Workload</span>
+          <strong class="kpi-value">${summary.currTotalHours.toFixed(1)} <small>hrs</small></strong>
+          <span class="kpi-sub">${summary.currDutyCount} duties assigned</span>
+        </div>
+
+        <div class="person-kpi-card">
+          <span class="kpi-label">Net Hours Impact</span>
+          <strong class="kpi-value ${summary.netHoursDelta > 0 ? "text-plus" : summary.netHoursDelta < 0 ? "text-minus" : ""}">
+            ${summary.netHoursDelta > 0 ? "+" : ""}${summary.netHoursDelta.toFixed(1)} <small>hrs</small>
+          </strong>
+          <span class="kpi-sub">${summary.netDutyDelta > 0 ? "+" : ""}${summary.netDutyDelta} duties delta</span>
+        </div>
+
+        <div class="person-kpi-card">
+          <span class="kpi-label">Reassignments & Swaps</span>
+          <strong class="kpi-value text-warning">${summary.replacedCount}</strong>
+          <span class="kpi-sub">${summary.addedCount} added · ${summary.removedCount} removed</span>
+        </div>
+      </div>
+
+      <div class="person-audit-entries-list">
+        ${entries.length === 0 ? '<div class="comparison-empty">No roster changes found matching the selected filters.</div>' : entries.map(renderPersonAuditEntryCard).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderPersonAuditEntryCard(entry) {
+  const row = entry.row;
+  const kindClass = {
+    REPLACED: "badge-replaced",
+    ADDED: "badge-added",
+    REMOVED: "badge-removed",
+    HOURS_MODIFIED: "badge-modified",
+    UNCHANGED: "badge-unchanged",
+  }[entry.personKind] || "badge-unchanged";
+
+  const kindLabel = {
+    REPLACED: "REPLACED",
+    ADDED: "DUTY ADDED",
+    REMOVED: "DUTY REMOVED",
+    HOURS_MODIFIED: "HOURS MODIFIED",
+    UNCHANGED: "UNCHANGED",
+  }[entry.personKind] || entry.personKind;
+
+  const deltaText = entry.hoursDelta > 0 
+    ? `+${entry.hoursDelta.toFixed(1)}h` 
+    : entry.hoursDelta < 0 
+      ? `${entry.hoursDelta.toFixed(1)}h` 
+      : "0.0h";
+
+  const deltaClass = entry.hoursDelta > 0 ? "delta-plus" : entry.hoursDelta < 0 ? "delta-minus" : "delta-neutral";
+
+  const prevStaffNames = entry.prevStaff.map((p) => `${p.name}${p.initials ? ` [${p.initials}]` : ""}`).join(", ") || "Unassigned";
+  const currStaffNames = entry.currStaff.map((p) => `${p.name}${p.initials ? ` [${p.initials}]` : ""}`).join(", ") || "Unassigned";
+
+  return `
+    <div class="audit-entry-card kind-${entry.personKind.toLowerCase()}">
+      <div class="audit-entry-head">
+        <div class="audit-entry-flight">
+          <strong>${escapeHtml(row.date || "")} · ${escapeHtml(row.flight || "Duty")} · ${escapeHtml(row.sla || "")}</strong>
+          <span>${escapeHtml(row.route || "")} ${row.aircraft ? `· ${escapeHtml(row.aircraft)}` : ""}</span>
+        </div>
+        <div class="audit-entry-badges">
+          <span class="audit-badge ${kindClass}">${kindLabel}</span>
+        </div>
+      </div>
+      <div class="audit-entry-body">
+        <div class="audit-entry-info">
+          <div class="audit-time-line">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>${escapeHtml(row.start_utc || "")} – ${escapeHtml(row.release_utc || "")} UTC</span>
+            <strong>(${(entry.durationMinutes / 60).toFixed(1)} hrs)</strong>
+          </div>
+          <div class="audit-detail-highlight">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/></svg>
+            <strong>${escapeHtml(entry.personDetail)}</strong>
+          </div>
+          <div class="audit-roster-compare">
+            <small><b>Baseline Roster:</b> ${escapeHtml(prevStaffNames)}</small>
+            <small><b>Current Roster:</b> ${escapeHtml(currStaffNames)}</small>
+          </div>
+        </div>
+        <div class="audit-entry-hours ${deltaClass}">
+          <span class="hours-label">Hours Delta</span>
+          <strong class="hours-val">${deltaText}</strong>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindPersonRosterAuditControls(current, previous) {
+  const personSelect = document.getElementById("historyPersonSelect");
+  const filterSelect = document.getElementById("historyPersonFilter");
+  const searchInput = document.getElementById("historyPersonSearchInput");
+  const exportBtn = document.getElementById("historyPersonExportCsvBtn");
+  const toggle = document.getElementById("historyComparisonToggle");
+  const body = document.getElementById("historyComparisonBody");
+
+  toggle?.addEventListener("click", (event) => {
+    const collapsed = body.hidden = !body.hidden;
+    event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details";
+    event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
+  });
+
+  personSelect?.addEventListener("change", (e) => {
+    historyPersonSelectedKey = e.target.value;
+    renderHistoryComparison(getScanHistorySnapshotList(), current.id, previous.id);
+  });
+
+  filterSelect?.addEventListener("change", (e) => {
+    historyPersonFilterType = e.target.value;
+    renderHistoryComparison(getScanHistorySnapshotList(), current.id, previous.id);
+  });
+
+  searchInput?.addEventListener("input", (e) => {
+    historyPersonSearchQuery = e.target.value;
+    const q = historyPersonSearchQuery.toLowerCase();
+    const cards = document.querySelectorAll(".audit-entry-card");
+    cards.forEach((card) => {
+      const text = card.textContent.toLowerCase();
+      card.style.display = text.includes(q) ? "" : "none";
+    });
+  });
+
+  exportBtn?.addEventListener("click", () => {
+    const audit = OperationsUtils.comparePersonRosters(current, previous);
+    const summary = audit.getStaffAuditSummary(historyPersonSelectedKey);
+    let entries = summary.entries;
+
+    if (historyPersonFilterType && historyPersonFilterType !== "ALL") {
+      entries = entries.filter((e) => e.personKind === historyPersonFilterType);
+    }
+    if (historyPersonSearchQuery) {
+      const q = historyPersonSearchQuery.toLowerCase();
+      entries = entries.filter((e) => {
+        const text = [
+          e.row.date, e.row.flight, e.row.sla, e.row.route, e.row.aircraft,
+          e.personKind, e.personDetail,
+          ...e.prevStaff.map((p) => p.name), ...e.currStaff.map((p) => p.name)
+        ].join(" ").toLowerCase();
+        return text.includes(q);
+      });
+    }
+
+    const headers = [
+      "Staff Member", "Date", "Flight", "SLA", "Route", "Aircraft",
+      "Start UTC", "Release UTC", "Duty Hours", "Audit Status", "Audit Detail / Replacement Info",
+      "Baseline Staff", "Current Staff", "Hours Delta"
+    ];
+
+    const lines = [
+      headers.map(csvCell).join(","),
+      ...entries.map((e) => [
+        summary.targetPerson ? summary.targetPerson.name : "All Staff",
+        e.row.date, e.row.flight, e.row.sla, e.row.route || "", e.row.aircraft || "",
+        e.row.start_utc, e.row.release_utc, (e.durationMinutes / 60).toFixed(2),
+        e.personKind, e.personDetail,
+        e.prevStaff.map((p) => p.name).join(" | "), e.currStaff.map((p) => p.name).join(" | "),
+        e.hoursDelta.toFixed(2)
+      ].map(csvCell).join(","))
+    ];
+
+    const personSlug = (summary.targetPerson ? summary.targetPerson.name : "all-staff").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    downloadBlob(`gsrm-roster-audit-${personSlug}-${getLocalIsoDate()}.csv`, lines.join("\n"), "text/csv;charset=utf-8");
+  });
 }
 
 function buildHistoryComparisonEntries(latest, previous, comparison) {

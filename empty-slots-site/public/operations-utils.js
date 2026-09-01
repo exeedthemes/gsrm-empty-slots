@@ -691,6 +691,229 @@
     return { opened, resolved, changed };
   }
 
+  function comparePersonRosters(current, previous, options = {}) {
+    const parseStaff = (row) => {
+      const labels = Array.isArray(row?.staff) ? row.staff : [];
+      return labels.map((l) => StaffUtils?.parseStaffIdentity(l) || { key: String(l).toUpperCase(), name: String(l), initials: "" }).filter(Boolean);
+    };
+
+    const getDayKey = (dateStr) => {
+      if (!dateStr) return "";
+      const parsedDate = parseDutyTime(dateStr, "00:00");
+      if (parsedDate && !isNaN(parsedDate.getTime())) {
+        const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        return weekdays[parsedDate.getUTCDay()];
+      }
+      try {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) {
+          const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+          return weekdays[d.getUTCDay()];
+        }
+      } catch (e) {}
+      return String(dateStr);
+    };
+
+    const rangesOverlap = current?.startDate && previous?.endDate && current.startDate <= previous.endDate && previous.startDate <= current.endDate;
+    const matchByDayOfWeek = options.matchByDayOfWeek !== undefined ? options.matchByDayOfWeek : !rangesOverlap;
+
+    const buildDutyMap = (snapshot) => {
+      const map = new Map();
+      const counts = new Map();
+      for (const r of (snapshot?.rows || [])) {
+        const timeSegment = matchByDayOfWeek ? getDayKey(r.date) : r.date;
+        const groupKey = [timeSegment, r.flight_id || r.flight, r.sla].map((v) => String(v || "")).join("|");
+        const idx = (counts.get(groupKey) || 0);
+        counts.set(groupKey, idx + 1);
+        const key = `${groupKey}|${idx}`;
+        map.set(key, r);
+      }
+      return map;
+    };
+
+    const currentRows = buildDutyMap(current);
+    const previousRows = buildDutyMap(previous);
+    const allKeys = new Set([...currentRows.keys(), ...previousRows.keys()]);
+
+    const staffMap = new Map();
+    const registerStaff = (row) => {
+      for (const p of parseStaff(row)) {
+        if (!staffMap.has(p.key)) staffMap.set(p.key, p);
+      }
+    };
+    for (const r of currentRows.values()) registerStaff(r);
+    for (const r of previousRows.values()) registerStaff(r);
+    for (const s of [...(current?.staffDirectory || []), ...(previous?.staffDirectory || [])]) {
+      const p = StaffUtils?.parseStaffIdentity(s) || { key: String(s).toUpperCase(), name: String(s), initials: "" };
+      if (p && !staffMap.has(p.key)) staffMap.set(p.key, p);
+    }
+
+    const allStaff = [...staffMap.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const entries = [];
+
+    for (const key of allKeys) {
+      const curr = currentRows.get(key);
+      const prev = previousRows.get(key);
+      const ref = curr || prev;
+
+      const prevStaff = prev ? parseStaff(prev) : [];
+      const currStaff = curr ? parseStaff(curr) : [];
+
+      const prevKeys = new Set(prevStaff.map((p) => p.key));
+      const currKeys = new Set(currStaff.map((p) => p.key));
+
+      const removedStaff = prevStaff.filter((p) => !currKeys.has(p.key));
+      const addedStaff = currStaff.filter((p) => !prevKeys.has(p.key));
+
+      const durationMinutes = Number(ref.durationMinutes || dutyMinutes(ref) || 0);
+
+      let kind = "UNCHANGED";
+      let detail = "";
+
+      const timingChanged = prev && curr && (prev.start_utc !== curr.start_utc || prev.release_utc !== curr.release_utc);
+
+      if (removedStaff.length > 0 && addedStaff.length > 0) {
+        kind = "REPLACED";
+        detail = `Replaced: ${removedStaff.map((p) => p.name).join(", ")} → ${addedStaff.map((p) => p.name).join(", ")}`;
+      } else if (addedStaff.length > 0 && !prev) {
+        kind = "ADDED";
+        detail = "New flight duty in current scan";
+      } else if (removedStaff.length > 0 && !curr) {
+        kind = "REMOVED";
+        detail = "Flight duty removed from current scan";
+      } else if (addedStaff.length > 0) {
+        kind = "ADDED";
+        detail = `Assigned to duty (${addedStaff.map((p) => p.name).join(", ")})`;
+      } else if (removedStaff.length > 0) {
+        kind = "REMOVED";
+        detail = `Unassigned from duty (${removedStaff.map((p) => p.name).join(", ")})`;
+      } else if (timingChanged) {
+        kind = "HOURS_MODIFIED";
+        detail = `Timing changed: ${prev.start_utc}–${prev.release_utc} → ${curr.start_utc}–${curr.release_utc}`;
+      }
+
+      entries.push({
+        key,
+        row: ref,
+        prevRow: prev || null,
+        currRow: curr || null,
+        kind,
+        detail,
+        durationMinutes,
+        durationHours: durationMinutes / 60,
+        prevStaff,
+        currStaff,
+        removedStaff,
+        addedStaff,
+        timingChanged,
+      });
+    }
+
+    const getStaffAuditSummary = (targetKey = "ALL") => {
+      const isAll = targetKey === "ALL" || !targetKey;
+      let prevTotalHours = 0;
+      let currTotalHours = 0;
+      let prevDutyCount = 0;
+      let currDutyCount = 0;
+      let replacedCount = 0;
+      let addedCount = 0;
+      let removedCount = 0;
+      let modifiedHoursCount = 0;
+
+      const filteredEntries = [];
+
+      for (const entry of entries) {
+        const wasInPrev = isAll ? entry.prevStaff.length > 0 : entry.prevStaff.some((p) => p.key === targetKey);
+        const wasInCurr = isAll ? entry.currStaff.length > 0 : entry.currStaff.some((p) => p.key === targetKey);
+
+        if (!wasInPrev && !wasInCurr) continue;
+
+        const prevH = wasInPrev ? (entry.prevRow ? (dutyMinutes(entry.prevRow) / 60) : entry.durationHours) : 0;
+        const currH = wasInCurr ? (entry.currRow ? (dutyMinutes(entry.currRow) / 60) : entry.durationHours) : 0;
+
+        if (wasInPrev) {
+          prevTotalHours += prevH;
+          prevDutyCount += 1;
+        }
+        if (wasInCurr) {
+          currTotalHours += currH;
+          currDutyCount += 1;
+        }
+
+        let personKind = entry.kind;
+        let personDetail = entry.detail;
+
+        if (!isAll) {
+          const isRemoved = wasInPrev && !wasInCurr;
+          const isAdded = !wasInPrev && wasInCurr;
+          const isReplacedOut = isRemoved && entry.addedStaff.length > 0;
+          const isReplacedIn = isAdded && entry.removedStaff.length > 0;
+
+          if (isReplacedOut) {
+            personKind = "REPLACED";
+            personDetail = `Replaced by: ${entry.addedStaff.map((p) => `${p.name}${p.initials ? ` [${p.initials}]` : ""}`).join(", ")}`;
+            replacedCount += 1;
+          } else if (isReplacedIn) {
+            personKind = "REPLACED";
+            personDetail = `Replaced: ${entry.removedStaff.map((p) => `${p.name}${p.initials ? ` [${p.initials}]` : ""}`).join(", ")}`;
+            replacedCount += 1;
+          } else if (isAdded) {
+            personKind = "ADDED";
+            personDetail = "Newly assigned shift";
+            addedCount += 1;
+          } else if (isRemoved) {
+            personKind = "REMOVED";
+            personDetail = "Unassigned shift";
+            removedCount += 1;
+          } else if (entry.timingChanged || prevH !== currH) {
+            personKind = "HOURS_MODIFIED";
+            personDetail = `Shift duration modified (${prevH.toFixed(1)}h → ${currH.toFixed(1)}h)`;
+            modifiedHoursCount += 1;
+          } else {
+            personKind = "UNCHANGED";
+            personDetail = "Duty timing unchanged";
+          }
+        } else {
+          if (entry.kind === "REPLACED") replacedCount += 1;
+          else if (entry.kind === "ADDED") addedCount += 1;
+          else if (entry.kind === "REMOVED") removedCount += 1;
+          else if (entry.kind === "HOURS_MODIFIED") modifiedHoursCount += 1;
+        }
+
+        filteredEntries.push({
+          ...entry,
+          personKind,
+          personDetail,
+          prevHours: prevH,
+          currHours: currH,
+          hoursDelta: currH - prevH,
+        });
+      }
+
+      return {
+        targetKey,
+        targetPerson: staffMap.get(targetKey) || (isAll ? { key: "ALL", name: "All Staff Members", initials: "ALL" } : null),
+        prevTotalHours,
+        currTotalHours,
+        netHoursDelta: currTotalHours - prevTotalHours,
+        prevDutyCount,
+        currDutyCount,
+        netDutyDelta: currDutyCount - prevDutyCount,
+        replacedCount,
+        addedCount,
+        removedCount,
+        modifiedHoursCount,
+        entries: filteredEntries,
+      };
+    };
+
+    return {
+      allStaff,
+      entries,
+      getStaffAuditSummary,
+    };
+  }
+
   function autoAdjustRoster(rows, staffDirectory, options = {}) {
     const minBreakMinutes = Number(options.minBreakMinutes ?? options.bufferMinutes ?? 30);
     const conflictType = options.resolveConflictType || "both"; // 'both', 'overlaps_only', 'breaks_only'
@@ -1014,6 +1237,6 @@
     };
   }
 
-  return { parseDutyTime, rowKey, dutyMinutes, buildPeople, rankCandidates, getDutyGapCandidates: rankCandidates, simulateCoverage, airlineCode, operationalPeriod, buildAirlineRoster, buildFlightSchedule, inspectDaySchedule, inspectPeriodWorkload, isAvailableForDuty, buildAutoPlan, autoAdjustRoster, validateShiftSwap, validateAutoAssignments, buildWarnings, buildWorkload, summarizeDutyHours, buildAnalytics, compareSnapshots };
+  return { parseDutyTime, rowKey, dutyMinutes, buildPeople, rankCandidates, getDutyGapCandidates: rankCandidates, simulateCoverage, airlineCode, operationalPeriod, buildAirlineRoster, buildFlightSchedule, inspectDaySchedule, inspectPeriodWorkload, isAvailableForDuty, buildAutoPlan, autoAdjustRoster, validateShiftSwap, validateAutoAssignments, buildWarnings, buildWorkload, summarizeDutyHours, buildAnalytics, compareSnapshots, comparePersonRosters };
 });
 

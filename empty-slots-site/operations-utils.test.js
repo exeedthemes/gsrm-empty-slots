@@ -243,7 +243,6 @@ test("validateShiftSwap validates clean 2-way swaps, 1-way transfers, and flags 
   assert.equal(conflictSwap.staffB.valid, false);
   assert.ok(conflictSwap.staffB.violations.some((v) => v.includes("overlap")));
 
-  // 3. Clean 1-way transfer to Dana (free all day)
   const transfer = OperationsUtils.validateShiftSwap(
     rows[0],
     { key: "ALICE AGENT", name: "Alice Agent" },
@@ -259,5 +258,88 @@ test("validateShiftSwap validates clean 2-way swaps, 1-way transfers, and flags 
   assert.equal(transfer.staffB.simulatedDutiesCount, 1);
 });
 
+test("comparePersonRosters provides staff-centric audit details, replacement tracking, and workload deltas", () => {
+  const previous = {
+    staffDirectory: ["AAA - Alice Agent", "BBB - Bob Before", "CCC - Carol Crew"],
+    rows: [
+      { ...baseDuty, flight_id: "1", flight: "LH100", start_utc: "08:00", release_utc: "12:00", staff: ["AAA - Alice Agent"] },
+      { ...baseDuty, flight_id: "2", flight: "LH200", start_utc: "13:00", release_utc: "17:00", staff: ["BBB - Bob Before"] },
+    ],
+  };
 
+  const current = {
+    staffDirectory: ["AAA - Alice Agent", "BBB - Bob Before", "CCC - Carol Crew"],
+    rows: [
+      // Flight 1: Alice was replaced by Carol Crew
+      { ...baseDuty, flight_id: "1", flight: "LH100", start_utc: "08:00", release_utc: "12:00", staff: ["CCC - Carol Crew"] },
+      // Flight 2: Bob's shift timing extended by 1 hour (13:00-18:00)
+      { ...baseDuty, flight_id: "2", flight: "LH200", start_utc: "13:00", release_utc: "18:00", staff: ["BBB - Bob Before"] },
+      // Flight 3: New duty added for Alice
+      { ...baseDuty, flight_id: "3", flight: "LH300", start_utc: "19:00", release_utc: "21:00", staff: ["AAA - Alice Agent"] },
+    ],
+  };
+
+  const audit = OperationsUtils.comparePersonRosters(current, previous);
+
+  assert.equal(audit.allStaff.length, 3);
+  assert.deepEqual(audit.allStaff.map((s) => s.name), ["Alice Agent", "Bob Before", "Carol Crew"]);
+
+  // Test Alice Agent Audit
+  const aliceSummary = audit.getStaffAuditSummary("ALICE AGENT");
+  assert.equal(aliceSummary.prevTotalHours, 4.0);
+  assert.equal(aliceSummary.currTotalHours, 2.0);
+  assert.equal(aliceSummary.netHoursDelta, -2.0);
+  assert.equal(aliceSummary.replacedCount, 1);
+  assert.equal(aliceSummary.addedCount, 1);
+
+  const aliceReplacedEntry = aliceSummary.entries.find((e) => e.personKind === "REPLACED");
+  assert.ok(aliceReplacedEntry);
+  assert.ok(aliceReplacedEntry.personDetail.includes("Replaced by: Carol Crew"));
+
+  // Test Carol Crew Audit (Replaced In)
+  const carolSummary = audit.getStaffAuditSummary("CAROL CREW");
+  assert.equal(carolSummary.prevTotalHours, 0);
+  assert.equal(carolSummary.currTotalHours, 4.0);
+  assert.equal(carolSummary.netHoursDelta, 4.0);
+  assert.equal(carolSummary.replacedCount, 1);
+  const carolReplacedEntry = carolSummary.entries.find((e) => e.personKind === "REPLACED");
+  assert.ok(carolReplacedEntry);
+  assert.ok(carolReplacedEntry.personDetail.includes("Replaced: Alice Agent"));
+
+  // Test Bob Before Audit (Hours Modified)
+  const bobSummary = audit.getStaffAuditSummary("BOB BEFORE");
+  assert.equal(bobSummary.prevTotalHours, 4.0);
+  assert.equal(bobSummary.currTotalHours, 5.0);
+  assert.equal(bobSummary.netHoursDelta, 1.0);
+  assert.equal(bobSummary.modifiedHoursCount, 1);
+});
+
+test("comparePersonRosters matches duties by Day of Week when scan dates do not overlap", () => {
+  const previous = {
+    id: "prev-aug",
+    startDate: "2026-08-18", // Tuesday
+    endDate: "2026-08-18",
+    rows: [
+      { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", durationMinutes: 240, staff: ["AAA - Alice Agent"] },
+    ],
+  };
+
+  const current = {
+    id: "curr-sep",
+    startDate: "2026-09-01", // Tuesday (2 weeks later, no date overlap)
+    endDate: "2026-09-01",
+    rows: [
+      { date: "01-Sep-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", durationMinutes: 240, staff: ["BBB - Bob Agent"] },
+    ],
+  };
+
+  const audit = OperationsUtils.comparePersonRosters(current, previous);
+  const aliceSummary = audit.getStaffAuditSummary("ALICE AGENT");
+  assert.equal(aliceSummary.replacedCount, 1);
+  assert.ok(aliceSummary.entries[0].personDetail.includes("Replaced by: Bob Agent"));
+
+  const bobSummary = audit.getStaffAuditSummary("BOB AGENT");
+  assert.equal(bobSummary.replacedCount, 1);
+  assert.ok(bobSummary.entries[0].personDetail.includes("Replaced: Alice Agent"));
+});
 
