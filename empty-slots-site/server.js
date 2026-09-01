@@ -182,7 +182,30 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
-  server.listen(PORT, () => {
+  process.on("uncaughtException", (err) => {
+    console.error("\n❌ FATAL ERROR:", err?.stack || err);
+    if (process.platform === "win32") {
+      console.log("\nPress Enter to exit...");
+      try {
+        require("fs").readSync(0, Buffer.alloc(1), 0, 1, null);
+      } catch {}
+    }
+  });
+
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      const url = `http://localhost:${PORT}`;
+      console.log(`\n⚠️ Port ${PORT} is already in use. Opening browser at ${url}...`);
+      if (process.env.AUTO_OPEN !== "false") {
+        const openCmd = process.platform === "win32" ? `start ${url}` : process.platform === "darwin" ? `open ${url}` : `xdg-open ${url}`;
+        require("child_process").exec(openCmd, () => {});
+      }
+    } else {
+      console.error("\n❌ Server Error:", err);
+    }
+  });
+
+  server.listen(PORT, "0.0.0.0", () => {
     const url = `http://localhost:${PORT}`;
     console.log(`Empty Slots app running at ${url}`);
     if (process.env.AUTO_OPEN !== "false") {

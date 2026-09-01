@@ -964,9 +964,16 @@ async function cancelActiveScan() {
   }
 }
 
-async function runScan(forceRefresh = false) {
-  if (!form.reportValidity()) return;
+async function runScan(forceRefresh = false, options = {}) {
+  const isAutoScan = Boolean(options.isAutoScan);
+  if (!isAutoScan && !form.reportValidity()) return;
   const payload = readForm();
+
+  if (options.dateRangeOverride?.startDate && options.dateRangeOverride?.endDate) {
+    payload.startDate = options.dateRangeOverride.startDate;
+    payload.endDate = options.dateRangeOverride.endDate;
+  }
+
   const force = forceRefresh || Boolean(document.getElementById("forceRefreshToggle")?.checked);
   payload.forceRefresh = force;
   if (!rosterDate.value || rosterDate.value < payload.startDate || rosterDate.value > payload.endDate) {
@@ -978,7 +985,7 @@ async function runScan(forceRefresh = false) {
   payload.scanId = createScanId();
   activeScanId = payload.scanId;
   setBusy(true);
-  setMessage(forceRefresh ? "Refreshing the selected dates from AVBIS..." : "Loading cached dates and scanning only missing data...");
+  setMessage(isAutoScan ? "Running background auto-scan..." : (forceRefresh ? "Refreshing the selected dates from AVBIS..." : "Loading cached dates and scanning only missing data..."));
   resetProgress(payload.scanId);
   startProgressPolling(payload.scanId);
 
@@ -1035,13 +1042,14 @@ async function runScan(forceRefresh = false) {
       ? ` Reused ${cache.cachedDates} cached date(s); fetched ${cache.freshDates || 0} date(s) from AVBIS.`
       : ` Fetched ${cache.freshDates ?? latestScannedDates.length} date(s) from AVBIS.`;
     const assignedStaffCount = getAssignedStaffStrings().size;
-    const completionLead = result.cancelled ? "Scan cancelled." : "Done.";
+    const completionLead = result.cancelled ? "Scan cancelled." : (isAutoScan ? "Auto-scan completed." : "Done.");
     const preserved = result.cancelled ? ` Preserved ${latestScannedDates.length} completed date(s); rerun to continue from cache.` : "";
     setMessage(`${completionLead}${preserved}${cacheSuffix} Found ${latestStaffDirectory.length} known staff member(s), ${assignedStaffCount} allocated staff member(s), and ${latestRows.length} duty group(s).${errorSuffix}${incompleteSuffix}`, result.cancelled || result.errors?.length ? "warn" : "");
     const finalProgress = await pollProgress(payload.scanId);
     renderFinishedProgress(result, finalProgress);
-    setSetupCollapsed(true, payload);
+    if (!isAutoScan) setSetupCollapsed(true, payload);
     console.log("Empty SOD slot JSON:", result);
+    return result;
   } catch (error) {
     latestRows = [];
     originalRows = [];
@@ -1053,8 +1061,9 @@ async function runScan(forceRefresh = false) {
     applyFilters();
     flightCount.textContent = "0";
     dateCount.textContent = "0";
-    setSetupCollapsed(false);
+    if (!isAutoScan) setSetupCollapsed(false);
     setMessage(error.message || String(error), "error");
+    throw error;
   } finally {
     stopProgressPolling();
     setBusy(false);
@@ -8228,16 +8237,508 @@ function attachShiftSwapperModalListeners() {
   }
 }
 
+// ============================================================================
+// AUTO SCANNER MODULE & CONTROLLER
+// ============================================================================
+
+const AUTO_SCAN_SETTINGS_KEY = "gsrm_auto_scan_settings_v1";
+
+const DEFAULT_AUTO_SCAN_SETTINGS = {
+  enabled: false,
+  intervalMinutes: 360,
+  rangeMode: "active",
+  customMinutes: 360,
+  bypassCache: true,
+  notifyNewGaps: true,
+  playSound: true,
+  pauseWhileEditing: true,
+  activeHoursOnly: false,
+  startHour: 6,
+  endHour: 22,
+};
+
+let autoScanSettings = loadAutoScanSettings();
+let autoScanTimerId = null;
+let autoScanCountdownSeconds = 0;
+let autoScanIsRunning = false;
+let lastAutoScanResult = null;
+
+function loadAutoScanSettings() {
+  try {
+    const raw = localStorage.getItem(AUTO_SCAN_SETTINGS_KEY);
+    if (raw) {
+      return { ...DEFAULT_AUTO_SCAN_SETTINGS, ...JSON.parse(raw) };
+    }
+  } catch (e) {
+    console.error("Failed to load auto scan settings", e);
+  }
+  return { ...DEFAULT_AUTO_SCAN_SETTINGS };
+}
+
+function saveAutoScanSettings(newSettings) {
+  autoScanSettings = { ...autoScanSettings, ...newSettings };
+  try {
+    localStorage.setItem(AUTO_SCAN_SETTINGS_KEY, JSON.stringify(autoScanSettings));
+  } catch (e) {
+    console.error("Failed to save auto scan settings", e);
+  }
+  syncAutoScanUI();
+  restartAutoScanTimer();
+}
+
+function getEffectiveIntervalMinutes() {
+  if (autoScanSettings.intervalMinutes === "custom" || autoScanSettings.intervalMinutes === 0) {
+    return Math.max(1, parseInt(autoScanSettings.customMinutes, 10) || 360);
+  }
+  return Math.max(1, parseInt(autoScanSettings.intervalMinutes, 10) || 360);
+}
+
+function playAutoScanChime() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.36);
+  } catch (e) {
+    // Audio context may be blocked before interaction
+  }
+}
+
+function sendDesktopNotification(title, body) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "granted") {
+    try { new Notification(title, { body }); } catch (e) {}
+  } else if (Notification.permission !== "denied") {
+    Notification.requestPermission().then((permission) => {
+      if (permission === "granted") {
+        try { new Notification(title, { body }); } catch (e) {}
+      }
+    });
+  }
+}
+
+function computeAutoScanDateRange() {
+  const mode = autoScanSettings.rangeMode || "active";
+  const now = new Date();
+  const formatYMD = (d) => d.toISOString().slice(0, 10);
+
+  if (mode === "today") {
+    const todayStr = formatYMD(now);
+    return { startDate: todayStr, endDate: todayStr };
+  } else if (mode === "3days") {
+    const startStr = formatYMD(now);
+    const end = new Date(now);
+    end.setDate(end.getDate() + 2);
+    return { startDate: startStr, endDate: formatYMD(end) };
+  } else if (mode === "7days") {
+    const startStr = formatYMD(now);
+    const end = new Date(now);
+    end.setDate(end.getDate() + 6);
+    return { startDate: startStr, endDate: formatYMD(end) };
+  } else if (mode === "month") {
+    const y = now.getUTCFullYear();
+    const m = now.getUTCMonth();
+    const firstDay = new Date(Date.UTC(y, m, 1));
+    const lastDay = new Date(Date.UTC(y, m + 1, 0));
+    return { startDate: formatYMD(firstDay), endDate: formatYMD(lastDay) };
+  }
+  return null;
+}
+
+function calculateScanGapDiff(previousRows, currentRows) {
+  const prevSet = new Set(previousRows.map((r) => `${r.date}_${r.flight}_${r.dutyId || r.sla || ''}`));
+  const newGaps = currentRows.filter((r) => !prevSet.has(`${r.date}_${r.flight}_${r.dutyId || r.sla || ''}`));
+  return {
+    newGapsCount: newGaps.length,
+    newGaps,
+  };
+}
+
+function isUserActivelyEditing() {
+  const coveragePlannerModal = document.getElementById("coveragePlannerModal");
+  const availModal = document.getElementById("availabilityModal");
+  const swapperModal = document.getElementById("shiftSwapperModal");
+  const isModalOpen = (el) => el && !el.hidden && el.getAttribute("aria-hidden") !== "true";
+  return isModalOpen(coveragePlannerModal) || isModalOpen(availModal) || isModalOpen(swapperModal);
+}
+
+function isWithinActiveHours() {
+  if (!autoScanSettings.activeHoursOnly) return true;
+  const currentUtcHour = new Date().getUTCHours();
+  const start = parseInt(autoScanSettings.startHour, 10) || 6;
+  const end = parseInt(autoScanSettings.endHour, 10) || 22;
+  if (start <= end) {
+    return currentUtcHour >= start && currentUtcHour <= end;
+  } else {
+    return currentUtcHour >= start || currentUtcHour <= end;
+  }
+}
+
+function restartAutoScanTimer() {
+  if (autoScanTimerId) {
+    clearInterval(autoScanTimerId);
+    autoScanTimerId = null;
+  }
+
+  if (!autoScanSettings.enabled) {
+    autoScanCountdownSeconds = 0;
+    syncAutoScanUI();
+    return;
+  }
+
+  const intervalMins = getEffectiveIntervalMinutes();
+  autoScanCountdownSeconds = intervalMins * 60;
+  syncAutoScanUI();
+
+  autoScanTimerId = setInterval(() => {
+    tickAutoScanTimer();
+  }, 1000);
+}
+
+function tickAutoScanTimer() {
+  if (!autoScanSettings.enabled) return;
+  if (autoScanIsRunning) return;
+
+  autoScanCountdownSeconds--;
+
+  if (autoScanCountdownSeconds <= 0) {
+    triggerAutoScanCycle(false);
+  } else {
+    updateAutoScanCountdownDisplay();
+  }
+}
+
+async function triggerAutoScanCycle(isManualNow = false) {
+  if (autoScanIsRunning) return;
+
+  if (!isManualNow) {
+    if (!autoScanSettings.enabled) return;
+
+    if (!connectedEmail) {
+      updateAutoScanStatusText("Paused: Connect to AVBIS first");
+      return;
+    }
+
+    if (isBusy) {
+      autoScanCountdownSeconds = 30;
+      updateAutoScanStatusText("Deferred: Manual scan in progress (retrying in 30s)");
+      return;
+    }
+
+    if (autoScanSettings.pauseWhileEditing && isUserActivelyEditing()) {
+      autoScanCountdownSeconds = 60;
+      updateAutoScanStatusText("Paused: Planning session active (retrying in 60s)");
+      return;
+    }
+
+    if (!isWithinActiveHours()) {
+      autoScanCountdownSeconds = 300;
+      updateAutoScanStatusText(`Paused: Outside active UTC hours (${autoScanSettings.startHour}:00-${autoScanSettings.endHour}:00 UTC)`);
+      return;
+    }
+  }
+
+  autoScanIsRunning = true;
+  syncAutoScanUI();
+
+  const previousRows = [...latestRows];
+  const dateRange = computeAutoScanDateRange();
+
+  try {
+    updateAutoScanStatusText("Scanning AVBIS...");
+    await runScan(autoScanSettings.bypassCache, {
+      isAutoScan: true,
+      dateRangeOverride: dateRange,
+    });
+
+    const diff = calculateScanGapDiff(previousRows, latestRows);
+    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    lastAutoScanResult = {
+      timestamp: new Date().toISOString(),
+      timeFormatted: nowStr,
+      status: "success",
+      gapsCount: latestRows.length,
+      newGapsCount: diff.newGapsCount,
+    };
+
+    if (diff.newGapsCount > 0 && autoScanSettings.notifyNewGaps) {
+      const msg = `${diff.newGapsCount} new empty slot gap(s) detected during background auto-scan!`;
+      setMessage(msg, "warn");
+      sendDesktopNotification("GSRM Empty Slots Alert", msg);
+      if (autoScanSettings.playSound) playAutoScanChime();
+    } else if (typeof showToast === "function") {
+      showToast(`Auto-Scan complete: ${latestRows.length} gap(s) monitored.`, "info");
+    }
+
+  } catch (err) {
+    console.error("Auto-scan error:", err);
+    lastAutoScanResult = {
+      timestamp: new Date().toISOString(),
+      timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      status: "error",
+      error: err.message,
+    };
+  } finally {
+    autoScanIsRunning = false;
+    const intervalMins = getEffectiveIntervalMinutes();
+    autoScanCountdownSeconds = intervalMins * 60;
+    syncAutoScanUI();
+  }
+}
+
+function formatCountdownTime(seconds) {
+  if (seconds <= 0) return "0s";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) {
+    return `${h}h ${m}m ${s < 10 ? '0' : ''}${s}s`;
+  }
+  if (m > 0) {
+    return `${m}m ${s < 10 ? '0' : ''}${s}s`;
+  }
+  return `${s}s`;
+}
+
+function updateAutoScanCountdownDisplay() {
+  const badgeText = document.getElementById("autoScanBadgeText");
+  const nextCountdownText = document.getElementById("autoScanNextCountdown");
+
+  if (!autoScanSettings.enabled) {
+    if (badgeText) badgeText.textContent = "Auto-Scan: OFF";
+    if (nextCountdownText) nextCountdownText.textContent = "Timer stopped";
+    return;
+  }
+
+  if (autoScanIsRunning) {
+    if (badgeText) badgeText.textContent = "Auto-Scan: Scanning...";
+    if (nextCountdownText) nextCountdownText.textContent = "Scanning in progress...";
+    return;
+  }
+
+  const countdownStr = formatCountdownTime(autoScanCountdownSeconds);
+  if (badgeText) badgeText.textContent = `Auto-Scan: ${countdownStr}`;
+  if (nextCountdownText) nextCountdownText.textContent = `Next scan in ${countdownStr}`;
+}
+
+function updateAutoScanStatusText(msg) {
+  const nextCountdownText = document.getElementById("autoScanNextCountdown");
+  if (nextCountdownText) nextCountdownText.textContent = msg;
+}
+
+function syncAutoScanUI() {
+  const toggleBtn = document.getElementById("autoScanToggleBtn");
+  const headerDot = document.getElementById("autoScanHeaderDot");
+  const badgeText = document.getElementById("autoScanBadgeText");
+  const setupDot = document.getElementById("setupAutoScanDot");
+  const setupHint = document.getElementById("setupAutoScanHint");
+  const mainToggle = document.getElementById("autoScanMainToggle");
+  const stateBadge = document.getElementById("autoScanStateBadge");
+  const lastRunText = document.getElementById("autoScanLastRunText");
+
+  const isEnabled = Boolean(autoScanSettings.enabled);
+  const isPaused = isEnabled && (!connectedEmail || (autoScanSettings.pauseWhileEditing && isUserActivelyEditing()));
+
+  if (toggleBtn) {
+    toggleBtn.classList.toggle("auto-scan-active", isEnabled && !isPaused && !autoScanIsRunning);
+    toggleBtn.classList.toggle("auto-scan-paused", isEnabled && isPaused);
+    toggleBtn.classList.toggle("auto-scan-off", !isEnabled);
+  }
+
+  if (headerDot) {
+    headerDot.classList.toggle("active", isEnabled && !isPaused);
+    headerDot.classList.toggle("paused", isEnabled && isPaused);
+  }
+
+  if (setupDot) {
+    setupDot.classList.toggle("active", isEnabled && !isPaused);
+    setupDot.classList.toggle("paused", isEnabled && isPaused);
+  }
+
+  if (setupHint) {
+    const mins = getEffectiveIntervalMinutes();
+    const intervalStr = mins >= 60 ? (mins % 60 === 0 ? `${mins / 60}h` : `${(mins / 60).toFixed(1)}h`) : `${mins} min`;
+    if (!isEnabled) {
+      setupHint.textContent = "Auto-Scan is currently OFF. Click to configure background refresh.";
+    } else if (isPaused) {
+      setupHint.textContent = `Auto-Scan enabled (${intervalStr}) · Currently PAUSED`;
+    } else {
+      setupHint.textContent = `Auto-Scan ACTIVE · Refreshing every ${intervalStr}`;
+    }
+  }
+
+  if (mainToggle) {
+    mainToggle.checked = isEnabled;
+  }
+
+  if (stateBadge) {
+    if (!isEnabled) {
+      stateBadge.className = "auto-scan-state-pill pill-off";
+      stateBadge.textContent = "Inactive";
+    } else if (isPaused) {
+      stateBadge.className = "auto-scan-state-pill pill-paused";
+      stateBadge.textContent = "Paused";
+    } else {
+      stateBadge.className = "auto-scan-state-pill pill-active";
+      stateBadge.textContent = "Active";
+    }
+  }
+
+  if (lastRunText) {
+    if (lastAutoScanResult) {
+      const statusLabel = lastAutoScanResult.status === "success" ? `Success (${lastAutoScanResult.gapsCount} gaps)` : `Failed`;
+      lastRunText.textContent = `Last run at ${lastAutoScanResult.timeFormatted} · ${statusLabel}`;
+    } else {
+      lastRunText.textContent = "No auto-scan executed yet";
+    }
+  }
+
+  updateAutoScanCountdownDisplay();
+}
+
+function populateAutoScanModalFields() {
+  const mainToggle = document.getElementById("autoScanMainToggle");
+  const intervalSelect = document.getElementById("autoScanIntervalSelect");
+  const customWrap = document.getElementById("autoScanCustomIntervalWrap");
+  const customInput = document.getElementById("autoScanCustomMinutes");
+  const rangeSelect = document.getElementById("autoScanRangeModeSelect");
+  const bypassToggle = document.getElementById("autoScanBypassCacheToggle");
+  const notifyToggle = document.getElementById("autoScanNotifyNewGapsToggle");
+  const soundToggle = document.getElementById("autoScanPlaySoundToggle");
+  const pauseEditingToggle = document.getElementById("autoScanPauseEditingToggle");
+  const activeHoursToggle = document.getElementById("autoScanActiveHoursToggle");
+  const hoursRow = document.getElementById("autoScanHoursRow");
+  const startHourInput = document.getElementById("autoScanStartHour");
+  const endHourInput = document.getElementById("autoScanEndHour");
+
+  if (mainToggle) mainToggle.checked = autoScanSettings.enabled;
+  if (intervalSelect) intervalSelect.value = String(autoScanSettings.intervalMinutes);
+  if (customInput) customInput.value = String(autoScanSettings.customMinutes || 20);
+  if (customWrap) customWrap.hidden = intervalSelect.value !== "custom";
+  if (rangeSelect) rangeSelect.value = autoScanSettings.rangeMode || "active";
+  if (bypassToggle) bypassToggle.checked = autoScanSettings.bypassCache;
+  if (notifyToggle) notifyToggle.checked = autoScanSettings.notifyNewGaps;
+  if (soundToggle) soundToggle.checked = autoScanSettings.playSound;
+  if (pauseEditingToggle) pauseEditingToggle.checked = autoScanSettings.pauseWhileEditing;
+  if (activeHoursToggle) activeHoursToggle.checked = autoScanSettings.activeHoursOnly;
+  if (hoursRow) hoursRow.hidden = !autoScanSettings.activeHoursOnly;
+  if (startHourInput) startHourInput.value = String(autoScanSettings.startHour || 6);
+  if (endHourInput) endHourInput.value = String(autoScanSettings.endHour || 22);
+
+  syncAutoScanUI();
+}
+
+function openAutoScanModal() {
+  const modal = document.getElementById("autoScanModal");
+  if (!modal) return;
+  populateAutoScanModalFields();
+  modal.hidden = false;
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closeAutoScanModal() {
+  const modal = document.getElementById("autoScanModal");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function readAutoScanModalFields() {
+  const mainToggle = document.getElementById("autoScanMainToggle");
+  const intervalSelect = document.getElementById("autoScanIntervalSelect");
+  const customInput = document.getElementById("autoScanCustomMinutes");
+  const rangeSelect = document.getElementById("autoScanRangeModeSelect");
+  const bypassToggle = document.getElementById("autoScanBypassCacheToggle");
+  const notifyToggle = document.getElementById("autoScanNotifyNewGapsToggle");
+  const soundToggle = document.getElementById("autoScanPlaySoundToggle");
+  const pauseEditingToggle = document.getElementById("autoScanPauseEditingToggle");
+  const activeHoursToggle = document.getElementById("autoScanActiveHoursToggle");
+  const startHourInput = document.getElementById("autoScanStartHour");
+  const endHourInput = document.getElementById("autoScanEndHour");
+
+  return {
+    enabled: Boolean(mainToggle?.checked),
+    intervalMinutes: intervalSelect?.value === "custom" ? "custom" : parseInt(intervalSelect?.value, 10) || 15,
+    customMinutes: Math.max(1, parseInt(customInput?.value, 10) || 20),
+    rangeMode: rangeSelect?.value || "active",
+    bypassCache: Boolean(bypassToggle?.checked),
+    notifyNewGaps: Boolean(notifyToggle?.checked),
+    playSound: Boolean(soundToggle?.checked),
+    pauseWhileEditing: Boolean(pauseEditingToggle?.checked),
+    activeHoursOnly: Boolean(activeHoursToggle?.checked),
+    startHour: Math.min(23, Math.max(0, parseInt(startHourInput?.value, 10) || 6)),
+    endHour: Math.min(23, Math.max(0, parseInt(endHourInput?.value, 10) || 22)),
+  };
+}
+
+function initAutoScanner() {
+  document.getElementById("autoScanToggleBtn")?.addEventListener("click", () => {
+    saveAutoScanSettings({ enabled: !autoScanSettings.enabled });
+  });
+
+  document.getElementById("autoScanSettingsBtn")?.addEventListener("click", openAutoScanModal);
+  document.getElementById("setupAutoScanConfigBtn")?.addEventListener("click", openAutoScanModal);
+
+  document.getElementById("autoScanModalCloseBtn")?.addEventListener("click", closeAutoScanModal);
+  document.getElementById("autoScanModalCancelBtn")?.addEventListener("click", closeAutoScanModal);
+  
+  const modalOverlay = document.getElementById("autoScanModal");
+  if (modalOverlay) {
+    modalOverlay.addEventListener("click", (e) => {
+      if (e.target === modalOverlay) closeAutoScanModal();
+    });
+  }
+
+  document.getElementById("autoScanIntervalSelect")?.addEventListener("change", (e) => {
+    const customWrap = document.getElementById("autoScanCustomIntervalWrap");
+    if (customWrap) customWrap.hidden = e.target.value !== "custom";
+  });
+
+  document.getElementById("autoScanActiveHoursToggle")?.addEventListener("change", (e) => {
+    const hoursRow = document.getElementById("autoScanHoursRow");
+    if (hoursRow) hoursRow.hidden = !e.target.checked;
+  });
+
+  document.getElementById("autoScanModalSaveBtn")?.addEventListener("click", () => {
+    const newSettings = readAutoScanModalFields();
+    saveAutoScanSettings(newSettings);
+    closeAutoScanModal();
+  });
+
+  document.getElementById("autoScanRunNowBtn")?.addEventListener("click", () => {
+    closeAutoScanModal();
+    triggerAutoScanCycle(true);
+  });
+
+  syncAutoScanUI();
+  if (autoScanSettings.enabled) {
+    restartAutoScanTimer();
+  }
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
     attachAddShiftModalListeners();
     attachRosterDragAndDropListeners();
     attachShiftSwapperModalListeners();
+    initAutoScanner();
   });
 } else {
   attachAddShiftModalListeners();
   attachRosterDragAndDropListeners();
   attachShiftSwapperModalListeners();
+  initAutoScanner();
 }
 
 

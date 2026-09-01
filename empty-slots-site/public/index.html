@@ -22,6 +22,18 @@
             </div>
           </div>
           <div class="title-actions">
+            <div id="autoScanHeaderWidget" class="auto-scan-header-widget">
+              <button type="button" id="autoScanToggleBtn" class="auto-scan-toggle-btn auto-scan-off" title="Toggle background auto-scanning on or off">
+                <span id="autoScanHeaderDot" class="pulse-dot"></span>
+                <span id="autoScanBadgeText">Auto-Scan: OFF</span>
+              </button>
+              <button type="button" id="autoScanSettingsBtn" class="auto-scan-icon-btn" title="Configure auto-scan settings" aria-label="Auto-Scan Settings">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+              </button>
+            </div>
             <button id="coveragePlannerBtn" class="secondary-btn" type="button" title="Open the roster coverage planner">Coverage planner</button>
             <button id="setupToggleBtn" class="secondary-btn" type="button" aria-expanded="false" aria-controls="scanForm">Edit setup</button>
             <label class="force-refresh-label" title="Bypass server and local cache and fetch fresh data directly from AVBIS" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;color:var(--ink-muted,#475569);">
@@ -109,6 +121,17 @@
                 <label><input type="checkbox" name="days" value="6" checked><span>Sat</span></label>
                 <label><input type="checkbox" name="days" value="0" checked><span>Sun</span></label>
               </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="form-section-card auto-scan-setup-card">
+            <legend class="form-section-title">Background Auto-Scan</legend>
+            <div class="auto-scan-setup-body">
+              <div class="auto-scan-setup-info">
+                <span id="setupAutoScanDot" class="pulse-dot"></span>
+                <span id="setupAutoScanHint" class="auto-scan-setup-hint">Auto-Scan is currently OFF. Click to configure background refresh.</span>
+              </div>
+              <button type="button" id="setupAutoScanConfigBtn" class="secondary-btn btn-sm">Configure Auto-Scan</button>
             </div>
           </fieldset>
 
@@ -1145,6 +1168,155 @@
         </div>
       </div>
     </main>
+
+    <!-- Auto-Scan Configuration Modal -->
+    <div id="autoScanModal" class="modal-overlay" hidden aria-hidden="true" role="dialog" aria-labelledby="autoScanModalTitle">
+      <div class="modal-card auto-scan-modal-card">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <h2 id="autoScanModalTitle">Automatic Roster Scanning</h2>
+            <p class="modal-subtitle">Automatically monitor AVBIS for newly posted SOD empty slots at regular intervals</p>
+          </div>
+          <button type="button" id="autoScanModalCloseBtn" class="close-btn" aria-label="Close dialog">×</button>
+        </div>
+        <div class="modal-body auto-scan-modal-body">
+          <div class="auto-scan-status-banner">
+            <div class="banner-left">
+              <div>
+                <strong>Auto-Scan Engine</strong>
+                <div id="autoScanNextCountdown" class="banner-subtext">Timer stopped</div>
+              </div>
+            </div>
+            <div class="banner-right">
+              <span id="autoScanStateBadge" class="auto-scan-state-pill pill-off">Inactive</span>
+            </div>
+          </div>
+
+          <div class="auto-scan-config-grid">
+            <div class="config-row main-enable-row">
+              <div class="config-label">
+                <strong>Enable Background Auto-Scanning</strong>
+                <span>Periodically fetches live data from AVBIS in the background</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoScanMainToggle">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="config-row">
+              <div class="config-label">
+                <strong>Scan Interval</strong>
+                <span>How frequently the background scan runs</span>
+              </div>
+              <div class="config-input-wrap">
+                <select id="autoScanIntervalSelect" class="form-select">
+                  <option value="60">Every 1 hour</option>
+                  <option value="120">Every 2 hours</option>
+                  <option value="360" selected>Every 6 hours</option>
+                  <option value="720">Every 12 hours</option>
+                  <option value="1440">Every 24 hours (1 day)</option>
+                  <option value="custom">Custom interval...</option>
+                </select>
+                <div id="autoScanCustomIntervalWrap" class="custom-interval-input" hidden>
+                  <input type="number" id="autoScanCustomMinutes" min="1" max="1440" value="360" placeholder="Min">
+                  <span>minutes</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="config-row">
+              <div class="config-label">
+                <strong>Target Date Range</strong>
+                <span>Scope of dates to monitor during background runs</span>
+              </div>
+              <select id="autoScanRangeModeSelect" class="form-select">
+                <option value="active" selected>Selected Date Range (from Main Form)</option>
+                <option value="today">Today Only</option>
+                <option value="3days">Next 3 Days</option>
+                <option value="7days">Next 7 Days</option>
+                <option value="month">Current UTC Month</option>
+              </select>
+            </div>
+
+            <div class="config-row">
+              <div class="config-label">
+                <strong>Cache Strategy</strong>
+                <span>Bypass local cache to query fresh data directly from AVBIS</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoScanBypassCacheToggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="config-section-title">Notifications & Alerts</div>
+
+            <div class="config-row">
+              <div class="config-label">
+                <strong>Desktop Notifications</strong>
+                <span>Display browser notification when new empty slots are found</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoScanNotifyNewGapsToggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="config-row">
+              <div class="config-label">
+                <strong>Sound Alert</strong>
+                <span>Play a subtle chime audio cue when new gaps open</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoScanPlaySoundToggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="config-section-title">Smart Safeguards</div>
+
+            <div class="config-row">
+              <div class="config-label">
+                <strong>Pause While Planning</strong>
+                <span>Automatically pause background scans while editing coverage or shifts</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoScanPauseEditingToggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="config-row">
+              <div class="config-label">
+                <strong>Active Operating Hours Only</strong>
+                <span>Limit background scanning to specified UTC hours</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="autoScanActiveHoursToggle">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div id="autoScanHoursRow" class="config-subrow" hidden>
+              <span>Active from</span>
+              <input type="number" id="autoScanStartHour" min="0" max="23" value="6" class="hour-input">
+              <span>:00 to</span>
+              <input type="number" id="autoScanEndHour" min="0" max="23" value="22" class="hour-input">
+              <span>:00 UTC</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer auto-scan-modal-footer">
+          <span id="autoScanLastRunText" class="auto-scan-last-run">No auto-scan executed yet</span>
+          <div class="modal-footer-actions">
+            <button type="button" id="autoScanRunNowBtn" class="secondary-btn">Scan Now</button>
+            <button type="button" id="autoScanModalCancelBtn" class="secondary-btn">Cancel</button>
+            <button type="button" id="autoScanModalSaveBtn" class="primary-btn">Save & Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>

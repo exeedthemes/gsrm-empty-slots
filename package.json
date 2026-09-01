@@ -7,7 +7,12 @@
     "check": "node --check empty-slots-site/server.js && node --check empty-slots-site/public/app.js && node --check empty-slots-site/public/staff-utils.js && node --check empty-slots-site/public/operations-utils.js && node --check empty-slots-site/public/holiday-utils.js && node --test empty-slots-site/server.test.js empty-slots-site/staff-utils.test.js empty-slots-site/operations-utils.test.js empty-slots-site/holiday-utils.test.js",
     "share": "npx localtunnel --port 4173",
     "share:ngrok": "npx ngrok http 4173",
-    "build:exe": "npx -y @yao-pkg/pkg@latest empty-slots-site/server.js --target node22-win-x64 --output GSRM-Empty-Slots-Windows.exe --public"
+    "build:exe": "npx -y @yao-pkg/pkg@latest empty-slots-site/server.js --config package.json --target node22-win-x64 --output GSRM-Empty-Slots-Windows-x64.exe --public && npx -y @yao-pkg/pkg@latest empty-slots-site/server.js --config package.json --target node22-win-arm64 --output GSRM-Empty-Slots-Windows-arm64.exe --public && cp GSRM-Empty-Slots-Windows-x64.exe GSRM-Empty-Slots-Windows.exe"
+  },
+  "pkg": {
+    "assets": [
+      "empty-slots-site/public/**/*"
+    ]
   },
   "dependencies": {
     "playwright": "^1.52.0"

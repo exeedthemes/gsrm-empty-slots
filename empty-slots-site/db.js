@@ -48,7 +48,9 @@ function initDatabase(dbPath) {
   return db;
 }
 
-const DEFAULT_DB_PATH = process.env.GSRM_DB_PATH || path.join(process.cwd(), "data", "app.db");
+const userHome = process.env.USERPROFILE || process.env.HOME || process.cwd();
+const defaultDir = path.join(userHome, ".gsrm-data");
+const DEFAULT_DB_PATH = process.env.GSRM_DB_PATH || path.join(defaultDir, "app.db");
 let activeDb = null;
 
 function getDb(customPath) {
