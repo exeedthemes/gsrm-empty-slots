@@ -2893,9 +2893,9 @@ body.roster-mode-fullscreen { overflow: hidden; }
   background: #fff;
 }
 .roster-layout.fullscreen .roster-airline-board {
-  flex: 1 1 0;
+  flex: 1 1 0%;
   width: 100%;
-  height: 0;
+  height: 100%;
   min-height: 0;
   max-height: none;
   overflow-x: hidden;
@@ -3164,7 +3164,7 @@ body.roster-mode-fullscreen { overflow: hidden; }
   overflow-y: auto;
   flex: 1;
   max-height: calc(100vh - 200px);
-  min-height: 480px;
+  min-height: 200px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3250,7 +3250,7 @@ body.roster-mode-fullscreen { overflow: hidden; }
   overflow-y: auto;
   flex: 1;
   max-height: calc(100vh - 200px);
-  min-height: 480px;
+  min-height: 200px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -5158,7 +5158,7 @@ body.results-mode-fullscreen { overflow: hidden; }
 
 .table-panel.results-fullscreen .message { flex: none; }
 .table-panel.results-fullscreen .table-filter-bar { flex: none; }
-.table-panel.results-fullscreen .table-wrap { flex: 1; max-height: none; }
+.table-panel.results-fullscreen .table-wrap { flex: 1 1 0%; min-height: 0; height: 100%; max-height: none; overflow: auto; }
 
 @media (max-width: 900px) {
   .results-filter-heading {
@@ -6073,6 +6073,9 @@ table.airline-roster-table td {
 .pdf-export-modal-card {
   max-width: 760px;
   width: 92%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
   padding: 0;
   border-radius: 16px;
   overflow: hidden;
@@ -6081,6 +6084,7 @@ table.airline-roster-table td {
 }
 
 .pdf-export-header {
+  flex-shrink: 0;
   padding: 20px 24px 16px;
   background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
   border-bottom: 1px solid #e2e8f0;
@@ -6101,6 +6105,11 @@ table.airline-roster-table td {
 
 .pdf-export-body {
   padding: 20px 24px 24px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .pdf-export-controls-row {
@@ -6763,8 +6772,27 @@ table.airline-roster-table td {
   background: #f8fafc;
   border: 1px solid var(--line, #e2e8f0);
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 10px 14px;
   margin-bottom: 16px;
+  transition: all 0.2s ease;
+}
+
+.pdf-customizer-panel.collapsed {
+  margin-bottom: 12px;
+  padding: 8px 14px;
+}
+
+.pdf-customizer-toggle-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font-family: inherit;
 }
 
 .pdf-customizer-title {
@@ -6774,11 +6802,60 @@ table.airline-roster-table td {
   font-size: 12px;
   font-weight: 700;
   color: var(--ink, #0f172a);
+  margin-bottom: 0;
+}
+
+.pdf-customizer-panel:not(.collapsed) .pdf-customizer-title {
   margin-bottom: 10px;
 }
 
 .pdf-customizer-title svg {
   color: var(--accent, #0d9488);
+}
+
+.customizer-collapse-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  padding: 3px 8px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.pdf-customizer-toggle-btn:hover .customizer-collapse-badge {
+  background: #f0fdfa;
+  border-color: var(--accent, #0d9488);
+  color: var(--accent, #0d9488);
+}
+
+.collapse-chevron {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pdf-customizer-panel.collapsed .pdf-customizer-grid {
+  display: none;
+}
+
+.pdf-customizer-panel.collapsed .collapse-chevron {
+  transform: rotate(180deg);
+}
+
+/* Date & Flight Grouping Styles in Gaps Table */
+tr.date-group-first {
+  border-top: 2.5px solid #94a3b8 !important;
+}
+
+tr.flight-group-first {
+  border-top: 1.5px solid #cbd5e1 !important;
+}
+
+tr.flight-group-member {
+  background-color: rgba(248, 250, 252, 0.65);
 }
 
 .pdf-customizer-grid {

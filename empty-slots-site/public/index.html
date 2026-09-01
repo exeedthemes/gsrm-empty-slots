@@ -900,8 +900,8 @@
                 </div>
               </div>
 
-              <div class="pdf-layout-selector-bar">
-                <div class="pdf-layout-selector-group">
+              <div class="pdf-layout-selector-bar" id="pdfLayoutSelectorBar">
+                <div class="pdf-layout-selector-group" id="pdfLayoutSelectorGroup">
                   <span class="pdf-layout-selector-label">PDF Layout:</span>
                   <div class="pdf-layout-toggle-group" role="radiogroup" aria-label="PDF Layout Style">
                     <button type="button" class="pdf-layout-option-btn active" id="pdfLayoutTableBtn" data-layout="table">
@@ -915,7 +915,7 @@
                   </div>
                 </div>
 
-              <div class="pdf-staff-selector-group">
+                <div class="pdf-staff-selector-group" id="pdfStaffSelectorGroup">
                   <span class="pdf-layout-selector-label">Staff Scope:</span>
                   <div class="pdf-staff-select-wrapper">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -928,16 +928,22 @@
             </div>
 
             <!-- Enhanced Customizer Section -->
-            <div class="pdf-customizer-panel">
-              <div class="pdf-customizer-title">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="3"></circle>
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                </svg>
-                <span>Export Content & Layout Customizer</span>
-              </div>
-              <div class="pdf-customizer-grid">
-                <div class="pdf-customizer-col-group">
+            <div class="pdf-customizer-panel" id="pdfCustomizerPanel">
+              <button type="button" class="pdf-customizer-toggle-btn" id="pdfCustomizerToggleBtn" aria-expanded="true" aria-controls="pdfCustomizerGrid">
+                <div class="pdf-customizer-title">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                  </svg>
+                  <span>Export Content & Layout Customizer</span>
+                </div>
+                <span class="customizer-collapse-badge" id="pdfCustomizerCollapseBadge">
+                  <span class="collapse-text">Hide Settings</span>
+                  <svg class="collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                </span>
+              </button>
+              <div class="pdf-customizer-grid" id="pdfCustomizerGrid">
+                <div class="pdf-customizer-col-group" id="pdfCustomizerColGroup">
                   <span class="customizer-subheading">Include Columns & Details</span>
                   <div class="customizer-checkboxes">
                     <label class="customizer-chip-check"><input type="checkbox" id="pdfColRoute" checked><span>Route & Direction</span></label>
@@ -947,7 +953,7 @@
                     <label class="customizer-chip-check"><input type="checkbox" id="pdfColHolidays" checked><span>Holiday Badges</span></label>
                   </div>
                 </div>
-                <div class="pdf-customizer-opt-group">
+                <div class="pdf-customizer-opt-group" id="pdfCustomizerOptGroup">
                   <span class="customizer-subheading">Page Layout & Filter</span>
                   <div class="customizer-inputs-row">
                     <label class="customizer-field">
@@ -964,7 +970,7 @@
                         <option value="compact">Compact (More Rows/Page)</option>
                       </select>
                     </label>
-                    <label class="customizer-field">
+                    <label class="customizer-field" id="pdfAirlineFilterField">
                       <span>Airline Filter</span>
                       <select id="pdfAirlineFilterSelect" class="bulk-select">
                         <option value="ALL" selected>All Airlines</option>
