@@ -152,6 +152,39 @@ test("scan comparison reports opened, resolved, and changed gaps", () => {
   assert.deepEqual(result.changed.map((gap) => gap.key), ["b", "c"]);
 });
 
+test("scan comparison restricts analysis to overlapping dates when snapshots have different date ranges", () => {
+  const previous = {
+    rows: [
+      { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "10:00", required: 1, assigned: 0, missing: 1 },
+      { date: "19-Aug-2026", flight: "LH200", sla: "GATE", start_utc: "10:00", release_utc: "12:00", required: 1, assigned: 0, missing: 1 },
+    ],
+    gaps: [
+      { key: "18-Aug-2026|LH100|GATE", date: "18-Aug-2026", flight: "LH100", sla: "GATE", required: 1, assigned: 0, missing: 1 },
+      { key: "19-Aug-2026|LH200|GATE", date: "19-Aug-2026", flight: "LH200", sla: "GATE", required: 1, assigned: 0, missing: 1 },
+    ],
+  };
+
+  const current = {
+    rows: [
+      // 18-Aug gap is resolved in current scan
+      { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "10:00", required: 1, assigned: 1, missing: 0 },
+      { date: "19-Aug-2026", flight: "LH200", sla: "GATE", start_utc: "10:00", release_utc: "12:00", required: 1, assigned: 0, missing: 1 },
+      // 20-Aug is extra in current scan (should be ignored since previous scan did not scan 20-Aug)
+      { date: "20-Aug-2026", flight: "LH300", sla: "GATE", start_utc: "14:00", release_utc: "16:00", required: 1, assigned: 0, missing: 1 },
+    ],
+    gaps: [
+      { key: "19-Aug-2026|LH200|GATE", date: "19-Aug-2026", flight: "LH200", sla: "GATE", required: 1, assigned: 0, missing: 1 },
+      { key: "20-Aug-2026|LH300|GATE", date: "20-Aug-2026", flight: "LH300", sla: "GATE", required: 1, assigned: 0, missing: 1 },
+    ],
+  };
+
+  const result = OperationsUtils.compareSnapshots(current, previous);
+
+  assert.deepEqual(result.overlappingDates.sort(), ["18-Aug-2026", "19-Aug-2026"]);
+  assert.equal(result.opened.length, 0); // 20-Aug gap is NOT flagged as opened
+  assert.deepEqual(result.resolved.map((g) => g.key), ["18-Aug-2026|LH100|GATE"]);
+});
+
 test("duty-hours overview splits weekend and public-holiday minutes in Berlin time", () => {
   const rows = [
     { ...baseDuty, flight_id: "sun", date: "16-Aug-2026", start_utc: "08:00", release_utc: "10:30" },

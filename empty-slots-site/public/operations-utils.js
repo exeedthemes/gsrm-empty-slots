@@ -826,15 +826,38 @@
   }
 
   function compareSnapshots(current, previous) {
+    const getDates = (snapshot) => new Set(
+      [...(snapshot?.rows || []), ...(snapshot?.gaps || [])]
+        .map((r) => r.date)
+        .filter(Boolean)
+    );
+
+    const currentDates = getDates(current);
+    const previousDates = getDates(previous);
+
+    let overlappingDates = null;
+    if (currentDates.size > 0 && previousDates.size > 0) {
+      const intersection = new Set([...currentDates].filter((d) => previousDates.has(d)));
+      if (intersection.size > 0) {
+        overlappingDates = intersection;
+      }
+    }
+
     const enrichGaps = (snapshot) => {
       const rows = new Map((snapshot?.rows || []).map((row) => [rowKey(row), row]));
-      return new Map((snapshot?.gaps || []).map((gap) => {
+      let gaps = snapshot?.gaps || [];
+      if (overlappingDates && overlappingDates.size > 0) {
+        gaps = gaps.filter((gap) => !gap.date || overlappingDates.has(gap.date));
+      }
+      return new Map(gaps.map((gap) => {
         const source = rows.get(gap.key);
         return [gap.key, { ...gap, staff: gap.staff || source?.staff || [] }];
       }));
     };
+
     const currentMap = enrichGaps(current);
     const previousMap = enrichGaps(previous);
+
     const opened = [...currentMap.values()].filter((gap) => !previousMap.has(gap.key));
     const resolved = [...previousMap.values()].filter((gap) => !currentMap.has(gap.key));
     const staffKey = (gap) => [...new Set(gap?.staff || [])].map(String).sort().join("|");
@@ -844,7 +867,7 @@
       || gap.assigned !== previousMap.get(gap.key).assigned
       || staffKey(gap) !== staffKey(previousMap.get(gap.key))
     ));
-    return { opened, resolved, changed };
+    return { opened, resolved, changed, overlappingDates: overlappingDates ? [...overlappingDates] : null };
   }
 
   function comparePersonRosters(current, previous, options = {}) {
@@ -870,13 +893,38 @@
       return String(dateStr);
     };
 
-    const rangesOverlap = current?.startDate && previous?.endDate && current.startDate <= previous.endDate && previous.startDate <= current.endDate;
-    const matchByDayOfWeek = options.matchByDayOfWeek !== undefined ? options.matchByDayOfWeek : !rangesOverlap;
+    const getDates = (snapshot) => new Set(
+      (snapshot?.rows || []).map((r) => r.date).filter(Boolean)
+    );
+
+    const currentDates = getDates(current);
+    const previousDates = getDates(previous);
+
+    let overlappingDates = null;
+    if (currentDates.size > 0 && previousDates.size > 0) {
+      const intersection = new Set([...currentDates].filter((d) => previousDates.has(d)));
+      if (intersection.size > 0) {
+        overlappingDates = intersection;
+      }
+    }
+
+    const hasExactOverlap = overlappingDates && overlappingDates.size > 0;
+    const matchByDayOfWeek = options.matchByDayOfWeek !== undefined
+      ? options.matchByDayOfWeek
+      : !hasExactOverlap;
+
+    const filterRowsByDate = (rows) => {
+      if (hasExactOverlap && !matchByDayOfWeek) {
+        return (rows || []).filter((r) => !r.date || overlappingDates.has(r.date));
+      }
+      return rows || [];
+    };
 
     const buildDutyMap = (snapshot) => {
       const map = new Map();
       const counts = new Map();
-      for (const r of (snapshot?.rows || [])) {
+      const rows = filterRowsByDate(snapshot?.rows);
+      for (const r of rows) {
         const timeSegment = matchByDayOfWeek ? getDayKey(r.date) : r.date;
         const groupKey = [timeSegment, r.flight_id || r.flight, r.sla].map((v) => String(v || "")).join("|");
         const idx = (counts.get(groupKey) || 0);

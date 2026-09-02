@@ -347,10 +347,6 @@
                       <input id="resultsLocalTimeToggle" type="checkbox">
                       <span>Local time</span>
                     </label>
-                    <label class="toggle-label results-overlap-toggle">
-                      <input id="resultsOverlapFilterToggle" type="checkbox">
-                      <span>Overlapping shifts only</span>
-                    </label>
                   </div>
                 </div>
               </div>
@@ -483,14 +479,6 @@
               </div>
             </div>
             <div id="rosterFields" class="roster-fields" hidden>
-              <!-- Quick SLA Selection Chips for Roster -->
-              <div class="sla-chip-filter-bar" id="rosterSlaChipFilterBar" style="margin-bottom: 12px;">
-                <span class="chip-bar-label">SLA Filter:</span>
-                <div id="rosterSlaChipsContainer" class="sla-chips-container">
-                  <button type="button" class="sla-chip active" data-sla="all">All SLAs</button>
-                </div>
-              </div>
-
               <section class="roster-filter-group roster-period-group" aria-labelledby="rosterPeriodGroupTitle">
                 <strong id="rosterPeriodGroupTitle">Period</strong>
                 <div class="roster-filter-group-controls">
@@ -583,6 +571,7 @@
                 <div class="planner-field-heading">
                   <span>Step 1 · Eligible staff <mark id="plannerStaffBadge" class="step-count-badge">0 selected</mark></span>
                   <div class="step-heading-actions">
+                    <button id="autoPlannerAutoDetectContracts" type="button" class="secondary-btn" title="Automatically classify staff as Full-Time (≥100h/mo) or Part-Time based on duty hours">Auto FT/PT</button>
                     <button id="autoPlannerSelectFree" type="button">Use free staff</button>
                     <button id="autoPlannerSelectAll" type="button">Select all</button>
                     <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep1Card" aria-expanded="false" title="Toggle Step 1 section">Expand</button>
@@ -657,35 +646,40 @@
               <span>Person Roster Audit</span>
               <span id="rosterAuditBadge" class="audit-count-badge">Audit</span>
             </button>
-            <p id="rosterViewHint">People by day with local roster edits clearly marked.</p>
-            <div id="rosterBoardActions" class="roster-board-actions" hidden>
-              <div class="flight-schedule-filters">
-                <label><span>Airline</span>
-                  <select id="flightScheduleAirlineFilter" aria-label="Filter flight schedule by airline">
-                    <option value="all">All airlines</option>
-                  </select>
-                </label>
-                <label><span>Status</span>
-                  <select id="flightScheduleCoverageFilter" aria-label="Filter flight schedule by coverage">
-                    <option value="all">All flights</option>
-                    <option value="gaps">Gaps only</option>
-                    <option value="covered">Covered only</option>
-                    <option value="overlaps">Overlapping shifts</option>
-                  </select>
-                </label>
-                <label><span>Direction</span>
-                  <select id="flightScheduleDirectionFilter" aria-label="Filter flight schedule by direction">
-                    <option value="all">All directions</option>
-                    <option value="arr">Arrivals (ARR)</option>
-                    <option value="dep">Departures (DEP)</option>
-                  </select>
-                </label>
-                <input id="flightScheduleSearch" type="search" placeholder="Filter flights, staff, route..." aria-label="Search flight schedule">
+            <div class="sla-chip-filter-bar roster-toolbar-sla-chips" id="rosterSlaChipFilterBar">
+              <span class="chip-bar-label">SLA:</span>
+              <div id="rosterSlaChipsContainer" class="sla-chips-container">
+                <button type="button" class="sla-chip active" data-sla="all">All SLAs</button>
               </div>
-              <div class="roster-board-buttons">
-                <button id="rosterExpandAll" class="secondary-btn" type="button">Expand all</button>
-                <button id="rosterCollapseAll" class="secondary-btn" type="button">Collapse all</button>
-              </div>
+            </div>
+          </div>
+          <div id="rosterBoardActions" class="roster-board-actions" hidden>
+            <div class="flight-schedule-filters">
+              <label><span>Airline</span>
+                <select id="flightScheduleAirlineFilter" aria-label="Filter flight schedule by airline">
+                  <option value="all">All airlines</option>
+                </select>
+              </label>
+              <label><span>Status</span>
+                <select id="flightScheduleCoverageFilter" aria-label="Filter flight schedule by coverage">
+                  <option value="all">All flights</option>
+                  <option value="gaps">Gaps only</option>
+                  <option value="covered">Covered only</option>
+                  <option value="overlaps">Overlapping shifts</option>
+                </select>
+              </label>
+              <label><span>Direction</span>
+                <select id="flightScheduleDirectionFilter" aria-label="Filter flight schedule by direction">
+                  <option value="all">All directions</option>
+                  <option value="arr">Arrivals (ARR)</option>
+                  <option value="dep">Departures (DEP)</option>
+                </select>
+              </label>
+              <input id="flightScheduleSearch" type="search" placeholder="Filter flights, staff, route..." aria-label="Search flight schedule">
+            </div>
+            <div class="roster-board-buttons">
+              <button id="rosterExpandAll" class="secondary-btn" type="button">Expand all</button>
+              <button id="rosterCollapseAll" class="secondary-btn" type="button">Collapse all</button>
             </div>
           </div>
           <div id="rosterInlineReplacementDrawer" class="roster-inline-replacement-card" hidden>
@@ -826,7 +820,13 @@
                 </div>
               </div>
               <div class="workload-heading-right">
+                <div class="workload-filter-chips" id="workloadContractFilterGroup" role="toolbar" aria-label="Workload contract filter chips">
+                  <button type="button" class="workload-chip active" data-workload-contract="all">All Staff</button>
+                  <button type="button" class="workload-chip" data-workload-contract="ft">Full-Time</button>
+                  <button type="button" class="workload-chip" data-workload-contract="pt">Part-Time</button>
+                </div>
                 <input type="search" id="insightsWorkloadSearch" class="workload-search-input" placeholder="Filter workload by staff..." aria-label="Filter staff workload table">
+                <button type="button" id="workloadAutoDetectBtn" class="secondary-btn" title="Auto-detect Full-Time (≥100h/mo) vs Part-Time staff contracts">⚡ Auto FT/PT</button>
                 <button type="button" id="workloadSectionToggle" class="secondary-btn" aria-expanded="false">Expand workload</button>
               </div>
             </div>
@@ -840,8 +840,8 @@
               </div>
               <div class="table-wrap roster-hours-table-wrap">
                 <table class="roster-hours-table">
-                  <thead><tr><th>Staff member</th><th>Duties</th><th>Total</th><th>Mon–Fri</th><th>Saturday</th><th>Sunday</th><th>Public holiday</th><th>SLAs</th><th>Longest span</th></tr></thead>
-                  <tbody id="rosterHoursBody"><tr><td colspan="9" class="empty">Run a scan to calculate workload.</td></tr></tbody>
+                  <thead><tr><th>Staff member</th><th style="text-align:center;">Contract &amp; Month Target</th><th>Duties</th><th>Total</th><th>Mon–Fri</th><th>Saturday</th><th>Sunday</th><th>Public holiday</th><th>SLAs</th><th>Longest span</th></tr></thead>
+                  <tbody id="rosterHoursBody"><tr><td colspan="10" class="empty">Run a scan to calculate workload.</td></tr></tbody>
                 </table>
               </div>
             </div>
@@ -860,6 +860,7 @@
                 </div>
               </div>
               <div class="master-staff-controls">
+                <button type="button" id="autoDetectContractsBtn" class="secondary-btn" title="Automatically classify staff as Full-Time (≥100h/mo) or Part-Time based on duty hours">⚡ Auto-Detect Contracts</button>
                 <select id="masterStaffStationFilter" class="master-staff-select" aria-label="Filter staff by station">
                   <option value="all">All Stations</option>
                 </select>
@@ -872,6 +873,7 @@
                 <thead>
                   <tr>
                     <th>Staff Member</th>
+                    <th style="text-align:center;">Contract</th>
                     <th style="text-align:center;">Station</th>
                     <th>SLA History</th>
                     <th style="text-align:center;">Total Scanned Duties</th>
@@ -880,7 +882,7 @@
                   </tr>
                 </thead>
                 <tbody id="masterStaffBody">
-                  <tr><td colspan="6" class="empty">No staff members recorded in master directory yet. Run a scan to populate.</td></tr>
+                  <tr><td colspan="7" class="empty">No staff members recorded in master directory yet. Run a scan to populate.</td></tr>
                 </tbody>
               </table>
             </div>

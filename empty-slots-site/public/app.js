@@ -166,6 +166,63 @@ try { plannerStaffContracts = JSON.parse(localStorage.getItem("gsrmPlannerStaffC
 function savePlannerStaffContracts() {
   localStorage.setItem("gsrmPlannerStaffContractsV1", JSON.stringify(plannerStaffContracts));
 }
+
+function toggleStaffContract(key) {
+  if (!key) return;
+  const current = (plannerStaffContracts[key] || "PT").toUpperCase();
+  plannerStaffContracts[key] = current === "FT" ? "PT" : "FT";
+  savePlannerStaffContracts();
+  if (typeof renderPlannerStaffList === "function") renderPlannerStaffList();
+  if (typeof renderRosterHoursOverview === "function") {
+    const people = typeof buildRosterPeople === "function" ? buildRosterPeople() : [];
+    const windows = typeof getRosterWindows === "function" ? getRosterWindows() : [];
+    renderRosterHoursOverview(people, windows);
+  }
+  if (typeof renderMasterStaffDirectoryTable === "function") renderMasterStaffDirectoryTable();
+  if (typeof renderInsights === "function" && typeof activeTab !== "undefined" && activeTab === "insights") renderInsights();
+}
+
+function autoDetectStaffContracts(options = {}) {
+  const forceAll = Boolean(options.forceAll);
+  const roster = typeof getRosterRows === "function" ? getRosterRows() : null;
+  if (!roster || !roster.rows || !roster.rows.length) {
+    if (forceAll && typeof showToast === "function") {
+      showToast("Run a scan or select a Duty Roster period first to auto-detect contracts.", { kind: "warn", duration: 5000 });
+    }
+    return 0;
+  }
+
+  const windows = roster.dailyWindows || [];
+  const holidayDates = typeof getRosterHolidayDates === "function" ? getRosterHolidayDates(windows) : new Set();
+  const people = typeof filterRosterPeople === "function" ? filterRosterPeople(roster.rows) : (typeof buildRosterPeople === "function" ? buildRosterPeople() : []);
+  const daysInWindow = Math.max(1, windows.length || 1);
+
+  let updatedCount = 0;
+  for (const person of people) {
+    if (!person || !person.key) continue;
+    if (!forceAll && plannerStaffContracts[person.key]) continue;
+
+    const totals = OperationsUtils.summarizeDutyHours(person.overlapping || [], windows, holidayDates);
+    const actualHours = totals.totalMinutes / 60;
+    const monthlyRate = (actualHours / daysInWindow) * 30;
+
+    const detected = (monthlyRate >= 100 || actualHours >= 100) ? "FT" : "PT";
+    if (plannerStaffContracts[person.key] !== detected) {
+      plannerStaffContracts[person.key] = detected;
+      updatedCount += 1;
+    }
+  }
+
+  if (updatedCount > 0 || forceAll) {
+    savePlannerStaffContracts();
+    if (typeof renderPlannerStaffList === "function") renderPlannerStaffList();
+    if (typeof renderMasterStaffDirectoryTable === "function") renderMasterStaffDirectoryTable();
+    if (typeof renderRosterHoursOverview === "function") renderRosterHoursOverview(people, windows);
+    if (typeof renderInsights === "function" && typeof activeTab !== "undefined" && activeTab === "insights") renderInsights();
+  }
+
+  return updatedCount;
+}
 let selectedAvailabilityDates = new Set();
 const HISTORY_KEY = "gsrmScanHistoryV1";
 const ACTIONS_KEY = "gsrmGapActionsV1";
@@ -448,6 +505,19 @@ autoPlannerToggle.addEventListener("click", () => {
 autoPlannerClear.addEventListener("click", clearAutomaticPlan);
 autoPlannerSelectAll.addEventListener("click", toggleAllPlannerStaff);
 document.getElementById("autoPlannerSelectFree")?.addEventListener("click", selectFreePlannerStaff);
+document.getElementById("autoPlannerAutoDetectContracts")?.addEventListener("click", () => {
+  const count = autoDetectStaffContracts({ forceAll: true });
+  showToast(`Auto-detected contract status for staff (${count} contract(s) updated)`, { kind: "info", duration: 4000 });
+});
+document.getElementById("autoDetectContractsBtn")?.addEventListener("click", () => {
+  const count = autoDetectStaffContracts({ forceAll: true });
+  showToast(`Auto-detected contract status for staff (${count} contract(s) updated)`, { kind: "info", duration: 4000 });
+});
+document.getElementById("workloadAutoDetectBtn")?.addEventListener("click", () => {
+  const count = autoDetectStaffContracts({ forceAll: true });
+  showToast(`Auto-detected contract status for staff (${count} contract(s) updated)`, { kind: "info", duration: 4000 });
+  renderInsights();
+});
 autoPlannerStaffSearch.addEventListener("input", renderPlannerStaffList);
 for (const id of plannerOptionIds) document.getElementById(id).addEventListener("change", savePlannerOptions);
 availabilityPeriod.addEventListener("change", updateAvailabilityFields);
@@ -883,10 +953,6 @@ gapSuitableOnlyToggle.addEventListener("change", () => {
 });
 accountDutyRosterBtn?.addEventListener("click", openAccountOwnerRoster);
 
-const resultsOverlapFilterToggle = document.getElementById("resultsOverlapFilterToggle");
-if (resultsOverlapFilterToggle) {
-  resultsOverlapFilterToggle.addEventListener("change", applyFilters);
-}
 
 function updateResultTimeFilterLabels() {
   const zone = resultsLocalTimeToggle.checked ? "Local" : "UTC";
@@ -906,7 +972,6 @@ function clearResultFilters() {
   resultsEndTimeFilter.value = "";
   resultsLocalTimeToggle.checked = false;
   gapSuitableOnlyToggle.checked = false;
-  if (resultsOverlapFilterToggle) resultsOverlapFilterToggle.checked = false;
   if (activeTab === "replacements") resultsDateFilter.value = "";
   else resultsMissingFilter.value = "";
   updateResultTimeFilterLabels();
@@ -2062,19 +2127,6 @@ function applyFilters() {
     if (missingVal && Number(row.missing || 0) < Number(missingVal)) return false;
     if (activeTab === "gaps" && gapSuitableOnlyToggle.checked && !getPersonalGapFit(row).eligible) return false;
 
-    const resultsOverlapToggle = document.getElementById("resultsOverlapFilterToggle");
-    if (resultsOverlapToggle && resultsOverlapToggle.checked) {
-      const staffList = row.staff || [];
-      if (!staffList.length) return false;
-      const hasStaffOverlap = staffList.some((staffName) => {
-        const staffDuties = sourceRows.filter((r) => (r.staff || []).includes(staffName));
-        return typeof OperationsUtils !== "undefined" && OperationsUtils.hasOverlappingShifts
-          ? OperationsUtils.hasOverlappingShifts(staffDuties)
-          : false;
-      });
-      if (!hasStaffOverlap) return false;
-    }
-
     // Timing Filter
     if (startTimeVal || endTimeVal) {
       let startComp = "";
@@ -2660,9 +2712,11 @@ function setRosterViewMode(mode, shouldRender = true) {
     btn.title = isAirline ? "Filter presets apply to staff roster view" : "";
   });
 
-  rosterViewHint.textContent = isAirline
-    ? "Chronological flights with coverage, assigned staff, and local edits."
-    : "People by day with replacements and local edits clearly marked.";
+  if (rosterViewHint) {
+    rosterViewHint.textContent = isAirline
+      ? "Chronological flights with coverage, assigned staff, and local edits."
+      : "People by day with replacements and local edits clearly marked.";
+  }
   rosterFreeLabel.textContent = isAirline ? "Days" : "Free";
   rosterDutyLabel.textContent = isAirline ? "Flights" : "On duty";
   if (activeTab === "roster") contextHint.textContent = isAirline
@@ -3473,9 +3527,44 @@ function renderRosterHoursOverview(people, windows) {
   rosterHoursBody.innerHTML = summaries.length ? summaries.map(({ person, totals }) => {
     const workload = getPersonWorkloadMeta(person.overlapping);
     const showStation = person.station || (person.initials && person.initials !== person.name && person.initials !== person.key ? person.initials : "");
+    const contract = (plannerStaffContracts[person.key] || "PT").toUpperCase();
+    const isFt = contract === "FT";
+    const targetHours = isFt ? 160 : 80;
+    const actualHours = totals.totalMinutes / 60;
+    const pct = targetHours > 0 ? Math.round((actualHours / targetHours) * 100) : 0;
+    const isComplete = actualHours >= targetHours;
+
+    const statusClass = isComplete ? 'complete' : (pct >= 80 ? 'warning' : 'info');
+    const statusText = isComplete ? '✓ 100%' : `${pct}%`;
+
+    const contractPillHtml = `
+      <span class="contract-pill-btn ${isFt ? 'is-ft' : 'is-pt'}" style="cursor:default;" title="Contract defined in Directory: ${isFt ? 'Full-Time (160h/mo)' : 'Part-Time (80h/mo)'}">
+        <span>${isFt ? '👔 Full-Time' : '⏱️ Part-Time'}</span>
+        <span class="contract-cap">${targetHours}h</span>
+      </span>
+    `;
+
+    const progressCellHtml = `
+      <div class="workload-progress-cell" title="Target: ${targetHours}h/month (${isFt ? 'Full-Time: 160h' : 'Part-Time: 80h'})">
+        <div class="workload-progress-text">
+          <span class="hours-val"><strong>${actualHours.toFixed(1)}</strong> <small>/ ${targetHours}h</small></span>
+          <span class="status-badge ${statusClass}">${statusText}</span>
+        </div>
+        <div class="workload-progress-track">
+          <div class="workload-progress-fill ${statusClass}" style="width:${Math.min(100, Math.max(4, pct))}%;"></div>
+        </div>
+      </div>
+    `;
+
     return `
     <tr>
       <td><strong>${escapeHtml(person.name)}</strong>${showStation ? `<span class="muted"> ${escapeHtml(showStation)}</span>` : ""}</td>
+      <td style="text-align:center;">
+        <div style="display:inline-flex; align-items:center; justify-content:center; gap:10px;">
+          ${contractPillHtml}
+          ${progressCellHtml}
+        </div>
+      </td>
       <td>${totals.dutyCount}</td>
       <td>${formatHours(totals.totalMinutes)}h</td>
       <td>${formatHours(totals.weekdayMinutes)}h</td>
@@ -3486,7 +3575,15 @@ function renderRosterHoursOverview(people, windows) {
       <td>${workload.longestSpanHours.toFixed(1)}h</td>
     </tr>
   `;
-  }).join("") : '<tr><td colspan="9" class="empty">No staff match the current roster filters.</td></tr>';
+  }).join("") : '<tr><td colspan="10" class="empty">No staff match the current roster filters.</td></tr>';
+
+  for (const btn of rosterHoursBody.querySelectorAll('.contract-toggle-btn')) {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const key = btn.dataset.personKey;
+      toggleStaffContract(key);
+    });
+  }
 }
 
 function getPersonWorkloadMeta(assignments) {
@@ -3511,7 +3608,7 @@ function clearRosterHoursOverview(emptyText) {
   for (const element of [rosterTotalHours, rosterWeekdayHours, rosterSaturdayHours, rosterSundayHours, rosterHolidayHours]) {
     element.textContent = "0.0";
   }
-  rosterHoursBody.innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(emptyText)}</td></tr>`;
+  rosterHoursBody.innerHTML = `<tr><td colspan="10" class="empty">${escapeHtml(emptyText)}</td></tr>`;
 }
 
 function formatHours(minutes) {
@@ -4381,7 +4478,9 @@ function renderPlannerStaffList() {
           <input type="checkbox" value="${escapeHtml(person.key)}" ${selectedPlannerStaff.has(person.key) ? "checked" : ""}>
           <span><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(person.initials)}</small></span>
         </span>
-        <button type="button" class="contract-toggle-btn" data-person-key="${escapeHtml(person.key)}" title="Click to toggle contract: FT (160h/mo) / PT (80h/mo)" style="margin-left:auto; font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px; cursor:pointer; border:1px solid ${isFt ? '#2563eb' : '#94a3b8'}; background:${isFt ? '#eff6ff' : '#f8fafc'}; color:${isFt ? '#1d4ed8' : '#475569'};">${contract}</button>
+        <span class="contract-pill-btn ${isFt ? 'is-ft' : 'is-pt'}" style="cursor:default; margin-left:auto; font-size:10px; padding:2px 7px;" title="Contract set in Master Directory: ${isFt ? 'Full-Time (160h)' : 'Part-Time (80h)'}">
+          ${isFt ? '👔 FT' : '⏱️ PT'}
+        </span>
       </label>
     `;
   }).join("") : `<span class="muted">${people.length ? "No staff match this search." : "Run a scan to load staff."}</span>`;
@@ -4399,22 +4498,6 @@ function renderPlannerStaffList() {
     currentAutoPlan = null;
     autoPlannerResult.textContent = `${selectedPlannerStaff.size} staff selected. Build a new plan to apply the change.`;
   });
-
-  for (const btn of autoPlannerStaffList.querySelectorAll('.contract-toggle-btn')) {
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const key = btn.dataset.personKey;
-      if (!key) return;
-      const current = (plannerStaffContracts[key] || "PT").toUpperCase();
-      plannerStaffContracts[key] = current === "FT" ? "PT" : "FT";
-      savePlannerStaffContracts();
-      renderPlannerStaffList();
-      if (currentAutoPlan) {
-        autoPlannerResult.insertAdjacentHTML("afterbegin", '<div class="planner-notice">Staff contract updated. Rebuild the plan to adjust capacity limits.</div>');
-      }
-    });
-  }
 
   const staffBadge = document.getElementById("plannerStaffBadge");
   if (staffBadge) staffBadge.textContent = `${selectedPlannerStaff.size} selected`;
@@ -7012,14 +7095,37 @@ function renderInsights() {
   }
 
   // 4. Render Staff Workload Section
+  autoDetectStaffContracts({ forceAll: false });
   const roster = getRosterRows();
+
+  const applyWorkloadFilters = () => {
+    if (roster && roster.rows) {
+      let people = filterRosterPeople(roster.rows);
+      const query = (workloadSearchInput?.value || "").toLowerCase().trim();
+      const chipsGroup = document.getElementById("workloadContractFilterGroup");
+      const activeChip = chipsGroup?.querySelector(".workload-chip.active");
+      const contractFilter = activeChip?.dataset.workloadContract || "all";
+
+      if (contractFilter === "ft") {
+        people = people.filter((p) => (plannerStaffContracts[p.key] || "PT").toUpperCase() === "FT");
+      } else if (contractFilter === "pt") {
+        people = people.filter((p) => (plannerStaffContracts[p.key] || "PT").toUpperCase() === "PT");
+      }
+
+      if (query) {
+        people = people.filter((p) => p.name.toLowerCase().includes(query) || (p.initials || "").toLowerCase().includes(query));
+      }
+      renderRosterHoursOverview(people, roster.dailyWindows);
+    }
+  };
+
+  const workloadSearchInput = document.getElementById("insightsWorkloadSearch");
   if (!latestScannedDates.length) {
     clearRosterHoursOverview("Run a scan to calculate workload.");
   } else if (!roster) {
     clearRosterHoursOverview("Choose a valid Duty Roster period to calculate workload.");
   } else {
-    const people = filterRosterPeople(roster.rows);
-    renderRosterHoursOverview(people, roster.dailyWindows);
+    applyWorkloadFilters();
     const rosterHoursHint = document.getElementById("rosterHoursHint");
     if (rosterHoursHint) {
       const range = rosterDate.value === rosterEndDate.value ? rosterDate.value : `${rosterDate.value} to ${rosterEndDate.value}`;
@@ -7028,18 +7134,21 @@ function renderInsights() {
   }
 
   // Setup Workload Search input listener
-  const workloadSearchInput = document.getElementById("insightsWorkloadSearch");
   if (workloadSearchInput && !workloadSearchInput.dataset.listenerAttached) {
     workloadSearchInput.dataset.listenerAttached = "true";
-    workloadSearchInput.addEventListener("input", () => {
-      if (roster && roster.rows) {
-        let people = filterRosterPeople(roster.rows);
-        const query = workloadSearchInput.value.toLowerCase().trim();
-        if (query) {
-          people = people.filter((p) => p.name.toLowerCase().includes(query) || (p.initials || "").toLowerCase().includes(query));
-        }
-        renderRosterHoursOverview(people, roster.dailyWindows);
-      }
+    workloadSearchInput.addEventListener("input", applyWorkloadFilters);
+  }
+
+  // Setup Workload Contract Chips listener
+  const workloadContractGroup = document.getElementById("workloadContractFilterGroup");
+  if (workloadContractGroup && !workloadContractGroup.dataset.listenerAttached) {
+    workloadContractGroup.dataset.listenerAttached = "true";
+    workloadContractGroup.addEventListener("click", (e) => {
+      const chip = e.target.closest("[data-workload-contract]");
+      if (!chip) return;
+      workloadContractGroup.querySelectorAll(".workload-chip").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      applyWorkloadFilters();
     });
   }
 
@@ -7237,7 +7346,7 @@ function renderMasterStaffDirectoryTable() {
   if (badge) badge.textContent = `${masterList.length} Known Staff`;
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty">${query ? "No staff members match search filter." : "No staff members recorded in master directory yet. Run a scan to populate."}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">${query ? "No staff members match search filter." : "No staff members recorded in master directory yet. Run a scan to populate."}</td></tr>`;
     return;
   }
 
@@ -7258,6 +7367,15 @@ function renderMasterStaffDirectoryTable() {
       ? `<button type="button" class="person-track-changes-btn" data-person-key="${escapeHtml(person.key)}" title="${trackTitle}" style="border:none; background:transparent; cursor:pointer; padding:0 2px; color:var(--primary, #2563eb); display:inline-flex; align-items:center;" aria-label="Tracked"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM2 8a6 6 0 1 1 12 0A6 6 0 0 1 2 8zm6.5-3v3.25l2.25 1.35-.75 1.2-3-1.8V5h1.5z"/></svg></button>`
       : "";
 
+    const contract = (plannerStaffContracts[person.key] || "PT").toUpperCase();
+    const isFt = contract === "FT";
+    const contractBtnHtml = `
+      <button type="button" class="contract-pill-btn contract-toggle-btn ${isFt ? 'is-ft' : 'is-pt'}" data-person-key="${escapeHtml(person.key)}" title="Click to toggle contract: Full-Time (160h) / Part-Time (80h)">
+        <span>${isFt ? '👔 Full-Time' : '⏱️ Part-Time'}</span>
+        <span class="contract-cap">${isFt ? 160 : 80}h</span>
+      </button>
+    `;
+
     const slaChips = (person.slas || []).length
       ? person.slas.map((sla) => `<span class="compact-sla" data-sla="${escapeHtml(sla)}" style="margin-right:3px; font-size:10px;">${escapeHtml(sla)}</span>`).join("")
       : '<span style="color:#94a3b8; font-size:11px;">General</span>';
@@ -7275,6 +7393,7 @@ function renderMasterStaffDirectoryTable() {
             ${trackBtnHtml}
           </div>
         </td>
+        <td style="text-align:center;">${contractBtnHtml}</td>
         <td style="text-align:center;"><span style="background:#f1f5f9; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600; color:#475569;">${escapeHtml(person.initials || person.station || "MUC")}</span></td>
         <td>${slaChips}</td>
         <td style="text-align:center; font-weight:700; color:#0284c7;">${person.dutyCount || 0}</td>
@@ -7283,6 +7402,14 @@ function renderMasterStaffDirectoryTable() {
       </tr>
     `;
   }).join("");
+
+  for (const btn of tbody.querySelectorAll('.contract-toggle-btn')) {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const key = btn.dataset.personKey;
+      toggleStaffContract(key);
+    });
+  }
 }
 
 function getScanHistory() {
@@ -7537,6 +7664,7 @@ function snapshotDisplayStaffCount(snapshot) {
 let historyComparisonActiveTab = "gaps";
 let historyPersonSelectedKey = "ALL";
 let historyPersonFilterType = "ALL";
+let historyPersonSlaFilter = "ALL";
 let historyPersonSearchQuery = "";
 
 function renderHistoryComparison(history, currentId = history[0]?.id, previousId = history[1]?.id) {
@@ -7549,30 +7677,30 @@ function renderHistoryComparison(history, currentId = history[0]?.id, previousId
   const optionLabel = (snapshot) => `${new Date(snapshot.createdAt).toLocaleString()} · ${snapshot.startDate}–${snapshot.endDate} · ${snapshot.gaps.length} gaps`;
   const rangesOverlap = current.startDate <= previous.endDate && previous.startDate <= current.endDate;
 
+  const comparison = OperationsUtils.compareSnapshots(current, previous);
+  const entries = buildHistoryComparisonEntries(current, previous, comparison);
+  const hours = (kind) => entries.filter((entry) => entry.kind === kind).reduce((sum, entry) => sum + Math.abs(entry.missingHoursDelta), 0);
+
   let bodyHtml = "";
 
   if (historyComparisonActiveTab === "person") {
     bodyHtml = renderPersonRosterAuditHtml(current, previous);
   } else {
-    const comparison = OperationsUtils.compareSnapshots(current, previous);
-    const entries = buildHistoryComparisonEntries(current, previous, comparison);
-    const hours = (kind) => entries.filter((entry) => entry.kind === kind).reduce((sum, entry) => sum + Math.abs(entry.missingHoursDelta), 0);
-
     bodyHtml = `
       <div class="comparison-cards">
-        <button type="button" class="opened" data-comparison-kind="New">
+        <button type="button" class="opened" data-comparison-kind="New" title="Click to show only New Gaps">
           <strong>${comparison.opened.length}</strong>
-          <span>New gaps</span>
+          <span>New Gaps</span>
           <small>${hours("New").toFixed(1)} staff-h</small>
         </button>
-        <button type="button" class="resolved" data-comparison-kind="Resolved">
+        <button type="button" class="resolved" data-comparison-kind="Resolved" title="Click to show only Resolved Gaps">
           <strong>${comparison.resolved.length}</strong>
-          <span>Resolved</span>
+          <span>Resolved Gaps</span>
           <small>${hours("Resolved").toFixed(1)} staff-h</small>
         </button>
-        <button type="button" class="changed" data-comparison-kind="Changed">
+        <button type="button" class="changed" data-comparison-kind="Changed" title="Click to show only Coverage Changes">
           <strong>${comparison.changed.length}</strong>
-          <span>Coverage changed</span>
+          <span>Coverage Changed</span>
           <small>${hours("Changed").toFixed(1)} staff-h delta</small>
         </button>
       </div>
@@ -7615,14 +7743,14 @@ function renderHistoryComparison(history, currentId = history[0]?.id, previousId
     <div id="historyComparisonBody">${bodyHtml}</div>
   `;
 
-  document.getElementById("historyCompareCurrent").addEventListener("change", (event) => renderHistoryComparison(history, event.target.value, document.getElementById("historyComparePrevious").value));
-  document.getElementById("historyComparePrevious").addEventListener("change", (event) => renderHistoryComparison(history, document.getElementById("historyCompareCurrent").value, event.target.value));
+  document.getElementById("historyCompareCurrent")?.addEventListener("change", (event) => renderHistoryComparison(history, event.target.value, previous.id));
+  document.getElementById("historyComparePrevious")?.addEventListener("change", (event) => renderHistoryComparison(history, current.id, event.target.value));
 
-  document.getElementById("historyModeGapsBtn").addEventListener("click", () => {
+  document.getElementById("historyModeGapsBtn")?.addEventListener("click", () => {
     historyComparisonActiveTab = "gaps";
     renderHistoryComparison(history, current.id, previous.id);
   });
-  document.getElementById("historyModePersonBtn").addEventListener("click", () => {
+  document.getElementById("historyModePersonBtn")?.addEventListener("click", () => {
     historyComparisonActiveTab = "person";
     renderHistoryComparison(history, current.id, previous.id);
   });
@@ -7630,8 +7758,6 @@ function renderHistoryComparison(history, currentId = history[0]?.id, previousId
   if (historyComparisonActiveTab === "person") {
     bindPersonRosterAuditControls(current, previous);
   } else {
-    const comparison = OperationsUtils.compareSnapshots(current, previous);
-    const entries = buildHistoryComparisonEntries(current, previous, comparison);
     bindHistoryComparisonControls(entries);
   }
 }
@@ -7641,10 +7767,17 @@ function renderPersonRosterAuditHtml(current, previous) {
   const audit = OperationsUtils.comparePersonRosters(current, previous);
   const summary = audit.getStaffAuditSummary(historyPersonSelectedKey);
 
+  const rawSlas = [...new Set([...(current?.rows || []), ...(previous?.rows || [])].map((r) => r.sla).filter(Boolean))].sort();
+  const availableSlas = rawSlas.length > 0 ? rawSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS"];
+
   let entries = summary.entries;
 
   if (historyPersonFilterType && historyPersonFilterType !== "ALL") {
     entries = entries.filter((e) => e.personKind === historyPersonFilterType);
+  }
+
+  if (historyPersonSlaFilter && historyPersonSlaFilter !== "ALL") {
+    entries = entries.filter((e) => (e.row?.sla || "") === historyPersonSlaFilter);
   }
 
   if (historyPersonSearchQuery) {
@@ -7659,82 +7792,160 @@ function renderPersonRosterAuditHtml(current, previous) {
     });
   }
 
+  const sections = [
+    { kind: "REPLACED", label: "Reassignments & Staff Swaps", icon: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>` },
+    { kind: "ADDED", label: "Duties Added", icon: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>` },
+    { kind: "REMOVED", label: "Duties Removed", icon: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>` },
+    { kind: "HOURS_MODIFIED", label: "Hours / Shift Timing Modified", icon: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>` },
+    { kind: "UNCHANGED", label: "Unchanged Duties", icon: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>` }
+  ];
+
+  const renderCategorizedGrid = (groupEntries) => {
+    if (historyPersonFilterType !== "ALL") {
+      return `<div class="dense-cards-grid">${groupEntries.map(renderPersonAuditEntryCard).join("")}</div>`;
+    }
+    return `
+      <div class="person-audit-subsections">
+        ${sections.map((sec) => {
+          const secEntries = groupEntries.filter((e) => e.personKind === sec.kind);
+          if (!secEntries.length) return "";
+          return `
+            <details open class="audit-collapsible-subgroup">
+              <summary class="audit-collapsible-subhead">
+                <svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="9 18 15 12 9 6"/></svg>
+                ${sec.icon}
+                <span>${sec.label}</span>
+                <span class="section-count">${secEntries.length}</span>
+              </summary>
+              <div class="dense-cards-grid">
+                ${secEntries.map(renderPersonAuditEntryCard).join("")}
+              </div>
+            </details>
+          `;
+        }).join("")}
+      </div>
+    `;
+  };
+
+  const auditDates = [...new Set(entries.map((e) => e.row?.date || "Unknown Date"))].sort();
+  const hasMultipleDates = auditDates.length > 1;
+
+  let bodyHtml = "";
+  if (entries.length === 0) {
+    bodyHtml = '<div class="comparison-empty">No roster changes match the selected filter.</div>';
+  } else if (hasMultipleDates) {
+    bodyHtml = `
+      <div class="person-audit-sections">
+        ${auditDates.map((dateStr) => {
+          const dateEntries = entries.filter((e) => (e.row?.date || "Unknown Date") === dateStr);
+          if (!dateEntries.length) return "";
+          return `
+            <details open class="audit-collapsible-group">
+              <summary class="audit-collapsible-head">
+                <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <strong>${escapeHtml(dateStr)}</strong>
+                <span class="section-count">${dateEntries.length}</span>
+              </summary>
+              ${renderCategorizedGrid(dateEntries)}
+            </details>
+          `;
+        }).join("")}
+      </div>
+    `;
+  } else {
+    bodyHtml = renderCategorizedGrid(entries);
+  }
+
   return `
     <div class="person-audit-container">
       ${!rangesOverlap ? `
         <div class="person-audit-notice">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-          <span>Non-overlapping scan dates (${escapeHtml(current.startDate)}–${escapeHtml(current.endDate)} vs ${escapeHtml(previous.startDate)}–${escapeHtml(previous.endDate)}): Duties are automatically matched by <strong>Day of Week + Flight + SLA</strong> for cross-period audit tracking.</span>
+          <span>Non-overlapping scan dates (${escapeHtml(current.startDate)}–${escapeHtml(current.endDate)} vs ${escapeHtml(previous.startDate)}–${escapeHtml(previous.endDate)}): Cross-matched by <strong>Day of Week + Flight + SLA</strong>.</span>
         </div>
       ` : ""}
-      <div class="person-audit-controls">
-        <label class="person-audit-field">
-          <span>Select Staff Member</span>
-          <select id="historyPersonSelect">
-            <option value="ALL" ${historyPersonSelectedKey === "ALL" ? "selected" : ""}>All Staff Members (${audit.allStaff.length} staff)</option>
-            ${audit.allStaff.map((p) => `<option value="${escapeHtml(p.key)}" ${p.key === historyPersonSelectedKey ? "selected" : ""}>${escapeHtml(p.name)}${p.initials ? ` [${escapeHtml(p.initials)}]` : ""}</option>`).join("")}
-          </select>
-        </label>
 
-        <label class="person-audit-field">
-          <span>Filter Change Type</span>
-          <select id="historyPersonFilter">
-            <option value="ALL" ${historyPersonFilterType === "ALL" ? "selected" : ""}>All Shifts & Changes</option>
-            <option value="REPLACED" ${historyPersonFilterType === "REPLACED" ? "selected" : ""}>Replaced / Swapped Only</option>
-            <option value="ADDED" ${historyPersonFilterType === "ADDED" ? "selected" : ""}>Duty Added Only</option>
-            <option value="REMOVED" ${historyPersonFilterType === "REMOVED" ? "selected" : ""}>Duty Removed Only</option>
-            <option value="HOURS_MODIFIED" ${historyPersonFilterType === "HOURS_MODIFIED" ? "selected" : ""}>Hours Modified Only</option>
-          </select>
-        </label>
+      <div class="person-audit-toolbar">
+        <div class="toolbar-left">
+          <label class="person-audit-field">
+            <span>Staff Member</span>
+            <select id="historyPersonSelect">
+              <option value="ALL" ${historyPersonSelectedKey === "ALL" ? "selected" : ""}>All Staff Members (${audit.allStaff.length} staff)</option>
+              ${audit.allStaff.map((p) => `<option value="${escapeHtml(p.key)}" ${p.key === historyPersonSelectedKey ? "selected" : ""}>${escapeHtml(p.name)}${p.initials ? ` [${escapeHtml(p.initials)}]` : ""}</option>`).join("")}
+            </select>
+          </label>
 
-        <div class="person-audit-field search-field" style="flex: 1;">
-          <span>Search Shifts</span>
-          <input id="historyPersonSearchInput" type="search" placeholder="Search flight, SLA, route, staff name..." value="${escapeHtml(historyPersonSearchQuery)}">
+          <label class="person-audit-field">
+            <span>Filter Type</span>
+            <select id="historyPersonFilter">
+              <option value="ALL" ${historyPersonFilterType === "ALL" ? "selected" : ""}>All Changes (${summary.entries.length})</option>
+              <option value="REPLACED" ${historyPersonFilterType === "REPLACED" ? "selected" : ""}>Replaced / Swaps (${summary.replacedCount})</option>
+              <option value="ADDED" ${historyPersonFilterType === "ADDED" ? "selected" : ""}>Duties Added (${summary.addedCount})</option>
+              <option value="REMOVED" ${historyPersonFilterType === "REMOVED" ? "selected" : ""}>Duties Removed (${summary.removedCount})</option>
+              <option value="HOURS_MODIFIED" ${historyPersonFilterType === "HOURS_MODIFIED" ? "selected" : ""}>Hours Modified</option>
+            </select>
+          </label>
+
+          <div class="person-audit-field search-field">
+            <span>Search</span>
+            <input id="historyPersonSearchInput" type="search" placeholder="Filter flight, SLA, staff..." value="${escapeHtml(historyPersonSearchQuery)}">
+          </div>
         </div>
 
-        <button id="historyPersonExportCsvBtn" type="button" class="primary-btn" style="align-self: flex-end; height: 34px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Export Roster Audit CSV
-        </button>
-      </div>
-
-      <div class="person-audit-kpis">
-        <div class="person-kpi-card">
-          <span class="kpi-label">Baseline Workload</span>
-          <strong class="kpi-value">${summary.prevTotalHours.toFixed(1)} <small>hrs</small></strong>
-          <span class="kpi-sub">${summary.prevDutyCount} duties assigned</span>
-        </div>
-
-        <div class="person-kpi-card">
-          <span class="kpi-label">Current Scan Workload</span>
-          <strong class="kpi-value">${summary.currTotalHours.toFixed(1)} <small>hrs</small></strong>
-          <span class="kpi-sub">${summary.currDutyCount} duties assigned</span>
-        </div>
-
-        <div class="person-kpi-card">
-          <span class="kpi-label">Net Hours Impact</span>
-          <strong class="kpi-value ${summary.netHoursDelta > 0 ? "text-plus" : summary.netHoursDelta < 0 ? "text-minus" : ""}">
-            ${summary.netHoursDelta > 0 ? "+" : ""}${summary.netHoursDelta.toFixed(1)} <small>hrs</small>
-          </strong>
-          <span class="kpi-sub">${summary.netDutyDelta > 0 ? "+" : ""}${summary.netDutyDelta} duties delta</span>
-        </div>
-
-        <div class="person-kpi-card">
-          <span class="kpi-label">Reassignments & Swaps</span>
-          <strong class="kpi-value text-warning">${summary.replacedCount}</strong>
-          <span class="kpi-sub">${summary.addedCount} added · ${summary.removedCount} removed</span>
+        <div class="toolbar-right">
+          <button id="historyPersonExportCsvBtn" type="button" class="primary-btn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export CSV
+          </button>
         </div>
       </div>
 
-      <div class="person-audit-entries-list">
-        ${entries.length === 0 ? '<div class="comparison-empty">No roster changes found matching the selected filters.</div>' : entries.map(renderPersonAuditEntryCard).join("")}
+      <div class="sla-chip-filter-bar" style="margin-bottom: 14px;">
+        <div id="historyPersonSlaChipsContainer" class="sla-chips-container">
+          <button type="button" class="sla-chip ${historyPersonSlaFilter === "ALL" ? "active" : ""}" data-sla="ALL">All SLAs</button>
+          ${availableSlas.map((sla) => `<button type="button" class="sla-chip ${historyPersonSlaFilter === sla ? "active" : ""}" data-sla="${escapeHtml(sla)}">${escapeHtml(sla)}</button>`).join("")}
+        </div>
       </div>
+
+      <div class="person-audit-kpis-bar">
+        <div class="kpi-chip">
+          <span class="chip-label">Baseline</span>
+          <strong>${summary.prevTotalHours.toFixed(1)}h</strong>
+          <small>${summary.prevDutyCount} duties</small>
+        </div>
+        <div class="kpi-chip">
+          <span class="chip-label">Current</span>
+          <strong>${summary.currTotalHours.toFixed(1)}h</strong>
+          <small>${summary.currDutyCount} duties</small>
+        </div>
+        <div class="kpi-chip">
+          <span class="chip-label">Net Delta</span>
+          <strong class="${summary.netHoursDelta > 0 ? "text-plus" : summary.netHoursDelta < 0 ? "text-minus" : ""}">${summary.netHoursDelta > 0 ? "+" : ""}${summary.netHoursDelta.toFixed(1)}h</strong>
+          <small>${summary.netDutyDelta > 0 ? "+" : ""}${summary.netDutyDelta} duties</small>
+        </div>
+        <div class="kpi-chip">
+          <span class="chip-label">Reassignments</span>
+          <strong class="text-warning">${summary.replacedCount}</strong>
+          <small>${summary.addedCount} add · ${summary.removedCount} rem</small>
+        </div>
+      </div>
+
+      ${bodyHtml}
     </div>
   `;
 }
 
 function renderPersonAuditEntryCard(entry) {
   const row = entry.row;
+  const kindLabel = {
+    REPLACED: "REPLACED",
+    ADDED: "ADDED",
+    REMOVED: "REMOVED",
+    HOURS_MODIFIED: "MODIFIED",
+    UNCHANGED: "UNCHANGED",
+  }[entry.personKind] || entry.personKind;
+
   const kindClass = {
     REPLACED: "badge-replaced",
     ADDED: "badge-added",
@@ -7743,55 +7954,49 @@ function renderPersonAuditEntryCard(entry) {
     UNCHANGED: "badge-unchanged",
   }[entry.personKind] || "badge-unchanged";
 
-  const kindLabel = {
-    REPLACED: "REPLACED",
-    ADDED: "DUTY ADDED",
-    REMOVED: "DUTY REMOVED",
-    HOURS_MODIFIED: "HOURS MODIFIED",
-    UNCHANGED: "UNCHANGED",
-  }[entry.personKind] || entry.personKind;
+  const prevStaffNames = entry.prevStaff.length ? entry.prevStaff.map((p) => p.name).join(", ") : "None";
+  const currStaffNames = entry.currStaff.length ? entry.currStaff.map((p) => p.name).join(", ") : "None";
 
-  const deltaText = entry.hoursDelta > 0 
-    ? `+${entry.hoursDelta.toFixed(1)}h` 
-    : entry.hoursDelta < 0 
-      ? `${entry.hoursDelta.toFixed(1)}h` 
-      : "0.0h";
-
+  const deltaText = entry.hoursDelta !== 0 ? `${entry.hoursDelta > 0 ? "+" : ""}${entry.hoursDelta.toFixed(1)}h` : "0.0h";
   const deltaClass = entry.hoursDelta > 0 ? "delta-plus" : entry.hoursDelta < 0 ? "delta-minus" : "delta-neutral";
 
-  const prevStaffNames = entry.prevStaff.map((p) => `${p.name}${p.initials ? ` [${p.initials}]` : ""}`).join(", ") || "Unassigned";
-  const currStaffNames = entry.currStaff.map((p) => `${p.name}${p.initials ? ` [${p.initials}]` : ""}`).join(", ") || "Unassigned";
+  const cleanDetail = (entry.personDetail || "").replace(/^Replaced:\s*/i, "");
+
+  const detailTag = entry.personKind === "REPLACED"
+    ? `<span class="change-tag tag-changed">~ ${escapeHtml(cleanDetail.toLowerCase().startsWith("replaced") ? cleanDetail : `Replaced: ${cleanDetail}`)}</span>`
+    : entry.personKind === "ADDED"
+      ? `<span class="change-tag tag-added">+ Added: ${escapeHtml(currStaffNames)}</span>`
+      : entry.personKind === "REMOVED"
+        ? `<span class="change-tag tag-removed">- Removed: ${escapeHtml(prevStaffNames)}</span>`
+        : `<span class="change-tag tag-unchanged">${escapeHtml(entry.personDetail)}</span>`;
+
+  const primaryStaff = (entry.currStaff?.[0]?.name) || (entry.prevStaff?.[0]?.name) || "";
 
   return `
-    <div class="audit-entry-card kind-${entry.personKind.toLowerCase()}">
-      <div class="audit-entry-head">
-        <div class="audit-entry-flight">
+    <div class="micro-card kind-${entry.personKind.toLowerCase()}" 
+         data-date="${escapeHtml(row.date || "")}" 
+         data-flight="${escapeHtml(row.flight || "")}" 
+         data-sla="${escapeHtml(row.sla || "")}" 
+         data-staff="${escapeHtml(primaryStaff)}"
+         title="Click to view in Roster">
+      <div class="micro-card-head">
+        <div class="micro-card-title">
           <strong>${escapeHtml(row.date || "")} · ${escapeHtml(row.flight || "Duty")} · ${escapeHtml(row.sla || "")}</strong>
-          <span>${escapeHtml(row.route || "")} ${row.aircraft ? `· ${escapeHtml(row.aircraft)}` : ""}</span>
+          <span>${escapeHtml(row.start_utc || "")}–${escapeHtml(row.release_utc || "")} UTC (${(entry.durationMinutes / 60).toFixed(1)}h)</span>
         </div>
-        <div class="audit-entry-badges">
-          <span class="audit-badge ${kindClass}">${kindLabel}</span>
-        </div>
+        <span class="micro-badge ${kindClass}">${kindLabel}</span>
       </div>
-      <div class="audit-entry-body">
-        <div class="audit-entry-info">
-          <div class="audit-time-line">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            <span>${escapeHtml(row.start_utc || "")} – ${escapeHtml(row.release_utc || "")} UTC</span>
-            <strong>(${(entry.durationMinutes / 60).toFixed(1)} hrs)</strong>
-          </div>
-          <div class="audit-detail-highlight">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/></svg>
-            <strong>${escapeHtml(entry.personDetail)}</strong>
-          </div>
-          <div class="audit-roster-compare">
-            <small><b>Baseline Roster:</b> ${escapeHtml(prevStaffNames)}</small>
-            <small><b>Current Roster:</b> ${escapeHtml(currStaffNames)}</small>
+
+      <div class="micro-card-body">
+        <div class="micro-card-info">
+          <div class="micro-tag-row">${detailTag}</div>
+          <div class="micro-compare-row">
+            <small><b>Base:</b> ${escapeHtml(prevStaffNames)}</small>
+            <small><b>Curr:</b> ${escapeHtml(currStaffNames)}</small>
           </div>
         </div>
-        <div class="audit-entry-hours ${deltaClass}">
-          <span class="hours-label">Hours Delta</span>
-          <strong class="hours-val">${deltaText}</strong>
+        <div class="micro-card-delta ${deltaClass}">
+          <span class="delta-val">${deltaText}</span>
         </div>
       </div>
     </div>
@@ -7801,6 +8006,7 @@ function renderPersonAuditEntryCard(entry) {
 function bindPersonRosterAuditControls(current, previous) {
   const personSelect = document.getElementById("historyPersonSelect");
   const filterSelect = document.getElementById("historyPersonFilter");
+  const slaChipsContainer = document.getElementById("historyPersonSlaChipsContainer");
   const searchInput = document.getElementById("historyPersonSearchInput");
   const exportBtn = document.getElementById("historyPersonExportCsvBtn");
   const toggle = document.getElementById("historyComparisonToggle");
@@ -7814,18 +8020,25 @@ function bindPersonRosterAuditControls(current, previous) {
 
   personSelect?.addEventListener("change", (e) => {
     historyPersonSelectedKey = e.target.value;
-    renderHistoryComparison(getScanHistorySnapshotList(), current.id, previous.id);
+    renderHistoryComparison(getScanHistory(), current.id, previous.id);
   });
 
   filterSelect?.addEventListener("change", (e) => {
     historyPersonFilterType = e.target.value;
-    renderHistoryComparison(getScanHistorySnapshotList(), current.id, previous.id);
+    renderHistoryComparison(getScanHistory(), current.id, previous.id);
+  });
+
+  slaChipsContainer?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".sla-chip");
+    if (!btn) return;
+    historyPersonSlaFilter = btn.getAttribute("data-sla") || "ALL";
+    renderHistoryComparison(getScanHistory(), current.id, previous.id);
   });
 
   searchInput?.addEventListener("input", (e) => {
     historyPersonSearchQuery = e.target.value;
     const q = historyPersonSearchQuery.toLowerCase();
-    const cards = document.querySelectorAll(".audit-entry-card");
+    const cards = document.querySelectorAll(".micro-card");
     cards.forEach((card) => {
       const text = card.textContent.toLowerCase();
       card.style.display = text.includes(q) ? "" : "none";
@@ -7839,6 +8052,9 @@ function bindPersonRosterAuditControls(current, previous) {
 
     if (historyPersonFilterType && historyPersonFilterType !== "ALL") {
       entries = entries.filter((e) => e.personKind === historyPersonFilterType);
+    }
+    if (historyPersonSlaFilter && historyPersonSlaFilter !== "ALL") {
+      entries = entries.filter((e) => (e.row?.sla || "") === historyPersonSlaFilter);
     }
     if (historyPersonSearchQuery) {
       const q = historyPersonSearchQuery.toLowerCase();
@@ -7914,55 +8130,305 @@ function buildHistoryComparisonEntries(latest, previous, comparison) {
 }
 
 function renderComparisonDetails(entries) {
-  if (!entries.length) return '<div class="comparison-empty">No gap changes detected.</div>';
-  const groups = [["New", "New gaps"], ["Resolved", "Resolved gaps"], ["Changed", "Coverage changes"]];
-  return `<div class="comparison-controls"><input id="historyComparisonSearch" type="search" placeholder="Filter flight, SLA, route, or staff"><select id="historyComparisonType"><option value="">All changes</option><option value="New">New gaps</option><option value="Resolved">Resolved</option><option value="Changed">Coverage changed</option></select><button id="historyComparisonSelectAll" class="secondary-btn" type="button">Select visible</button><button id="historyComparisonClear" class="secondary-btn" type="button">Clear</button><button id="historyComparisonExport" class="primary-btn" type="button" disabled>Export selected <span id="historyComparisonSelectedCount">0</span></button></div><div class="comparison-groups">${groups.map(([kind, label]) => {
-    const groupEntries = entries.filter((entry) => entry.kind === kind);
-    if (!groupEntries.length) return "";
-    return `<details class="comparison-group" data-comparison-group="${kind}" ${kind === "Changed" ? "open" : ""}><summary><span class="change-${kind.toLowerCase()}">${label}</span><b>${groupEntries.length}</b><small>${groupEntries.reduce((sum, entry) => sum + Math.abs(entry.missingHoursDelta), 0).toFixed(1)} staff-h</small></summary><div class="comparison-detail-list">${groupEntries.map((entry, index) => {
-      const row = entry.row;
-      const deltaLabel = `${entry.missingDelta > 0 ? "+" : ""}${entry.missingDelta} missing · ${entry.missingHoursDelta > 0 ? "+" : ""}${entry.missingHoursDelta.toFixed(1)} staff-h`;
-      const staffChanges = [entry.addedStaff.length ? `Added: ${entry.addedStaff.join(", ")}` : "", entry.removedStaff.length ? `Removed: ${entry.removedStaff.join(", ")}` : ""].filter(Boolean);
-      const searchText = [kind, row.date, row.flight, row.route, row.sla, ...entry.currentStaff, ...entry.previousStaff].join(" ").toLowerCase();
-      return `<label class="comparison-detail-row" data-kind="${kind}" data-entry-index="${entries.indexOf(entry)}" data-search="${escapeHtml(searchText)}"><input type="checkbox"><span class="comparison-detail-main"><strong>${escapeHtml(row.date)} · ${escapeHtml(row.flight)} · ${escapeHtml(row.sla)}</strong><small>${escapeHtml(row.route || "Route unavailable")} · ${escapeHtml(row.start_utc)}–${escapeHtml(row.release_utc)} UTC · ${(entry.durationMinutes / 60).toFixed(1)}h duty</small>${staffChanges.length ? `<em>${staffChanges.map(escapeHtml).join(" · ")}</em>` : `<em>Staff list unchanged${entry.currentStaff.length ? ` · ${escapeHtml(entry.currentStaff.join(", "))}` : ""}</em>`}</span><span class="comparison-delta ${entry.missingDelta > 0 ? "worse" : entry.missingDelta < 0 ? "better" : "neutral"}"><b>${escapeHtml(deltaLabel)}</b><small>${entry.previousAssigned}→${entry.currentAssigned} assigned</small></span></label>`;
-    }).join("")}</div></details>`;
-  }).join("")}</div>`;
+  if (!entries.length) return '<div class="comparison-empty">No gap changes detected between the selected scans.</div>';
+
+  const dates = [...new Set(entries.map((e) => e.row?.date || "Unknown Date"))].sort();
+  const availableSlas = [...new Set(entries.map((e) => e.row?.sla).filter(Boolean))].sort();
+  const hasMultipleDates = dates.length > 1;
+
+  let bodyHtml = "";
+  if (hasMultipleDates) {
+    bodyHtml = `
+      <div class="person-audit-sections">
+        ${dates.map((dateStr) => {
+          const dateEntries = entries.filter((e) => (e.row?.date || "Unknown Date") === dateStr);
+          if (!dateEntries.length) return "";
+          return `
+            <details open class="audit-collapsible-group">
+              <summary class="audit-collapsible-head">
+                <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <strong>${escapeHtml(dateStr)}</strong>
+                <span class="section-count">${dateEntries.length}</span>
+              </summary>
+              <div class="dense-cards-grid">
+                ${dateEntries.map((entry) => renderComparisonCardItem(entry, entries)).join("")}
+              </div>
+            </details>
+          `;
+        }).join("")}
+      </div>
+    `;
+  } else {
+    bodyHtml = `
+      <div class="dense-cards-grid">
+        ${entries.map((entry) => renderComparisonCardItem(entry, entries)).join("")}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="comparison-controls">
+      <input id="historyComparisonSearch" type="search" placeholder="Search flight, SLA, staff...">
+      <select id="historyComparisonType">
+        <option value="">All changes (${entries.length})</option>
+        <option value="New">New Gaps</option>
+        <option value="Resolved">Resolved Gaps</option>
+        <option value="Changed">Changed</option>
+      </select>
+      <select id="historyComparisonSla">
+        <option value="">All SLAs (${availableSlas.length})</option>
+        ${availableSlas.map((sla) => `<option value="${escapeHtml(sla)}">${escapeHtml(sla)}</option>`).join("")}
+      </select>
+      <button id="historyComparisonSelectAll" class="secondary-btn" type="button">Select visible</button>
+      <button id="historyComparisonClear" class="secondary-btn" type="button">Clear</button>
+      <button id="historyComparisonExport" class="secondary-btn" type="button" disabled>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export (<span id="historyComparisonSelectedCount">0</span>)
+      </button>
+    </div>
+
+    ${bodyHtml}
+  `;
 }
+
+function renderComparisonCardItem(entry, entries) {
+  const row = entry.row;
+  const kind = entry.kind;
+
+  const kindBadgeClass = {
+    New: "badge-new-gap",
+    Resolved: "badge-resolved-gap",
+    Changed: "badge-changed-gap"
+  }[kind] || "badge-changed-gap";
+
+  const kindLabel = {
+    New: "NEW GAP",
+    Resolved: "RESOLVED",
+    Changed: "CHANGED"
+  }[kind] || kind;
+
+  const deltaLabel = `${entry.missingHoursDelta > 0 ? "+" : ""}${entry.missingHoursDelta.toFixed(1)}h`;
+  const deltaClass = entry.missingDelta > 0 ? "delta-worse" : entry.missingDelta < 0 ? "delta-better" : "delta-neutral";
+
+  const addedStaffTag = entry.addedStaff.length 
+    ? `<span class="change-tag tag-added">+ Staff: ${escapeHtml(entry.addedStaff.join(", "))}</span>` 
+    : "";
+
+  const removedStaffTag = entry.removedStaff.length 
+    ? `<span class="change-tag tag-removed">- Staff: ${escapeHtml(entry.removedStaff.join(", "))}</span>` 
+    : "";
+
+  const coverageChangeTag = (kind === "Changed" && !entry.addedStaff.length && !entry.removedStaff.length)
+    ? `<span class="change-tag tag-changed">~ Shift: ${entry.previousMissing} → ${entry.currentMissing} missing</span>`
+    : "";
+
+  const noStaffChangesTag = (!entry.addedStaff.length && !entry.removedStaff.length && kind !== "Changed")
+    ? `<span class="change-tag tag-unchanged">${entry.currentStaff.length ? `Staff: ${escapeHtml(entry.currentStaff.join(", "))}` : "No staff allocated"}</span>`
+    : "";
+
+  const searchText = [
+    kind, row.date, row.flight, row.route, row.sla, row.aircraft,
+    ...entry.currentStaff, ...entry.previousStaff,
+    ...entry.addedStaff, ...entry.removedStaff
+  ].join(" ").toLowerCase();
+
+  const prevStaffText = entry.previousStaff.length ? escapeHtml(entry.previousStaff.join(", ")) : "None";
+  const currStaffText = entry.currentStaff.length ? escapeHtml(entry.currentStaff.join(", ")) : "None";
+  const primaryStaff = (entry.addedStaff?.[0]) || (entry.currentStaff?.[0]) || (entry.previousStaff?.[0]) || "";
+
+  return `
+    <div class="micro-card comparison-detail-row kind-${kind.toLowerCase()}" 
+         data-kind="${kind}" 
+         data-entry-index="${entries.indexOf(entry)}" 
+         data-search="${escapeHtml(searchText)}"
+         data-date="${escapeHtml(row.date || "")}"
+         data-flight="${escapeHtml(row.flight || "")}"
+         data-sla="${escapeHtml(row.sla || "")}"
+         data-staff="${escapeHtml(primaryStaff)}"
+         title="Click to view in Roster">
+      <div class="micro-card-head">
+        <label class="micro-card-select" onclick="event.stopPropagation()">
+          <input type="checkbox">
+          <div class="micro-card-title">
+            <strong>${escapeHtml(row.date)} · ${escapeHtml(row.flight)} · ${escapeHtml(row.sla)}</strong>
+            <span>${escapeHtml(row.start_utc)}–${escapeHtml(row.release_utc)} UTC (${(entry.durationMinutes / 60).toFixed(1)}h)</span>
+          </div>
+        </label>
+        <span class="micro-badge ${kindBadgeClass}">${kindLabel}</span>
+      </div>
+
+      <div class="micro-card-body">
+        <div class="micro-card-info">
+          <div class="micro-tag-row">
+            ${addedStaffTag}
+            ${removedStaffTag}
+            ${coverageChangeTag}
+            ${noStaffChangesTag}
+          </div>
+          <div class="micro-compare-row">
+            <small><b>Base:</b> ${prevStaffText} (${entry.previousMissing} missing)</small>
+            <small><b>Curr:</b> ${currStaffText} (${entry.currentMissing} missing)</small>
+          </div>
+        </div>
+
+        <div class="micro-card-delta ${deltaClass}">
+          <span class="delta-val">${deltaLabel}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function navigateToRosterFromCard(card) {
+  if (!card) return;
+  const date = card.getAttribute("data-date");
+  const flight = card.getAttribute("data-flight");
+  const staff = card.getAttribute("data-staff");
+
+  // Close audit and comparison modals
+  const personModal = document.getElementById("personChangesModal");
+  if (personModal) {
+    personModal.hidden = true;
+    personModal.setAttribute("aria-hidden", "true");
+  }
+  const historyModal = document.getElementById("historyCompareModal");
+  if (historyModal) {
+    historyModal.hidden = true;
+    historyModal.setAttribute("aria-hidden", "true");
+  }
+
+  // Switch to main Roster tab
+  switchTab("roster");
+
+  // Set Roster date filter if date present
+  const rosterDateInput = document.getElementById("rosterStartDate");
+  const rosterEndDateInput = document.getElementById("rosterEndDate");
+  if (date && rosterDateInput && rosterEndDateInput) {
+    rosterDateInput.value = date;
+    rosterEndDateInput.value = date;
+  }
+
+  // Set search query to flight or staff if present
+  const searchInput = document.getElementById("resultsSearch");
+  if (searchInput && (flight || staff)) {
+    searchInput.value = flight || staff || "";
+  }
+
+  // Trigger filters & re-render Roster
+  if (typeof applyFilters === "function") applyFilters();
+  if (typeof renderRoster === "function") renderRoster();
+}
+
+document.addEventListener("click", (e) => {
+  const card = e.target.closest(".micro-card[data-date], .micro-card[data-flight]");
+  if (card && !e.target.closest("input, select, button, a, .micro-card-select")) {
+    navigateToRosterFromCard(card);
+  }
+});
 
 function bindHistoryComparisonControls(entries) {
   const body = document.getElementById("historyComparisonBody");
   const search = document.getElementById("historyComparisonSearch");
   const type = document.getElementById("historyComparisonType");
+  const slaSelect = document.getElementById("historyComparisonSla");
   const toggle = document.getElementById("historyComparisonToggle");
   if (!search || !type) {
-    toggle?.addEventListener("click", (event) => { const collapsed = body.hidden = !body.hidden; event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details"; event.currentTarget.setAttribute("aria-expanded", String(!collapsed)); });
+    toggle?.addEventListener("click", (event) => {
+      const collapsed = body.hidden = !body.hidden;
+      event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details";
+      event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
+    });
     return;
   }
   const rows = [...document.querySelectorAll(".comparison-detail-row")];
   search.value = "";
   type.value = "";
+
   const updateSelection = () => {
     const selected = rows.filter((row) => row.querySelector('input[type="checkbox"]').checked);
     document.getElementById("historyComparisonSelectedCount").textContent = String(selected.length);
     document.getElementById("historyComparisonExport").disabled = !selected.length;
   };
+
+  const syncActiveSummaryCards = () => {
+    document.querySelectorAll("[data-comparison-kind]").forEach((card) => {
+      card.classList.toggle("active", card.dataset.comparisonKind === type.value);
+    });
+  };
+
   const applyComparisonFilter = () => {
     const query = search.value.trim().toLowerCase();
-    for (const row of rows) row.hidden = Boolean((type.value && row.dataset.kind !== type.value) || (query && !row.dataset.search.includes(query)));
-    for (const group of document.querySelectorAll(".comparison-group")) group.hidden = ![...group.querySelectorAll(".comparison-detail-row")].some((row) => !row.hidden);
+    const selectedSla = slaSelect ? slaSelect.value : "";
+    for (const row of rows) {
+      const rowSla = row.dataset.sla || "";
+      row.hidden = Boolean(
+        (type.value && row.dataset.kind !== type.value) ||
+        (selectedSla && rowSla !== selectedSla) ||
+        (query && !row.dataset.search.includes(query))
+      );
+    }
+    for (const group of document.querySelectorAll(".comparison-group")) {
+      group.hidden = ![...group.querySelectorAll(".comparison-detail-row")].some((row) => !row.hidden);
+    }
+    syncActiveSummaryCards();
   };
+
   search.addEventListener("input", applyComparisonFilter);
   type.addEventListener("change", applyComparisonFilter);
-  for (const row of rows) row.querySelector('input[type="checkbox"]').addEventListener("change", updateSelection);
-  document.getElementById("historyComparisonSelectAll").addEventListener("click", () => { for (const row of rows.filter((item) => !item.hidden)) row.querySelector('input[type="checkbox"]').checked = true; updateSelection(); });
-  document.getElementById("historyComparisonClear").addEventListener("click", () => { for (const row of rows) row.querySelector('input[type="checkbox"]').checked = false; updateSelection(); });
-  toggle.addEventListener("click", (event) => { const collapsed = body.hidden = !body.hidden; event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details"; event.currentTarget.setAttribute("aria-expanded", String(!collapsed)); });
-  for (const card of document.querySelectorAll("[data-comparison-kind]")) card.addEventListener("click", () => { type.value = card.dataset.comparisonKind; body.hidden = false; document.getElementById("historyComparisonToggle").textContent = "Collapse details"; applyComparisonFilter(); document.querySelector(`[data-comparison-group="${card.dataset.comparisonKind}"]`)?.setAttribute("open", ""); });
+  slaSelect?.addEventListener("change", applyComparisonFilter);
+
+  for (const row of rows) {
+    row.querySelector('input[type="checkbox"]').addEventListener("change", updateSelection);
+  }
+
+  document.getElementById("historyComparisonSelectAll").addEventListener("click", () => {
+    for (const row of rows.filter((item) => !item.hidden)) {
+      row.querySelector('input[type="checkbox"]').checked = true;
+    }
+    updateSelection();
+  });
+
+  document.getElementById("historyComparisonClear").addEventListener("click", () => {
+    for (const row of rows) {
+      row.querySelector('input[type="checkbox"]').checked = false;
+    }
+    updateSelection();
+  });
+
+  toggle?.addEventListener("click", (event) => {
+    const collapsed = body.hidden = !body.hidden;
+    event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details";
+    event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
+  });
+
+  for (const card of document.querySelectorAll("[data-comparison-kind]")) {
+    card.addEventListener("click", () => {
+      const kind = card.dataset.comparisonKind;
+      if (type.value === kind) {
+        type.value = "";
+      } else {
+        type.value = kind;
+      }
+      body.hidden = false;
+      document.getElementById("historyComparisonToggle").textContent = "Collapse details";
+      applyComparisonFilter();
+    });
+  }
+
   document.getElementById("historyComparisonExport").addEventListener("click", () => {
     const selectedRows = rows.filter((row) => row.querySelector('input[type="checkbox"]').checked);
     const selectedEntries = selectedRows.map((row) => entries[Number(row.dataset.entryIndex)]).filter(Boolean);
     const headers = ["Change", "Date", "Flight", "Route", "SLA", "Start UTC", "Release UTC", "Duty Hours", "Previous Assigned", "Current Assigned", "Previous Missing", "Current Missing", "Missing Staff-Hour Delta", "Staff Added", "Staff Removed"];
-    const lines = [headers.map(csvCell).join(","), ...selectedEntries.map((entry) => [entry.kind, entry.row.date, entry.row.flight, entry.row.route, entry.row.sla, entry.row.start_utc, entry.row.release_utc, (entry.durationMinutes / 60).toFixed(2), entry.previousAssigned, entry.currentAssigned, entry.previousMissing, entry.currentMissing, entry.missingHoursDelta.toFixed(2), entry.addedStaff.join(" | "), entry.removedStaff.join(" | ")].map(csvCell).join(","))];
+    const lines = [
+      headers.map(csvCell).join(","),
+      ...selectedEntries.map((entry) => [
+        entry.kind, entry.row.date, entry.row.flight, entry.row.route, entry.row.sla,
+        entry.row.start_utc, entry.row.release_utc, (entry.durationMinutes / 60).toFixed(2),
+        entry.previousAssigned, entry.currentAssigned, entry.previousMissing, entry.currentMissing,
+        entry.missingHoursDelta.toFixed(2), entry.addedStaff.join(" | "), entry.removedStaff.join(" | ")
+      ].map(csvCell).join(","))
+    ];
     downloadBlob(`gsrm-scan-comparison-${getLocalIsoDate()}.csv`, lines.join("\n"), "text/csv;charset=utf-8");
   });
 }
