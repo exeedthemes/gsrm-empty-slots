@@ -483,6 +483,14 @@
               </div>
             </div>
             <div id="rosterFields" class="roster-fields" hidden>
+              <!-- Quick SLA Selection Chips for Roster -->
+              <div class="sla-chip-filter-bar" id="rosterSlaChipFilterBar" style="margin-bottom: 12px;">
+                <span class="chip-bar-label">SLA Filter:</span>
+                <div id="rosterSlaChipsContainer" class="sla-chips-container">
+                  <button type="button" class="sla-chip active" data-sla="all">All SLAs</button>
+                </div>
+              </div>
+
               <section class="roster-filter-group roster-period-group" aria-labelledby="rosterPeriodGroupTitle">
                 <strong id="rosterPeriodGroupTitle">Period</strong>
                 <div class="roster-filter-group-controls">
@@ -546,6 +554,7 @@
                 <input id="rosterTimelineScale" type="range" min="2000" max="8000" step="200" value="3600" style="width:85px; cursor:pointer;" aria-label="Adjust single-day timeline width scale">
                 <span id="rosterScaleValue" style="font-weight:700; color:var(--primary, #2563eb); min-width:44px; text-align:right;">3600px</span>
               </label>
+              <button id="rosterHighlightOverlapsBtn" class="secondary-btn roster-highlight-overlaps-btn" type="button" aria-pressed="false" title="Toggle visual overlap collision indicators on roster">Highlight overlaps</button>
               <button id="rosterTotalsBtn" class="secondary-btn roster-totals-btn" type="button" aria-pressed="false">Show duty hours</button>
               <button id="rosterFullscreenBtn" class="secondary-btn roster-fullscreen-btn" type="button" aria-pressed="false" aria-keyshortcuts="Escape">Full screen</button>
             </div>
@@ -637,11 +646,16 @@
               <button id="rosterStaffViewBtn" type="button" aria-pressed="true">Staff roster</button>
               <button id="rosterAirlineViewBtn" type="button" aria-pressed="false">Flight schedule</button>
             </div>
-            <button id="trackPersonChangesBtn" type="button" class="secondary-btn" title="Track roster changes for a selected person" style="height:32px; font-size:11px; padding:0 10px;">
-              <svg style="width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2" viewBox="0 0 24 24">
-                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            <button id="trackPersonChangesBtn" type="button" class="audit-trigger-btn" title="Open Person Roster Audit & Change History">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
               </svg>
-              Track Person Changes
+              <span>Person Roster Audit</span>
+              <span id="rosterAuditBadge" class="audit-count-badge">Audit</span>
             </button>
             <p id="rosterViewHint">People by day with local roster edits clearly marked.</p>
             <div id="rosterBoardActions" class="roster-board-actions" hidden>
@@ -701,22 +715,128 @@
         </div>
 
         <div id="insightsLayout" class="insights-layout" style="display: none;">
+          <!-- Executive Dashboard Header Banner -->
+          <div class="insights-header-banner">
+            <div class="insights-banner-title">
+              <div class="insights-title-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="20" x2="18" y2="10"></line>
+                  <line x1="12" y1="20" x2="12" y2="4"></line>
+                  <line x1="6" y1="20" x2="6" y2="14"></line>
+                </svg>
+              </div>
+              <div>
+                <h2>Operational Insights &amp; Roster Analytics</h2>
+                <p>Comprehensive scan metrics, SLA coverage, demand pressure, risk alerts, and station staff directory</p>
+              </div>
+            </div>
+            <div class="insights-banner-meta" id="insightsBannerMeta">
+              <span class="insights-meta-chip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span id="insightsMetaPeriod">Period: Active Scan</span></span>
+              <span class="insights-meta-chip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span id="insightsMetaMode">Roster: Edited</span></span>
+            </div>
+          </div>
+
+          <!-- Top Executive KPI Grid -->
           <div id="insightCards" class="insight-cards"></div>
+
+          <!-- Section: Operational Coverage & Demand Pressure -->
+          <div class="insights-section-block">
+            <div class="insights-section-header">
+              <div class="insights-section-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="accent-icon">
+                  <line x1="18" y1="20" x2="18" y2="10"></line>
+                  <line x1="12" y1="20" x2="12" y2="4"></line>
+                  <line x1="6" y1="20" x2="6" y2="14"></line>
+                </svg>
+                <span>Coverage &amp; Operational Demand Pressure</span>
+              </div>
+              <span class="insights-section-sub">Missing staff slots by date, SLA function, and UTC timeline</span>
+            </div>
+
+            <div class="insight-grid">
+              <section class="insight-section">
+                <div class="column-header">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                  <span>Coverage by date</span>
+                </div>
+                <div id="coverageByDate"></div>
+              </section>
+
+              <section class="insight-section">
+                <div class="column-header">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                  <span>Coverage by SLA</span>
+                </div>
+                <div id="coverageBySla"></div>
+              </section>
+
+              <section class="insight-section insight-section-full">
+                <div class="column-header">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <span>Hourly pressure (UTC)</span>
+                </div>
+                <div id="coverageByHour"></div>
+              </section>
+            </div>
+          </div>
+
+          <!-- Section: Roster Risk & Compliance Warnings -->
+          <section class="insight-section insights-warnings-card collapsed" id="insightsWarningsSection">
+            <div class="warnings-header-bar">
+              <div class="warnings-title-group">
+                <div class="warnings-badge-icon">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </div>
+                <div>
+                  <strong class="warnings-card-title">Roster Risk &amp; Compliance Warnings</strong>
+                  <span class="warnings-card-sub" id="warningsCountSub">Identifies shift overlaps, short turnarounds, long daily spans, and timestamp errors</span>
+                </div>
+              </div>
+              <div class="warnings-controls-group">
+                <div class="warning-filter-chips" id="warningFilterGroup">
+                  <button type="button" class="warning-chip active" data-warning-filter="all">All Warnings</button>
+                  <button type="button" class="warning-chip" data-warning-filter="overlap">Overlaps</button>
+                  <button type="button" class="warning-chip" data-warning-filter="gap">Short Gaps</button>
+                  <button type="button" class="warning-chip" data-warning-filter="span">Long Spans</button>
+                </div>
+                <input type="search" id="insightsWarningsSearch" class="warnings-search-input" placeholder="Search staff, flight, warning..." aria-label="Filter roster warnings">
+                <button type="button" id="warningsSectionToggle" class="secondary-btn" aria-expanded="false">Expand</button>
+              </div>
+            </div>
+            <div id="rosterWarnings" class="warnings-container" role="region" aria-label="Roster warnings list" tabindex="0"></div>
+          </section>
+
+          <!-- Section: Staff Workload & Duty Hours Overview -->
           <section class="roster-hours-overview insights-workload collapsed" id="insightsWorkloadSection" aria-labelledby="rosterHoursTitle">
             <div class="roster-hours-heading">
-              <div>
-                <strong id="rosterHoursTitle">Staff workload &amp; duty hours</strong>
-                <span id="rosterHoursHint">Uses the selected Duty Roster period and filters. Hours are classified by Europe/Berlin calendar day; public-holiday hours may also be weekday or weekend hours.</span>
+              <div class="workload-heading-left">
+                <div class="workload-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                  </svg>
+                </div>
+                <div>
+                  <strong id="rosterHoursTitle">Staff Workload &amp; Duty Hours Overview</strong>
+                  <span id="rosterHoursHint">Uses the selected Duty Roster period and filters. Hours are classified by Europe/Berlin calendar day; public-holiday hours may also be weekday or weekend hours.</span>
+                </div>
               </div>
-              <button type="button" id="workloadSectionToggle" class="secondary-btn" aria-expanded="false">Expand workload</button>
+              <div class="workload-heading-right">
+                <input type="search" id="insightsWorkloadSearch" class="workload-search-input" placeholder="Filter workload by staff..." aria-label="Filter staff workload table">
+                <button type="button" id="workloadSectionToggle" class="secondary-btn" aria-expanded="false">Expand workload</button>
+              </div>
             </div>
             <div class="workload-section-body">
               <div class="roster-hours-cards">
-                <div><strong id="rosterTotalHours">0.0</strong><span>Total hours</span></div>
-                <div><strong id="rosterWeekdayHours">0.0</strong><span>Mon–Fri</span></div>
-                <div><strong id="rosterSaturdayHours">0.0</strong><span>Saturday</span></div>
-                <div><strong id="rosterSundayHours">0.0</strong><span>Sunday</span></div>
-                <div><strong id="rosterHolidayHours">0.0</strong><span>Public holiday</span></div>
+                <div class="hours-card"><strong id="rosterTotalHours">0.0</strong><span>Total hours</span></div>
+                <div class="hours-card"><strong id="rosterWeekdayHours">0.0</strong><span>Mon–Fri</span></div>
+                <div class="hours-card"><strong id="rosterSaturdayHours">0.0</strong><span>Saturday</span></div>
+                <div class="hours-card"><strong id="rosterSundayHours">0.0</strong><span>Sunday</span></div>
+                <div class="hours-card"><strong id="rosterHolidayHours">0.0</strong><span>Public holiday</span></div>
               </div>
               <div class="table-wrap roster-hours-table-wrap">
                 <table class="roster-hours-table">
@@ -726,34 +846,28 @@
               </div>
             </div>
           </section>
-          <div class="insight-grid">
-            <section class="insight-section"><div class="column-header">Coverage by date</div><div id="coverageByDate"></div></section>
-            <section class="insight-section"><div class="column-header">Coverage by SLA</div><div id="coverageBySla"></div></section>
-            <section class="insight-section"><div class="column-header">Hourly pressure (UTC)</div><div id="coverageByHour"></div></section>
-            <section class="insight-section collapsed" id="insightsWarningsSection">
-              <div class="column-header warnings-header">
-                <span>Roster warnings</span>
-                <button type="button" id="warningsSectionToggle" class="secondary-btn" aria-expanded="false">Expand</button>
-              </div>
-              <div id="rosterWarnings" class="warnings-container" role="region" aria-label="Roster warnings list" tabindex="0"></div>
-            </section>
-          </div>
 
-          <section class="insight-section master-staff-section" id="insightsMasterStaffSection" style="margin-top: 16px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
-              <div>
-                <strong style="font-size: 14px; color: #1e293b; display: inline-flex; align-items: center; gap: 6px;">
-                  <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" style="color: #2563eb;"><path d="M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1 1H7zm4-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-5.784 6A2.238 2.238 0 0 1 5 13c0-1.355.68-2.75 1.936-3.72A6.325 6.325 0 0 0 5 9c-4 0-5 3-5 4s1 1 1 1h4.216zM4.5 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/></svg>
-                  Station Master Staff Directory
-                </strong>
-                <span style="font-size: 11px; color: #64748b; margin-left: 8px;" id="masterStaffCountHint">Cumulative list updated automatically across all scanned dates</span>
+          <!-- Section: Station Master Staff Directory -->
+          <section class="insight-section master-staff-section" id="insightsMasterStaffSection">
+            <div class="master-staff-header-bar">
+              <div class="master-staff-title-group">
+                <div class="master-staff-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                </div>
+                <div>
+                  <strong class="master-staff-title">Station Master Staff Directory</strong>
+                  <span class="master-staff-sub" id="masterStaffCountHint">Cumulative list updated automatically across all scanned dates</span>
+                </div>
               </div>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <input type="search" id="masterStaffSearch" placeholder="Search staff or SLA..." style="padding: 3px 8px; font-size: 11px; border: 1px solid #cbd5e1; border-radius: 4px; width: 180px;">
-                <span class="badge" id="masterStaffTotalBadge" style="background: #eff6ff; color: #1d4ed8; font-weight: 700; padding: 3px 8px; border-radius: 12px; font-size: 11px;">0 Staff</span>
+              <div class="master-staff-controls">
+                <select id="masterStaffStationFilter" class="master-staff-select" aria-label="Filter staff by station">
+                  <option value="all">All Stations</option>
+                </select>
+                <input type="search" id="masterStaffSearch" placeholder="Search staff, station, or SLA..." class="master-staff-search-input" aria-label="Search master staff directory">
+                <span class="badge master-staff-total-badge" id="masterStaffTotalBadge">0 Staff</span>
               </div>
             </div>
-            <div class="table-wrap" style="max-height: 320px; overflow-y: auto;">
+            <div class="table-wrap master-staff-table-wrap">
               <table class="roster-hours-table" id="masterStaffTable">
                 <thead>
                   <tr>
@@ -832,41 +946,50 @@
       </div>
 
       <div id="personChangesModal" class="modal-overlay" hidden aria-hidden="true">
-        <div class="modal-card person-changes-card" role="dialog" aria-modal="true" aria-labelledby="personChangesTitle" style="max-width: 680px; width: 90%;">
-          <div class="modal-header">
-            <div>
-              <span class="modal-badge">Roster Audit</span>
-              <h3 id="personChangesTitle" style="margin:0; font-size:16px; font-weight:700;">Person Roster Audit & Change History</h3>
-              <p id="personChangesSubtitle" style="margin:2px 0 0 0; font-size:11px; color:var(--muted);">Track original vs current roster changes for a selected staff member</p>
+        <div class="modal-card person-changes-card" role="dialog" aria-modal="true" aria-labelledby="personChangesTitle">
+          <div class="modal-header audit-modal-header">
+            <div class="audit-modal-title-group">
+              <span class="modal-badge audit-badge-tag">Roster Audit &amp; Tracking</span>
+              <h3 id="personChangesTitle" class="audit-modal-title">Person Roster Audit &amp; Change History</h3>
+              <p id="personChangesSubtitle" class="audit-modal-sub">Track original vs. current roster edits, shift swaps, and timing changes across scanned dates</p>
             </div>
             <button type="button" id="personChangesCloseBtn" class="modal-close-btn" aria-label="Close modal">&times;</button>
           </div>
-          <div class="person-changes-body" style="padding:16px;">
-            <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
-              <label style="flex:1; min-width:200px; display:flex; flex-direction:column; gap:4px;">
-                <span style="font-size:11px; font-weight:600; color:var(--muted);">Select Staff Member</span>
-                <select id="personChangesSelect" class="bulk-select" style="width:100%; height:32px;">
-                  <option value="">Select a person...</option>
-                </select>
-              </label>
-              <div style="display:flex; gap:4px; align-self:flex-end;" id="personChangesFilterGroup">
-                <button type="button" class="preset-chip active" data-change-filter="all">All Shifts</button>
-                <button type="button" class="preset-chip" data-change-filter="modified">Changes Only</button>
+          <div class="person-changes-body">
+            <div class="audit-controls-panel">
+              <div class="audit-controls-row">
+                <label class="audit-select-label">
+                  <span>Select Staff Scope / Member</span>
+                  <select id="personChangesSelect" class="audit-select">
+                    <option value="ALL">All Staff Members (Full Roster Audit)</option>
+                  </select>
+                </label>
+              </div>
+              <div class="audit-filter-row">
+                <span class="audit-filter-label">Filter Duties:</span>
+                <div class="audit-filter-chips" id="personChangesFilterGroup">
+                  <button type="button" class="audit-chip active" data-change-filter="all">All Shifts</button>
+                  <button type="button" class="audit-chip" data-change-filter="modified">Changes Only</button>
+                  <button type="button" class="audit-chip" data-change-filter="added">+ Added</button>
+                  <button type="button" class="audit-chip" data-change-filter="removed">- Removed</button>
+                  <button type="button" class="audit-chip" data-change-filter="replaced">⇄ Replaced</button>
+                  <button type="button" class="audit-chip" data-change-filter="timing">⏱ Timing</button>
+                </div>
               </div>
             </div>
 
-            <div id="personTrackingControl" style="display:flex; justify-content:space-between; align-items:center; background:#f8fafc; border:1px solid var(--line); padding:8px 12px; border-radius:6px; margin-bottom:14px; font-size:12px;">
-              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:var(--ink);">
-                <input type="checkbox" id="personTrackingToggle" style="cursor:pointer; width:15px; height:15px;" />
+            <div id="personTrackingControl" class="audit-tracking-banner">
+              <label class="audit-tracking-toggle">
+                <input type="checkbox" id="personTrackingToggle" />
                 <span>Track roster changes for this staff member</span>
               </label>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <span id="personTrackingStatus" style="font-size:11px; font-weight:700; color:#64748b; background:#f1f5f9; border:1px solid #cbd5e1; padding:2px 8px; border-radius:12px;">Tracking Paused</span>
-                <button id="clearAllTrackingBtn" type="button" class="secondary-btn" style="height:24px; font-size:10px; padding:0 6px;" title="Clear tracking for all staff members">Clear All Tracking</button>
+              <div class="audit-tracking-actions">
+                <span id="personTrackingStatus" class="audit-status-badge">Full Roster Scope</span>
+                <button id="clearAllTrackingBtn" type="button" class="secondary-btn clear-tracking-btn" title="Clear change tracking for all staff members">Clear All Tracking</button>
               </div>
             </div>
 
-            <div id="personChangesContent">
+            <div id="personChangesContent" class="audit-content-area">
               <div class="empty-selection">Select a staff member above to track their roster changes across scanned dates.</div>
             </div>
           </div>

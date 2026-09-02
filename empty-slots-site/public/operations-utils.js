@@ -22,6 +22,17 @@
     return [row.date, row.flight_id || row.flight, row.sla, row.start_utc, row.release_utc].map((value) => String(value || "")).join("|");
   }
 
+  function isSameFlightDuty(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (rowKey(a) === rowKey(b)) return true;
+    const flightA = String(a.flight_id || a.flight || "").trim().toUpperCase();
+    const flightB = String(b.flight_id || b.flight || "").trim().toUpperCase();
+    const dateA = String(a.date || "").trim();
+    const dateB = String(b.date || "").trim();
+    return Boolean(flightA && flightB && flightA === flightB && dateA && dateB && dateA === dateB);
+  }
+
   function dutyMinutes(row) {
     const start = parseDutyTime(row.date, row.start_utc);
     const end = parseDutyTime(row.date, row.release_utc);
@@ -202,8 +213,9 @@
       for (let index = 1; index < duties.length; index += 1) {
         const previous = duties[index - 1];
         const current = duties[index];
-        if (current.start < previous.end) warnings.push({ type: "Overlap", severity: "high", person, text: `${person.name}: ${previous.row.flight} ${previous.row.sla} overlaps ${current.row.flight} ${current.row.sla}.` });
-        else if ((current.start - previous.end) / 60000 < 30) warnings.push({ type: "Short gap", severity: "medium", person, text: `${person.name}: ${Math.round((current.start - previous.end) / 60000)} min between ${previous.row.flight} and ${current.row.flight}.` });
+        const isSameFlight = isSameFlightDuty(previous.row, current.row);
+        if (current.start < previous.end && !isSameFlight) warnings.push({ type: "Overlap", severity: "high", person, text: `${person.name}: ${previous.row.flight} ${previous.row.sla} overlaps ${current.row.flight} ${current.row.sla}.` });
+        else if ((current.start - previous.end) / 60000 < 30 && !isSameFlight) warnings.push({ type: "Short gap", severity: "medium", person, text: `${person.name}: ${Math.round((current.start - previous.end) / 60000)} min between ${previous.row.flight} and ${current.row.flight}.` });
       }
       const byDate = new Map();
       for (const duty of duties) {
@@ -347,13 +359,15 @@
 
   function buildAirlineRoster(rows, windows, options = {}) {
     const query = String(options.query || "").trim().toLowerCase();
-    const selectedSla = String(options.sla || "").trim().toUpperCase();
+    const selectedSlas = Array.isArray(options.sla)
+      ? options.sla.map((s) => String(s).trim().toUpperCase()).filter(Boolean)
+      : (options.sla ? [String(options.sla).trim().toUpperCase()] : []);
     return (windows || []).map((window) => {
       const dayRows = (rows || []).filter((row) => {
         const start = parseDutyTime(row.date, row.start_utc);
         const end = parseDutyTime(row.date, row.release_utc);
         if (!start || !end || start >= new Date(window.end) || end <= new Date(window.start)) return false;
-        if (selectedSla && String(row.sla || "").toUpperCase() !== selectedSla) return false;
+        if (selectedSlas.length > 0 && !selectedSlas.includes(String(row.sla || "").toUpperCase())) return false;
         const searchable = [airlineCode(row), row.flight, row.route, row.aircraft, row.direction, row.sla, row.type, row.movement, ...(row.staff || [])].join(" ").toLowerCase();
         return !query || searchable.includes(query);
       });
@@ -431,7 +445,9 @@
 
   function buildFlightSchedule(rows, windows, options = {}) {
     const query = String(options.query || "").trim().toLowerCase();
-    const selectedSla = String(options.sla || "").trim().toUpperCase();
+    const selectedSlas = Array.isArray(options.sla)
+      ? options.sla.map((s) => String(s).trim().toUpperCase()).filter(Boolean)
+      : (options.sla ? [String(options.sla).trim().toUpperCase()] : []);
     const coverage = String(options.coverage || "all").toLowerCase();
     const direction = String(options.direction || "all").toLowerCase();
     const airline = String(options.airline || "all").trim().toUpperCase();
@@ -442,7 +458,7 @@
         const start = parseDutyTime(row.date, row.start_utc);
         const end = parseDutyTime(row.date, row.release_utc);
         if (!start || !end || start >= new Date(window.end) || end <= new Date(window.start)) continue;
-        if (selectedSla && String(row.sla || "").toUpperCase() !== selectedSla) continue;
+        if (selectedSlas.length > 0 && !selectedSlas.includes(String(row.sla || "").toUpperCase())) continue;
 
         if (airline !== "ALL" && airlineCode(row).toUpperCase() !== airline) continue;
 
@@ -529,13 +545,16 @@
     let blockStart = timed[0]?.start || null;
     const violations = [];
     for (let index = 1; index < timed.length; index += 1) {
-      const gap = Math.round((timed[index].start - timed[index - 1].end) / 60000);
+      const prev = timed[index - 1];
+      const curr = timed[index];
+      const isSameFlight = isSameFlightDuty(prev.row, curr.row);
+      const gap = Math.round((curr.start - prev.end) / 60000);
       shortestBufferMinutes = shortestBufferMinutes == null ? gap : Math.min(shortestBufferMinutes, gap);
-      if (gap < 0) violations.push("overlap");
-      else if (gap < bufferMinutes) violations.push("buffer");
+      if (gap < 0 && !isSameFlight) violations.push("overlap");
+      else if (gap < bufferMinutes && !isSameFlight) violations.push("buffer");
       if (breakMinutes > 0 && gap >= breakMinutes) {
-        longestContinuousMinutes = Math.max(longestContinuousMinutes, Math.round((timed[index - 1].end - blockStart) / 60000));
-        blockStart = timed[index].start;
+        longestContinuousMinutes = Math.max(longestContinuousMinutes, Math.round((prev.end - blockStart) / 60000));
+        blockStart = curr.start;
       }
     }
     if (timed.length) longestContinuousMinutes = Math.max(longestContinuousMinutes, Math.round((timed.at(-1).end - blockStart) / 60000));
@@ -1207,7 +1226,8 @@
             const curr = timed[i];
             const gap = Math.round((curr.start - prev.end) / 60000);
 
-            if (isTargetConflict(gap)) {
+            const isSameFlight = isSameFlightDuty(prev.row, curr.row);
+            if (isTargetConflict(gap) && !isSameFlight) {
               const targetDutiesToMove = [curr.row, prev.row];
 
               for (const dutyToMove of targetDutiesToMove) {

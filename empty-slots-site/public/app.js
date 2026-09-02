@@ -136,6 +136,7 @@ const resultsSlaCheckboxes = document.getElementById("resultsSlaCheckboxes");
 const resultsSlaAllBtn = document.getElementById("resultsSlaAllBtn");
 const resultsSlaClearBtn = document.getElementById("resultsSlaClearBtn");
 const slaChipsContainer = document.getElementById("slaChipsContainer");
+const rosterSlaChipsContainer = document.getElementById("rosterSlaChipsContainer");
 
 let latestRows = [];
 let originalRows = [];
@@ -144,6 +145,7 @@ let latestScannedDates = [];
 let latestStaffDirectory = [];
 let filteredRows = [];
 let selectedResultsSlas = [];
+let selectedRosterSlas = [];
 let currentSortCol = "date";
 let currentSortDir = "asc";
 let progressTimer = null;
@@ -156,6 +158,7 @@ let showRosterDutyTotals = localStorage.getItem("gsrmRosterDutyTotals") === "tru
 let currentSingleDayScale = parseInt(localStorage.getItem("gsrm_roster_timeline_scale") || "3600", 10);
 let rosterViewMode = localStorage.getItem("gsrmRosterViewMode") === "airline" ? "airline" : "staff";
 let currentAutoPlan = null;
+let selectedPlannerStaff = new Set();
 let plannerAvailabilityRules = [];
 let plannerStaffContracts = {};
 try { plannerStaffContracts = JSON.parse(localStorage.getItem("gsrmPlannerStaffContractsV1") || "{}"); } catch { plannerStaffContracts = {}; }
@@ -355,7 +358,17 @@ maxDutyGapUnit.addEventListener("change", () => {
   previousDutyGapUnit = maxDutyGapUnit.value;
   refreshReplacementCandidates();
 });
-[rosterDate, rosterEndDate, rosterStartTime, rosterEndTime, rosterStatus, rosterSla].forEach((control) => control.addEventListener("input", applyFilters));
+[rosterDate, rosterEndDate, rosterStartTime, rosterEndTime, rosterStatus].forEach((control) => control.addEventListener("input", applyFilters));
+rosterSla.addEventListener("change", () => {
+  if (rosterSla.value) {
+    selectedRosterSlas = [rosterSla.value];
+  } else {
+    selectedRosterSlas = [];
+  }
+  const slas = [...new Set(latestRows.map((row) => row.sla).filter(Boolean))].sort();
+  renderRosterSlaChips(slas);
+  applyFilters();
+});
 rosterStaffSearch.addEventListener("input", applyFilters);
 rosterPeriodMode.addEventListener("change", applyRosterPeriodMode);
 rosterMonth.addEventListener("input", applyRosterPeriodMode);
@@ -465,6 +478,38 @@ document.querySelectorAll(".step-toggle-btn").forEach((btn) => {
   });
 });
 
+let showOverlapHighlightsActive = false;
+
+function shouldShowOverlapVisuals() {
+  if (showOverlapHighlightsActive) return true;
+  if (typeof rosterStatus !== "undefined" && rosterStatus && (rosterStatus.value === "overlap" || rosterStatus.value === "overlaps")) return true;
+  const flightScheduleCoverageFilter = document.getElementById("flightScheduleCoverageFilter");
+  if (flightScheduleCoverageFilter && flightScheduleCoverageFilter.value === "overlaps") return true;
+  return false;
+}
+
+function updateOverlapHighlightToggleState() {
+  const toggleBtn = document.getElementById("rosterHighlightOverlapsBtn");
+  const isVisualsActive = shouldShowOverlapVisuals();
+  if (toggleBtn) {
+    toggleBtn.classList.toggle("active", isVisualsActive);
+    toggleBtn.setAttribute("aria-pressed", String(isVisualsActive));
+  }
+}
+
+const rosterHighlightOverlapsBtn = document.getElementById("rosterHighlightOverlapsBtn");
+if (rosterHighlightOverlapsBtn) {
+  rosterHighlightOverlapsBtn.addEventListener("click", () => {
+    showOverlapHighlightsActive = !showOverlapHighlightsActive;
+    updateOverlapHighlightToggleState();
+    if (rosterViewMode === "airline") {
+      renderRosterAirlineBoard();
+    } else {
+      renderRoster();
+    }
+  });
+}
+
 function syncRosterPresetChips() {
   const currentStatus = rosterStatus ? rosterStatus.value : "";
   const presetBtns = document.querySelectorAll("#rosterPresetFilterGroup .preset-chip");
@@ -480,6 +525,7 @@ function syncRosterPresetChips() {
       btn.classList.toggle("active", currentStatus === "overlap" || currentStatus === "overlaps");
     }
   });
+  updateOverlapHighlightToggleState();
 }
 
 // Preset View Filter chips for Roster
@@ -492,13 +538,18 @@ rosterPresetBtns.forEach((btn) => {
     const preset = btn.dataset.preset;
     if (preset === "all") {
       rosterStatus.value = "";
+      showOverlapHighlightsActive = false;
     } else if (preset === "duty") {
       rosterStatus.value = "duty";
+      showOverlapHighlightsActive = false;
     } else if (preset === "free") {
       rosterStatus.value = "free";
+      showOverlapHighlightsActive = false;
     } else if (preset === "overlap") {
       rosterStatus.value = "overlap";
+      showOverlapHighlightsActive = true;
     }
+    updateOverlapHighlightToggleState();
     applyFilters();
   });
 });
@@ -642,8 +693,8 @@ function switchTab(tab) {
   gapsTableWrap.style.display = tab === "gaps" ? "block" : "none";
   replacementsLayout.style.display = tab === "replacements" ? "grid" : "none";
   rosterLayout.style.display = tab === "roster" ? "block" : "none";
-  insightsLayout.style.display = tab === "insights" ? "block" : "none";
-  historyLayout.style.display = tab === "history" ? "block" : "none";
+  insightsLayout.style.display = tab === "insights" ? "flex" : "none";
+  historyLayout.style.display = tab === "history" ? "flex" : "none";
   tableFilterBar.style.display = ["gaps", "replacements"].includes(tab) ? "grid" : "none";
   replacementDateFilterGroup.hidden = tab !== "replacements";
   resultsMissingFilterGroup.hidden = tab === "replacements";
@@ -2201,9 +2252,46 @@ function updateRosterFilters() {
     const option = document.createElement("option");
     option.value = sla;
     option.textContent = sla;
+    if (selectedRosterSlas.includes(sla)) option.selected = true;
     rosterSla.appendChild(option);
   }
-  rosterSla.value = slas.includes(currentSla) ? currentSla : "";
+  rosterSla.value = slas.includes(currentSla) ? currentSla : (selectedRosterSlas.length === 1 ? selectedRosterSlas[0] : "");
+  renderRosterSlaChips(slas);
+}
+
+function renderRosterSlaChips(availableSlas) {
+  if (!rosterSlaChipsContainer) return;
+  const slas = availableSlas && availableSlas.length > 0 ? availableSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS"];
+
+  let html = `<button type="button" class="sla-chip ${selectedRosterSlas.length === 0 ? "active" : ""}" data-sla="all">All SLAs</button>`;
+  for (const sla of slas) {
+    const isActive = selectedRosterSlas.includes(sla);
+    html += `<button type="button" class="sla-chip ${isActive ? "active" : ""}" data-sla="${escapeHtml(sla)}">${escapeHtml(sla)}</button>`;
+  }
+  rosterSlaChipsContainer.innerHTML = html;
+
+  rosterSlaChipsContainer.querySelectorAll(".sla-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sla = btn.dataset.sla;
+      if (sla === "all") {
+        selectedRosterSlas = [];
+        rosterSla.value = "";
+      } else {
+        if (selectedRosterSlas.includes(sla)) {
+          selectedRosterSlas = selectedRosterSlas.filter((s) => s !== sla);
+        } else {
+          selectedRosterSlas.push(sla);
+        }
+        if (selectedRosterSlas.length === 1) {
+          rosterSla.value = selectedRosterSlas[0];
+        } else {
+          rosterSla.value = "";
+        }
+      }
+      renderRosterSlaChips(availableSlas);
+      applyFilters();
+    });
+  });
 }
 
 function resetRosterFilters() {
@@ -2214,6 +2302,7 @@ function resetRosterFilters() {
   rosterEndTime.value = "23:59";
   rosterStaffSearch.value = "";
   rosterStatus.value = "";
+  selectedRosterSlas = [];
   rosterSla.value = "";
   rosterLocalTimeToggle.checked = false;
   rosterTimeModeLabel.textContent = "Zulu";
@@ -2229,6 +2318,8 @@ function resetRosterFilters() {
     btn.classList.toggle("active", btn.dataset.preset === "all");
   });
 
+  const slas = [...new Set(latestRows.map((row) => row.sla).filter(Boolean))].sort();
+  renderRosterSlaChips(slas);
   syncRosterPresetChips();
   applyFilters();
 }
@@ -2605,7 +2696,7 @@ function getAirlineRosterDays(roster) {
   const sourceRows = getRosterSourceRows();
   return OperationsUtils.buildFlightSchedule(sourceRows, roster.dailyWindows, {
     query: scheduleQuery,
-    sla: rosterSla.value,
+    sla: selectedRosterSlas.length > 0 ? selectedRosterSlas : rosterSla.value,
     coverage: flightScheduleCoverageFilter?.value || "all",
     direction: flightScheduleDirectionFilter?.value || "all",
     airline: flightScheduleAirlineFilter?.value || "all",
@@ -2693,10 +2784,15 @@ function renderRoster() {
       const hasLocalEdit = rosterStateMode !== "original" && person.byDay.flat().some((assignment) => getDutyRosterChange(assignment).changed);
       if (hasLocalEdit) tr.classList.add("roster-edited-row");
       const isTracked = typeof isStaffTracked === "function" ? isStaffTracked(person.key) : false;
-      const trackTitle = `View change history for ${escapeHtml(person.name)}`;
-      const trackBtnHtml = isTracked
-        ? `<button type="button" class="person-track-changes-btn" data-person-key="${escapeHtml(person.key)}" title="${trackTitle}" style="border:none; background:transparent; cursor:pointer; padding:0 2px; color:var(--primary, #2563eb); display:inline-flex; align-items:center;" aria-label="Tracked"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM2 8a6 6 0 1 1 12 0A6 6 0 0 1 2 8zm6.5-3v3.25l2.25 1.35-.75 1.2-3-1.8V5h1.5z"/></svg></button>`
-        : "";
+      const trackTitle = `View Roster Audit & Change History for ${escapeHtml(person.name)}`;
+      const auditPillClass = hasLocalEdit ? "audit-pill-btn edited" : (isTracked ? "audit-pill-btn active" : "audit-pill-btn");
+      const trackBtnHtml = `
+        <button type="button" class="person-track-changes-btn ${auditPillClass}" data-person-key="${escapeHtml(person.key)}" title="${trackTitle}" aria-label="Audit Log">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Audit</span>
+          ${hasLocalEdit ? `<b class="audit-edit-dot" title="Local roster edits present"></b>` : ''}
+        </button>
+      `;
       const displayInitials = (person.station || person.initials) && (person.station || person.initials) !== person.name && (person.station || person.initials) !== person.key
         ? (person.station || person.initials)
         : "MUC";
@@ -2748,13 +2844,18 @@ function renderRoster() {
         }
       }
 
+      const personHasOverlap = shouldShowOverlapVisuals() && person.byDay.some((dayAssignments) =>
+        dayAssignments.length > 1 && OperationsUtils.inspectDaySchedule(dayAssignments, getPlannerOptions()).violations.includes("overlap")
+      );
+      const overlapPillHtml = personHasOverlap ? ` <span class="person-overlap-pill" title="Staff member has overlapping shift assignments on one or more dates">⚠️ Overlap</span>` : "";
+
       tr.innerHTML = `
         <td class="roster-person-cell" draggable="true" data-staff-key="${escapeHtml(person.key)}" data-staff-name="${escapeHtml(person.name)}" data-staff-initials="${escapeHtml(person.initials)}" title="Drag ${escapeHtml(person.name)} to assign/replace on a duty slot">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <strong>${escapeHtml(person.name)}</strong>
             ${trackBtnHtml}
           </div>
-          <span>${escapeHtml(displayInitials)}${hasLocalEdit ? ' <b class="edited-badge">Edited</b>' : ""}</span>
+          <span>${escapeHtml(displayInitials)}${hasLocalEdit ? ' <b class="edited-badge">Edited</b>' : ""}${overlapPillHtml}</span>
           ${singleDaySummaryBadgeHtml}
         </td>
         ${person.byDay.map((assignments, index) => renderRosterDayCell(assignments, roster.dailyWindows[index], showRosterDutyTotals, person, roster.dailyWindows.length === 1)).join("")}
@@ -2770,6 +2871,7 @@ function renderRoster() {
   csvBtn.disabled = shown.length === 0;
   rosterBody.dataset.visibleStaffKeys = JSON.stringify(shown.map((person) => person.key));
   attachRosterDragAndDropListeners();
+  updateGlobalRosterAuditBadge();
 }
 
 function removeStaffFromDutyRow(rowKey, staffKeyOrName) {
@@ -2926,7 +3028,9 @@ function renderAirlineRoster(roster) {
             const staffIndex = staffRefs.push({ label, identity, duty }) - 1;
             const displayName = identity?.name || label;
             const stationTag = identity?.initials && identity.initials !== displayName ? identity.initials : "";
-            return `<button type="button" draggable="true" class="board-staff-btn" data-staff-index="${staffIndex}" data-duty-row-key="${escapeHtml(rowKey)}" data-staff-key="${escapeHtml(identity?.key || "")}" data-staff-name="${escapeHtml(displayName)}" data-staff-initials="${escapeHtml(identity?.initials || "")}" title="Drag or click to replace ${escapeHtml(displayName)}"><strong>${escapeHtml(displayName)}</strong>${stationTag ? `<small>${escapeHtml(stationTag)}</small>` : ""}<span class="board-staff-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(identity?.key || displayName)}" title="Remove staff from duty">×</span></button>`;
+            const hasOverlap = shouldShowOverlapVisuals() && isStaffOverlappingOnDate(identity?.key || label, duty.date);
+            const overlapBadge = hasOverlap ? `<span class="overlap-badge" title="Staff member has an overlapping duty shift on this date!">⚠️ Overlap</span>` : "";
+            return `<button type="button" draggable="true" class="board-staff-btn${hasOverlap ? " has-overlap" : ""}" data-staff-index="${staffIndex}" data-duty-row-key="${escapeHtml(rowKey)}" data-staff-key="${escapeHtml(identity?.key || "")}" data-staff-name="${escapeHtml(displayName)}" data-staff-initials="${escapeHtml(identity?.initials || "")}" title="${hasOverlap ? "OVERLAP WARNING: Staff member has an overlapping shift on this date! · " : ""}Drag or click to replace ${escapeHtml(displayName)}"><strong>${escapeHtml(displayName)}</strong>${stationTag ? `<small>${escapeHtml(stationTag)}</small>` : ""}${overlapBadge}<span class="board-staff-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(identity?.key || displayName)}" title="Remove staff from duty">×</span></button>`;
           }).join("") : '<span class="board-unassigned">Unassigned</span>';
           const planned = currentAutoPlan?.slots.filter((slot) => slot.personKey && OperationsUtils.rowKey(slot.row) === rowKey) || [];
           const plannedStaff = planned.map((slot) => {
@@ -3320,7 +3424,11 @@ function filterRosterPeople(rows) {
         return false;
       }
     }
-    if (rosterSla.value && !person.overlapping.some((row) => row.sla === rosterSla.value)) return false;
+    if (selectedRosterSlas.length > 0) {
+      if (!person.overlapping.some((row) => selectedRosterSlas.includes(row.sla))) return false;
+    } else if (rosterSla.value) {
+      if (!person.overlapping.some((row) => row.sla === rosterSla.value)) return false;
+    }
     if (query) {
       const visibleAssignments = person.byDay.flat();
       const searchable = [person.initials, person.name, ...visibleAssignments.flatMap((row) => [row.flight, row.route, row.sla])].join(" ").toLowerCase();
@@ -3540,6 +3648,35 @@ function hasAssignableShiftForPersonOnDate(personKey, isoDate, personAssignments
   });
 }
 
+function isRowOverlappingInAssignments(targetRow, assignments) {
+  if (!assignments || assignments.length <= 1 || !targetRow) return false;
+  const targetStart = OperationsUtils.parseDutyTime(targetRow.date, targetRow.start_utc);
+  const targetEnd = OperationsUtils.parseDutyTime(targetRow.date, targetRow.release_utc);
+  if (!targetStart || !targetEnd) return false;
+
+  return assignments.some((other) => {
+    if (other === targetRow || OperationsUtils.rowKey(other) === OperationsUtils.rowKey(targetRow)) return false;
+    const flightTarget = String(targetRow.flight_id || targetRow.flight || "").trim().toUpperCase();
+    const flightOther = String(other.flight_id || other.flight || "").trim().toUpperCase();
+    const dateTarget = String(targetRow.date || "").trim();
+    const dateOther = String(other.date || "").trim();
+    if (flightTarget && flightOther && flightTarget === flightOther && dateTarget && dateOther && dateTarget === dateOther) {
+      return false;
+    }
+    const otherStart = OperationsUtils.parseDutyTime(other.date, other.start_utc);
+    const otherEnd = OperationsUtils.parseDutyTime(other.date, other.release_utc);
+    if (!otherStart || !otherEnd) return false;
+    return targetStart < otherEnd && targetEnd > otherStart;
+  });
+}
+
+function isStaffOverlappingOnDate(staffKeyOrName, date) {
+  if (!staffKeyOrName || !date) return false;
+  const staffDuties = latestRows.filter((r) => r.date === date && (r.staff || []).some((s) => isSameStaff(s, staffKeyOrName)));
+  if (staffDuties.length <= 1) return false;
+  return OperationsUtils.inspectDaySchedule(staffDuties, getPlannerOptions()).violations.includes("overlap");
+}
+
 function calculateDayBreakMinutes(assignments, useLocal = false) {
   if (!assignments || assignments.length < 2) return 0;
   const sorted = [...assignments].map((row) => {
@@ -3564,6 +3701,10 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
   const dutyHours = showTotal ? formatHours(OperationsUtils.summarizeDutyHours(assignments, [window]).totalMinutes) : "";
   const breakMins = calculateDayBreakMinutes(assignments, useLocal);
   const breakSubtext = breakMins > 0 ? ` <small class="break-subtext" style="opacity:0.85; font-weight:normal; font-size:10px;" title="Shift break in-between: ${formatHours(breakMins)}h (${breakMins}m)">(+${formatHours(breakMins)}h break)</small>` : "";
+  const dayInsp = assignments.length > 1 ? OperationsUtils.inspectDaySchedule(assignments, getPlannerOptions()) : { violations: [] };
+  const showVisuals = shouldShowOverlapVisuals();
+  const hasDayOverlap = showVisuals && (dayInsp.violations || []).includes("overlap");
+  const cellOverlapClass = hasDayOverlap ? " has-overlap" : "";
   const staffKeyAttr = person?.key ? ` data-staff-key="${escapeHtml(person.key)}"` : "";
   const dateAttr = window?.isoDate ? ` data-date="${escapeHtml(window.isoDate)}"` : "";
 
@@ -3623,6 +3764,7 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
         const change = rosterStateMode === "original" ? { changed: false, added: [], removed: [] } : getDutyRosterChange(row);
         const changeText = formatRosterChange(change);
         const rowKey = OperationsUtils.rowKey(row);
+        const isOverlap = showVisuals && isRowOverlappingInAssignments(row, assignments);
 
         let relStart = startMins - winStart;
         if (relStart < 0) relStart += 1440;
@@ -3664,11 +3806,13 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
 
         prevEndMins = endMins;
         const breakTitle = breakGapMins > 0 ? ` · Break from prev duty: ${formatHours(breakGapMins)}h (${breakGapMins}m)` : "";
+        const overlapTitle = isOverlap ? "⚠️ OVERLAP CONFLICT: Shift overlaps with another duty assigned to this person! · " : "";
+        const overlapBadgeHtml = isOverlap ? ` <span class="overlap-badge" title="Overlap Collision with another assigned shift on this day">⚠️ OVERLAP</span>` : "";
 
         elements.push(`
-        <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""}${styleAttr} title="${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}${breakTitle}">
+        <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}${isOverlap ? " duty-overlap" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""}${styleAttr} title="${overlapTitle}${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}${breakTitle}">
           <strong>${escapeHtml(row.flight)}</strong>
-          <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}</span>
+          <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}${overlapBadgeHtml}</span>
           <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
           ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
           ${person?.key ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
@@ -3679,7 +3823,7 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
       return `<div class="duty-strip-row">${elements.join("")}</div>`;
     }).join("");
 
-    return `<td class="roster-day-cell"${staffKeyAttr}${dateAttr}><div class="duty-strip">${rowsHtml}</div>${assignAddBtnHtml}</td>`;
+    return `<td class="roster-day-cell${cellOverlapClass}"${staffKeyAttr}${dateAttr}><div class="duty-strip">${rowsHtml}</div>${assignAddBtnHtml}</td>`;
   }
 
   let sortedAssignments = [...assignments];
@@ -3687,10 +3831,14 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
     const change = rosterStateMode === "original" ? { changed: false, added: [], removed: [] } : getDutyRosterChange(row);
     const changeText = formatRosterChange(change);
     const rowKey = OperationsUtils.rowKey(row);
+    const isOverlap = showVisuals && isRowOverlappingInAssignments(row, assignments);
+    const overlapTitle = isOverlap ? "⚠️ OVERLAP CONFLICT: Shift overlaps with another duty assigned to this person! · " : "";
+    const overlapBadgeHtml = isOverlap ? ` <span class="overlap-badge" title="Overlap Collision with another assigned shift on this day">⚠️ OVERLAP</span>` : "";
+
     return `
-    <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""} title="${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
+    <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}${isOverlap ? " duty-overlap" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""} title="${overlapTitle}${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
       <strong>${escapeHtml(row.flight)}</strong>
-      <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}</span>
+      <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}${overlapBadgeHtml}</span>
       <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
       ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
       ${person?.key ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
@@ -3699,7 +3847,8 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
   `;
   }).join("");
 
-  return `<td class="roster-day-cell"${staffKeyAttr}${dateAttr}>${showTotal ? `<span class="roster-day-total" title="Duty hours: ${dutyHours}h${breakMins > 0 ? ` · In-between break: ${formatHours(breakMins)}h` : ""}">${dutyHours}h${breakSubtext}</span>` : ""}<div class="duty-strip">${duties}</div>${assignAddBtnHtml}</td>`;
+  const dayTotalOverlapBadge = hasDayOverlap ? ` <span class="overlap-badge" title="Overlapping Duty Shifts Detected on this Day!">⚠️ OVERLAP</span>` : "";
+  return `<td class="roster-day-cell${cellOverlapClass}"${staffKeyAttr}${dateAttr}>${showTotal ? `<span class="roster-day-total" title="Duty hours: ${dutyHours}h${breakMins > 0 ? ` · In-between break: ${formatHours(breakMins)}h` : ""}">${dutyHours}h${breakSubtext}${dayTotalOverlapBadge}</span>` : ""}<div class="duty-strip">${duties}</div>${assignAddBtnHtml}</td>`;
 }
 
 function openReplacementFinder(person, duty) {
@@ -3757,13 +3906,17 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
       ? `Back-to-back shift (${bufferHours}h buffer)`
       : `Free window (${bufferHours}h buffer)`;
 
+    const targetDuties = latestRows.filter((r) => r.date === duty.date && (r.staff || []).some((s) => isSameStaff(s, cand.key)));
+    const hasOverlapConflict = cand.connectionGapMinutes < 0 || (targetDuties.length > 0 && isStaffOverlappingOnDate(cand.key, duty.date));
+    const overlapTag = hasOverlapConflict ? `<span class="overlap-badge" style="background:#fee2e2; border-color:#fca5a5; color:#991b1b; font-size:9px; font-weight:800; margin-left:6px;" title="Assigning this candidate creates an overlapping shift conflict!">⚠️ OVERLAP CONFLICT</span>` : "";
+
     const slaExpText = cand.slaExperience ? ` · ${cand.slaExperience} ${duty.sla} duties prior` : "";
     const bestBadge = isBest ? `<span class="inline-candidate-badge-best">Best Match</span>` : "";
 
     return `
-      <div class="inline-candidate-card">
+      <div class="inline-candidate-card${hasOverlapConflict ? " has-overlap" : ""}">
         <div class="inline-candidate-info">
-          <strong>${escapeHtml(cand.name)} <small>(${escapeHtml(cand.initials)})</small>${bestBadge}</strong>
+          <strong>${escapeHtml(cand.name)} <small>(${escapeHtml(cand.initials)})</small>${bestBadge}${overlapTag}</strong>
           <span>${escapeHtml(statusText)}</span>
           <small>${escapeHtml(`${cand.sameDayDuties ? cand.sameDayDuties.length : 0} shifts scheduled today${slaExpText}`)}</small>
         </div>
@@ -6667,31 +6820,198 @@ function saveSelectedGapAction() {
   renderGapValidationState(updated);
 }
 
+let latestAnalyticsWarnings = [];
+let currentWarningFilter = "all";
+let currentWarningSearch = "";
+
+function filterAndRenderWarnings(warnings = latestAnalyticsWarnings) {
+  latestAnalyticsWarnings = warnings;
+  const container = document.getElementById("rosterWarnings");
+  const subLabel = document.getElementById("warningsCountSub");
+  if (!container) return;
+
+  const query = (currentWarningSearch || "").toLowerCase().trim();
+  const filtered = (warnings || []).filter((warning) => {
+    if (currentWarningFilter === "overlap" && !warning.type.toLowerCase().includes("overlap")) return false;
+    if (currentWarningFilter === "gap" && !warning.type.toLowerCase().includes("gap") && !warning.type.toLowerCase().includes("turnaround")) return false;
+    if (currentWarningFilter === "span" && !warning.type.toLowerCase().includes("span") && !warning.type.toLowerCase().includes("hours")) return false;
+
+    if (query) {
+      const typeMatch = (warning.type || "").toLowerCase().includes(query);
+      const textMatch = (warning.text || "").toLowerCase().includes(query);
+      const personMatch = (warning.person?.name || "").toLowerCase().includes(query);
+      return typeMatch || textMatch || personMatch;
+    }
+    return true;
+  });
+
+  if (subLabel) {
+    subLabel.textContent = `Showing ${filtered.length} of ${warnings.length} roster compliance & risk alerts`;
+  }
+
+  if (!filtered.length) {
+    container.innerHTML = `<div class="empty-selection" style="padding: 16px; text-align: center; color: var(--muted); font-size: 11px;">${query || currentWarningFilter !== "all" ? "No roster warnings match current filter criteria." : "No overlap, short-gap, long-span, or invalid-time warnings found."}</div>`;
+    return;
+  }
+
+  container.innerHTML = filtered.slice(0, 60).map((warning) => {
+    const personKey = warning.person?.key || "";
+    const personName = warning.person?.name || warning.person?.initials || "";
+    const isHigh = warning.severity === "high";
+    const badgeText = isHigh ? "High Risk" : "Warning";
+    return `
+      <div class="warning-item ${escapeHtml(warning.severity)}" ${personKey ? `data-person-key="${escapeHtml(personKey)}"` : ""} ${personName ? `data-person-name="${escapeHtml(personName)}"` : ""} title="Click to open ${escapeHtml(personName || "shift")} in Duty Roster" style="cursor: pointer;">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 2px;">
+          <strong style="display: flex; align-items: center; gap: 6px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            ${escapeHtml(warning.type)}
+          </strong>
+          <span class="badge" style="font-size: 9px; padding: 1px 5px; font-weight: 700; ${isHigh ? 'background:#fecaca; color:#991b1b;' : 'background:#fef3c7; color:#92400e;'}">${badgeText}</span>
+        </div>
+        <span>${escapeHtml(warning.text)}</span>
+      </div>
+    `;
+  }).join("");
+
+  initRosterWarningsDelegation();
+}
+
 function renderInsights() {
   const analytics = OperationsUtils.buildAnalytics(latestRows, latestStaffDirectory);
   const staffReqs = OperationsUtils.calculateStaffRequirements(latestRows, latestStaffDirectory, { staffContracts: plannerStaffContracts });
 
-  document.getElementById("insightCards").innerHTML = [
-    [analytics.gapGroups, "Gap groups"],
-    [analytics.missingPositions, "Missing positions"],
-    [analytics.missingHours.toFixed(1), "Missing staff-hours"],
-    [analytics.warnings.length, "Roster warnings"],
-    [`${staffReqs.fteNeeded} FTE / ${staffReqs.pteNeeded} PTE`, "Headcount required"],
-    [`${staffReqs.capacityUtilization}%`, `Capacity utilization (${staffReqs.totalDutyHours}h / ${staffReqs.monthlyStaffCapacityHours}h)`],
-    [`${staffReqs.avgSundayShiftsPerStaff} avg`, `Sunday shift burden (${staffReqs.sundayShiftCount} shifts)`],
-  ].map(([value, label]) => `<div class="insight-card"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join("");
-  renderMetricBars(document.getElementById("coverageByDate"), analytics.byDate);
-  renderMetricBars(document.getElementById("coverageBySla"), analytics.bySla);
-  renderMetricBars(document.getElementById("coverageByHour"), analytics.byHour.map((item) => ({ ...item, key: `${item.key}:00` })));
-  const warnings = document.getElementById("rosterWarnings");
-  warnings.innerHTML = analytics.warnings.length
-    ? analytics.warnings.slice(0, 50).map((warning) => {
-        const personKey = warning.person?.key || "";
-        const personName = warning.person?.name || warning.person?.initials || "";
-        return `<div class="warning-item ${escapeHtml(warning.severity)}" ${personKey ? `data-person-key="${escapeHtml(personKey)}"` : ""} ${personName ? `data-person-name="${escapeHtml(personName)}"` : ""} title="Click to open ${escapeHtml(personName || "shift")} in Duty Roster"><strong>${escapeHtml(warning.type)}</strong><span>${escapeHtml(warning.text)}</span></div>`;
-      }).join("")
-    : '<div class="empty-selection">No overlap, short-gap, long-span, or invalid-time warnings found.</div>';
-  initRosterWarningsDelegation();
+  // Update Header Banner Metadata
+  const periodMeta = document.getElementById("insightsMetaPeriod");
+  if (periodMeta && latestScannedDates.length) {
+    const startStr = latestScannedDates[0];
+    const endStr = latestScannedDates[latestScannedDates.length - 1];
+    periodMeta.textContent = `Period: ${startStr === endStr ? startStr : `${startStr} to ${endStr}`}`;
+  }
+  const modeMeta = document.getElementById("insightsMetaMode");
+  if (modeMeta) {
+    modeMeta.textContent = `Roster: ${rosterStateMode === "edited" ? "Edited Roster" : "Original Roster"}`;
+  }
+
+  // 1. Render Top Executive KPI Cards
+  const cardsContainer = document.getElementById("insightCards");
+  if (cardsContainer) {
+    cardsContainer.className = "insight-cards-grid";
+    cardsContainer.innerHTML = `
+      <div class="kpi-card kpi-card-danger">
+        <div class="kpi-card-header">
+          <span class="kpi-card-label">Uncovered Gaps</span>
+          <div class="kpi-card-icon danger">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+        </div>
+        <div class="kpi-card-body">
+          <div class="kpi-card-value">${escapeHtml(analytics.missingPositions)} <small class="kpi-unit">positions</small></div>
+          <div class="kpi-card-subtext"><strong>${escapeHtml(analytics.gapGroups)}</strong> gap groups · <strong>${analytics.missingHours.toFixed(1)}h</strong> missing</div>
+        </div>
+      </div>
+
+      <div class="kpi-card kpi-card-warning">
+        <div class="kpi-card-header">
+          <span class="kpi-card-label">Roster Warnings</span>
+          <div class="kpi-card-icon warning">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+        </div>
+        <div class="kpi-card-body">
+          <div class="kpi-card-value">${escapeHtml(analytics.warnings.length)} <small class="kpi-unit">alerts</small></div>
+          <div class="kpi-card-subtext">Overlaps, short gaps &amp; long daily spans</div>
+        </div>
+      </div>
+
+      <div class="kpi-card kpi-card-blue">
+        <div class="kpi-card-header">
+          <span class="kpi-card-label">Headcount Needed</span>
+          <div class="kpi-card-icon blue">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+        </div>
+        <div class="kpi-card-body">
+          <div class="kpi-card-value">${escapeHtml(staffReqs.fteNeeded)} <small class="kpi-unit">FTE</small> / ${escapeHtml(staffReqs.pteNeeded)} <small class="kpi-unit">PTE</small></div>
+          <div class="kpi-card-subtext">Contract capacity allocation model</div>
+        </div>
+      </div>
+
+      <div class="kpi-card kpi-card-emerald">
+        <div class="kpi-card-header">
+          <span class="kpi-card-label">Capacity Utilization</span>
+          <div class="kpi-card-icon emerald">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+        </div>
+        <div class="kpi-card-body">
+          <div class="kpi-card-value">${escapeHtml(staffReqs.capacityUtilization)}%</div>
+          <div class="kpi-progress-bar">
+            <div class="kpi-progress-fill" style="width: ${Math.min(100, Math.max(0, staffReqs.capacityUtilization))}%"></div>
+          </div>
+          <div class="kpi-card-subtext">${escapeHtml(staffReqs.totalDutyHours)}h duty / ${escapeHtml(staffReqs.monthlyStaffCapacityHours)}h max</div>
+        </div>
+      </div>
+
+      <div class="kpi-card kpi-card-purple">
+        <div class="kpi-card-header">
+          <span class="kpi-card-label">Sunday Shift Burden</span>
+          <div class="kpi-card-icon purple">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          </div>
+        </div>
+        <div class="kpi-card-body">
+          <div class="kpi-card-value">${escapeHtml(staffReqs.avgSundayShiftsPerStaff)} <small class="kpi-unit">avg/staff</small></div>
+          <div class="kpi-card-subtext"><strong>${escapeHtml(staffReqs.sundayShiftCount)}</strong> total Sunday shifts</div>
+        </div>
+      </div>
+
+      <div class="kpi-card kpi-card-indigo">
+        <div class="kpi-card-header">
+          <span class="kpi-card-label">Station Master Staff</span>
+          <div class="kpi-card-icon indigo">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+        </div>
+        <div class="kpi-card-body">
+          <div class="kpi-card-value" id="kpiMasterStaffValue">${getMasterStaffDirectory().length} <small class="kpi-unit">staff</small></div>
+          <div class="kpi-card-subtext">Known station roster directory</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // 2. Render Metric Bars
+  renderMetricBars(document.getElementById("coverageByDate"), analytics.byDate, "date");
+  renderMetricBars(document.getElementById("coverageBySla"), analytics.bySla, "sla");
+  renderMetricBars(document.getElementById("coverageByHour"), analytics.byHour.map((item) => ({ ...item, key: `${item.key}:00` })), "hour");
+
+  // 3. Render Warnings Monitor
+  filterAndRenderWarnings(analytics.warnings);
+
+  // Setup Warning Filter listeners if not already attached
+  const warningSearchInput = document.getElementById("insightsWarningsSearch");
+  if (warningSearchInput && !warningSearchInput.dataset.listenerAttached) {
+    warningSearchInput.dataset.listenerAttached = "true";
+    warningSearchInput.addEventListener("input", (e) => {
+      currentWarningSearch = e.target.value;
+      filterAndRenderWarnings();
+    });
+  }
+
+  const warningChipsGroup = document.getElementById("warningFilterGroup");
+  if (warningChipsGroup && !warningChipsGroup.dataset.listenerAttached) {
+    warningChipsGroup.dataset.listenerAttached = "true";
+    warningChipsGroup.addEventListener("click", (e) => {
+      const chip = e.target.closest("[data-warning-filter]");
+      if (!chip) return;
+      warningChipsGroup.querySelectorAll(".warning-chip").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      currentWarningFilter = chip.dataset.warningFilter;
+      filterAndRenderWarnings();
+    });
+  }
+
+  // 4. Render Staff Workload Section
   const roster = getRosterRows();
   if (!latestScannedDates.length) {
     clearRosterHoursOverview("Run a scan to calculate workload.");
@@ -6701,15 +7021,41 @@ function renderInsights() {
     const people = filterRosterPeople(roster.rows);
     renderRosterHoursOverview(people, roster.dailyWindows);
     const rosterHoursHint = document.getElementById("rosterHoursHint");
-    const range = rosterDate.value === rosterEndDate.value ? rosterDate.value : `${rosterDate.value} to ${rosterEndDate.value}`;
-    rosterHoursHint.textContent = `${range} · Uses the selected Duty Roster time window and filters. Hours are classified by Europe/Berlin calendar day; public-holiday hours may also be weekday or weekend hours.`;
+    if (rosterHoursHint) {
+      const range = rosterDate.value === rosterEndDate.value ? rosterDate.value : `${rosterDate.value} to ${rosterEndDate.value}`;
+      rosterHoursHint.textContent = `${range} · Uses the selected Duty Roster time window and filters. Hours are classified by Europe/Berlin calendar day; public-holiday hours may also be weekday or weekend hours.`;
+    }
   }
 
+  // Setup Workload Search input listener
+  const workloadSearchInput = document.getElementById("insightsWorkloadSearch");
+  if (workloadSearchInput && !workloadSearchInput.dataset.listenerAttached) {
+    workloadSearchInput.dataset.listenerAttached = "true";
+    workloadSearchInput.addEventListener("input", () => {
+      if (roster && roster.rows) {
+        let people = filterRosterPeople(roster.rows);
+        const query = workloadSearchInput.value.toLowerCase().trim();
+        if (query) {
+          people = people.filter((p) => p.name.toLowerCase().includes(query) || (p.initials || "").toLowerCase().includes(query));
+        }
+        renderRosterHoursOverview(people, roster.dailyWindows);
+      }
+    });
+  }
+
+  // 5. Render Master Staff Directory
   renderMasterStaffDirectoryTable();
+
   const masterStaffSearchInput = document.getElementById("masterStaffSearch");
   if (masterStaffSearchInput && !masterStaffSearchInput.dataset.listenerAttached) {
     masterStaffSearchInput.dataset.listenerAttached = "true";
     masterStaffSearchInput.addEventListener("input", renderMasterStaffDirectoryTable);
+  }
+
+  const masterStaffStationSelect = document.getElementById("masterStaffStationFilter");
+  if (masterStaffStationSelect && !masterStaffStationSelect.dataset.listenerAttached) {
+    masterStaffStationSelect.dataset.listenerAttached = "true";
+    masterStaffStationSelect.addEventListener("change", renderMasterStaffDirectoryTable);
   }
 
   resultCount.textContent = String(analytics.warnings.length);
@@ -7009,22 +7355,26 @@ async function initBackendSync() {
       fetch("/api/history").then((r) => r.json()),
     ]);
 
-    if (notesRes.status === "fulfilled" && notesRes.value?.success && notesRes.value?.notes) {
-      const local = getGapActions();
-      const merged = { ...local, ...notesRes.value.notes };
-      localStorage.setItem(ACTIONS_KEY, JSON.stringify(merged));
-      if (Object.keys(local).length > 0) {
-        fetch("/api/notes", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ notes: merged }),
-        }).catch(() => {});
+    if (notesRes.status === "fulfilled" && notesRes.value) {
+      const backendNotes = notesRes.value.notes || notesRes.value;
+      if (backendNotes && typeof backendNotes === "object" && !Array.isArray(backendNotes) && Object.keys(backendNotes).length > 0) {
+        const local = getGapActions();
+        const merged = { ...local, ...backendNotes };
+        localStorage.setItem(ACTIONS_KEY, JSON.stringify(merged));
+        if (Object.keys(local).length > 0) {
+          fetch("/api/notes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ notes: merged }),
+          }).catch(() => {});
+        }
       }
     }
 
-    if (availRes.status === "fulfilled" && availRes.value?.success && Array.isArray(availRes.value.rules)) {
-      if (availRes.value.rules.length > 0) {
-        plannerAvailabilityRules = availRes.value.rules;
+    if (availRes.status === "fulfilled" && availRes.value) {
+      const rules = Array.isArray(availRes.value.rules) ? availRes.value.rules : (Array.isArray(availRes.value) ? availRes.value : null);
+      if (Array.isArray(rules) && rules.length > 0) {
+        plannerAvailabilityRules = rules;
         localStorage.setItem("gsrmPlannerAvailabilityV1", JSON.stringify(plannerAvailabilityRules));
         renderAvailabilityRules();
       } else if (plannerAvailabilityRules.length > 0) {
@@ -7032,9 +7382,28 @@ async function initBackendSync() {
       }
     }
 
-    if (histRes.status === "fulfilled" && histRes.value?.success && Array.isArray(histRes.value.history)) {
-      if (histRes.value.history.length > 0) {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(histRes.value.history));
+    if (histRes.status === "fulfilled" && histRes.value) {
+      const remoteHistory = Array.isArray(histRes.value.history) ? histRes.value.history : (Array.isArray(histRes.value) ? histRes.value : null);
+      if (Array.isArray(remoteHistory) && remoteHistory.length > 0) {
+        const localHistory = getScanHistory();
+        const historyMap = new Map();
+        for (const item of localHistory) {
+          if (item && item.id) historyMap.set(item.id, item);
+        }
+        for (const item of remoteHistory) {
+          if (item && item.id) {
+            const existing = historyMap.get(item.id);
+            if (!existing || (Array.isArray(item.rows) && !Array.isArray(existing.rows))) {
+              historyMap.set(item.id, item);
+            }
+          }
+        }
+        const mergedHistory = Array.from(historyMap.values()).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        try {
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(mergedHistory));
+        } catch (e) {
+          console.warn("Could not save merged scan history to localStorage:", e);
+        }
         renderHistory();
       }
     }
@@ -7069,6 +7438,7 @@ function rerunSnapshot(snapshot) {
 }
 
 function restoreSnapshot(snapshot) {
+  if (!snapshot) return;
   if (!Array.isArray(snapshot.rows)) {
     setMessage("This older snapshot contains summary data only and cannot be restored. Rerun it instead.", "warn");
     return;
@@ -7084,10 +7454,22 @@ function restoreSnapshot(snapshot) {
   syncMasterStaffDirectory(snapshot.staffDirectory, snapshot.rows, snapshot.scannedDates);
   updateStaffOptions();
   updateResultsSlaFilter();
+  
+  const sortedDates = [...latestScannedDates].sort();
+  if (sortedDates.length) {
+    rosterDate.value = sortedDates[0];
+    rosterEndDate.value = sortedDates[sortedDates.length - 1];
+  }
   updateRosterFilters();
-  switchTab("gaps");
+
+  if (activeTab === "gaps") {
+    applyFilters();
+  } else {
+    switchTab("gaps");
+  }
+
   setSetupCollapsed(true, readForm());
-  setMessage(`Restored snapshot from ${new Date(snapshot.createdAt).toLocaleString()}. No AVBIS request was made.`);
+  setMessage(`Restored snapshot from ${new Date(snapshot.createdAt).toLocaleString()}. No AVBIS request was made.`, "success");
 }
 
 function exportSnapshot(snapshot) {
@@ -7922,6 +8304,25 @@ function openPersonChangesModal(personKeyOrQuery = null) {
   renderPersonChangesContent(activePersonChangesFilter);
 }
 
+function updateGlobalRosterAuditBadge() {
+  const badgeEl = document.getElementById("rosterAuditBadge");
+  if (!badgeEl) return;
+  const allChanges = getPersonRosterChanges("ALL");
+  if (!allChanges || !allChanges.changes) {
+    badgeEl.textContent = "Audit";
+    badgeEl.style.background = "#2563eb";
+    return;
+  }
+  const editCount = allChanges.changes.filter((c) => c.changeType !== "unchanged").length;
+  if (editCount > 0) {
+    badgeEl.textContent = `${editCount} Edits`;
+    badgeEl.style.background = "#d97706";
+  } else {
+    badgeEl.textContent = "Audit";
+    badgeEl.style.background = "#2563eb";
+  }
+}
+
 function renderPersonChangesContent(filterMode = "all") {
   activePersonChangesFilter = filterMode;
   const select = document.getElementById("personChangesSelect");
@@ -7929,6 +8330,13 @@ function renderPersonChangesContent(filterMode = "all") {
   const toggle = document.getElementById("personTrackingToggle");
   const statusEl = document.getElementById("personTrackingStatus");
   if (!select || !contentEl) return;
+
+  // Update active state of filter chip buttons
+  const filterBtns = document.querySelectorAll("#personChangesFilterGroup button");
+  filterBtns.forEach((btn) => {
+    const mode = btn.getAttribute("data-change-filter") || "all";
+    btn.classList.toggle("active", mode === filterMode);
+  });
 
   const key = select.value || "ALL";
   const isAll = key === "ALL";
@@ -7958,88 +8366,200 @@ function renderPersonChangesContent(filterMode = "all") {
     return;
   }
 
-  const { targetName, counts, changes } = data;
+  const { person, targetName, counts, changes } = data;
 
   let filteredChanges = changes;
   if (filterMode === "modified") {
     filteredChanges = changes.filter((c) => c.changeType !== "unchanged");
+  } else if (filterMode === "added") {
+    filteredChanges = changes.filter((c) => c.changeType === "added");
+  } else if (filterMode === "removed") {
+    filteredChanges = changes.filter((c) => c.changeType === "removed");
+  } else if (filterMode === "replaced") {
+    filteredChanges = changes.filter((c) => c.changeType === "replaced");
+  } else if (filterMode === "timing") {
+    filteredChanges = changes.filter((c) => c.changeType === "modified");
   }
 
-  let html = `
-    ${(!tracked && !isAll) ? `<div style="background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:8px 12px; border-radius:6px; font-size:12px; margin-bottom:12px;">ℹ️ Roster change tracking is currently paused for <strong>${escapeHtml(targetName)}</strong>. Check "Track roster changes for this staff member" above to resume tracking.</div>` : ""}
-    <div style="background: #f8fafc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 8px; text-align: center;">
-      <div>
-        <span style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;">Original</span>
-        <div style="font-size:18px; font-weight:800; color:var(--ink);">${counts.totalOriginal}</div>
+  let html = "";
+
+  // 1. Staff Profile Header Card or Scope Header Card
+  if (!isAll && person) {
+    const initials = escapeHtml(person.initials || (person.name ? person.name.split(" ").map(n=>n[0]).join("") : "ST"));
+    const contractLimit = typeof getContractHoursLimit === "function" ? getContractHoursLimit(person) : 80;
+    const contractTag = contractLimit === 160 ? "Full-Time (160h)" : "Part-Time (80h)";
+
+    html += `
+      <div class="audit-profile-card">
+        <div class="audit-profile-main">
+          <div class="audit-avatar">${initials}</div>
+          <div class="audit-profile-info">
+            <div class="audit-profile-name">${escapeHtml(targetName)}</div>
+            <div class="audit-profile-meta">
+              <span class="audit-meta-pill">Key: ${escapeHtml(person.key || key)}</span>
+              <span class="audit-meta-pill contract">${contractTag}</span>
+              <span class="audit-meta-pill total">${counts.totalCurrent} Active Duties</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          ${!tracked
+            ? `<span class="audit-warning-pill" title="Tracking paused for this staff member">⚠️ Tracking Paused</span>`
+            : `<span class="audit-active-pill" title="Tracking active">✓ Tracking Active</span>`}
+        </div>
       </div>
-      <div>
-        <span style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;">Current</span>
-        <div style="font-size:18px; font-weight:800; color:var(--ink);">${counts.totalCurrent}</div>
+    `;
+  } else if (!isAll) {
+    html += `
+      <div class="audit-profile-card">
+        <div class="audit-profile-main">
+          <div class="audit-avatar">ST</div>
+          <div class="audit-profile-info">
+            <div class="audit-profile-name">${escapeHtml(targetName)}</div>
+            <div class="audit-profile-meta">
+              <span class="audit-meta-pill total">${counts.totalCurrent} Active Duties</span>
+            </div>
+          </div>
+        </div>
       </div>
-      <div>
-        <span style="font-size:10px; font-weight:700; color:#16a34a; text-transform:uppercase;">Added</span>
-        <div style="font-size:18px; font-weight:800; color:#16a34a;">+${counts.added}</div>
+    `;
+  }
+
+  // 2. Tracking Warning Banner if Paused
+  if (!tracked && !isAll) {
+    html += `<div style="background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:8px 12px; border-radius:8px; font-size:11px; font-weight:600;">ℹ️ Roster change tracking is currently paused for <strong>${escapeHtml(targetName)}</strong>. Check "Track roster changes" above to resume tracking.</div>`;
+  }
+
+  // 3. Stat Dashboard Cards Grid
+  html += `
+    <div class="audit-kpi-grid">
+      <div class="audit-kpi-card orig">
+        <span class="kpi-title">Original</span>
+        <span class="kpi-num">${counts.totalOriginal}</span>
+        <span class="kpi-sub">Scanned</span>
       </div>
-      <div>
-        <span style="font-size:10px; font-weight:700; color:#dc2626; text-transform:uppercase;">Removed</span>
-        <div style="font-size:18px; font-weight:800; color:#dc2626;">-${counts.removed}</div>
+      <div class="audit-kpi-card curr">
+        <span class="kpi-title">Current</span>
+        <span class="kpi-num">${counts.totalCurrent}</span>
+        <span class="kpi-sub">Active Plan</span>
       </div>
-      <div>
-        <span style="font-size:10px; font-weight:700; color:#d97706; text-transform:uppercase;">Replaced</span>
-        <div style="font-size:18px; font-weight:800; color:#d97706;">${counts.replaced}</div>
+      <div class="audit-kpi-card added">
+        <span class="kpi-title">Added</span>
+        <span class="kpi-num">+${counts.added}</span>
+        <span class="kpi-sub">Assigned</span>
       </div>
-      <div>
-        <span style="font-size:10px; font-weight:700; color:#2563eb; text-transform:uppercase;">Modified</span>
-        <div style="font-size:18px; font-weight:800; color:#2563eb;">${counts.modified || 0}</div>
+      <div class="audit-kpi-card removed">
+        <span class="kpi-title">Removed</span>
+        <span class="kpi-num">-${counts.removed}</span>
+        <span class="kpi-sub">Unassigned</span>
+      </div>
+      <div class="audit-kpi-card replaced">
+        <span class="kpi-title">Replaced</span>
+        <span class="kpi-num">${counts.replaced}</span>
+        <span class="kpi-sub">Swapped</span>
+      </div>
+      <div class="audit-kpi-card modified">
+        <span class="kpi-title">Timing</span>
+        <span class="kpi-num">${counts.modified || 0}</span>
+        <span class="kpi-sub">Shifted</span>
       </div>
     </div>
   `;
 
+  // 4. Shift Change Item Cards List & Section Header
+  html += `
+    <div class="audit-section-header">
+      <div class="audit-section-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        <strong>Roster Duty Details &amp; Audit Log</strong>
+      </div>
+      <span class="audit-section-count">${filteredChanges.length} ${filteredChanges.length === 1 ? "duty" : "duties"}</span>
+    </div>
+  `;
+
   if (!filteredChanges.length) {
-    html += `<div class="empty-selection">${filterMode === "modified" ? `No roster modifications detected for ${escapeHtml(targetName)}. Roster matches original scan.` : `No scheduled duties found for ${escapeHtml(targetName)} across scanned dates.`}</div>`;
+    let emptyMsg = `No scheduled duties found for ${escapeHtml(targetName)} matching current filter.`;
+    if (filterMode === "modified") {
+      emptyMsg = `No roster modifications detected for ${escapeHtml(targetName)}. Roster matches original scan.`;
+    } else if (filterMode === "added") {
+      emptyMsg = `No newly added shifts for ${escapeHtml(targetName)}.`;
+    } else if (filterMode === "removed") {
+      emptyMsg = `No removed shifts for ${escapeHtml(targetName)}.`;
+    } else if (filterMode === "replaced") {
+      emptyMsg = `No replaced staff swaps for ${escapeHtml(targetName)}.`;
+    } else if (filterMode === "timing") {
+      emptyMsg = `No timing adjustments for ${escapeHtml(targetName)}.`;
+    }
+    html += `<div class="empty-selection" style="padding:24px 16px; text-align:center;">${emptyMsg}</div>`;
   } else {
-    html += '<div style="display:flex; flex-direction:column; gap:8px; max-height:380px; overflow-y:auto; padding-right:4px;">';
+    html += '<div class="audit-cards-list">';
     for (const item of filteredChanges) {
-      let badgeClass = "badge-gray";
+      let badgeClass = "unchanged";
       let badgeText = "Unchanged";
-      let borderColor = "var(--line)";
-      let bgColor = "#ffffff";
+      let iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`;
 
       if (item.changeType === "added") {
-        badgeClass = "badge-green";
-        badgeText = "Added";
-        borderColor = "#bbf7d0";
-        bgColor = "#f0fdf4";
+        badgeClass = "added";
+        badgeText = "Added to Roster";
+        iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
       } else if (item.changeType === "removed") {
-        badgeClass = "badge-red";
+        badgeClass = "removed";
         badgeText = "Removed";
-        borderColor = "#fecaca";
-        bgColor = "#fef2f2";
+        iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
       } else if (item.changeType === "replaced") {
-        badgeClass = "badge-amber";
-        badgeText = "Replaced";
-        borderColor = "#fde68a";
-        bgColor = "#fffbeb";
+        badgeClass = "replaced";
+        badgeText = "Replaced Staff";
+        iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 3l4 4-4 4"/><path d="M20 7H4"/><path d="M8 21l-4-4 4-4"/><path d="M4 17h16"/></svg>`;
       } else if (item.changeType === "modified") {
-        badgeClass = "badge-blue";
-        badgeText = "Modified";
-        borderColor = "#bfdbfe";
-        bgColor = "#eff6ff";
+        badgeClass = "modified";
+        badgeText = "Timing Shifted";
+        iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+      }
+
+      // Airline Logo URL or Logo Image
+      const logoHtml = typeof OperationsUtils !== "undefined" && OperationsUtils.getAirlineLogoImg
+        ? OperationsUtils.getAirlineLogoImg(item.flight, 22)
+        : "";
+
+      // Calculate shift duration in hours
+      let durationStr = "";
+      if (item.start_utc && item.release_utc && typeof calculateMinutesBetween === "function") {
+        const durMins = calculateMinutesBetween(item.start_utc, item.release_utc);
+        if (durMins > 0) durationStr = (durMins / 60).toFixed(1);
       }
 
       html += `
-        <div style="background:${bgColor}; border:1px solid ${borderColor}; border-radius:6px; padding:10px 12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-          <div>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <strong style="font-size:13px;">${escapeHtml(item.flight)}</strong>
-              <span style="font-size:11px; font-weight:600; color:var(--muted);">${escapeHtml(item.sla || "")}</span>
-              <span class="badge ${badgeClass}" style="font-size:10px; padding:1px 6px;">${badgeText}</span>
+        <div class="audit-shift-card ${badgeClass}">
+          <div class="audit-card-head">
+            <div class="audit-card-flight">
+              ${logoHtml}
+              <strong>${escapeHtml(item.flight)}</strong>
+              ${item.sla ? `<span class="compact-sla" data-sla="${escapeHtml(item.sla)}">${escapeHtml(item.sla)}</span>` : ""}
             </div>
-            <div style="font-size:11px; color:var(--muted); margin-top:2px;">
-              Date: ${escapeHtml(item.date)} · Time: ${escapeHtml(item.start_utc)}–${escapeHtml(item.release_utc)} UTC
-            </div>
-            ${item.note ? `<div style="font-size:11px; font-weight:600; color:#334155; margin-top:4px;">Note: ${escapeHtml(item.note)}</div>` : ""}
+            <span class="audit-type-badge ${badgeClass}">
+              ${iconSvg}
+              <span>${badgeText}</span>
+            </span>
           </div>
+
+          <div class="audit-card-body">
+            <div class="audit-detail-chip">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span>${escapeHtml(item.date)}</span>
+            </div>
+            <div class="audit-detail-chip">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span>${escapeHtml(item.start_utc)} – ${escapeHtml(item.release_utc)} UTC</span>
+              ${durationStr ? `<small>(${durationStr}h)</small>` : ""}
+            </div>
+          </div>
+
+          ${item.note ? `
+            <div class="audit-card-note">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <span>${escapeHtml(item.note)}</span>
+            </div>
+          ` : ""}
         </div>
       `;
     }
@@ -8496,11 +9016,17 @@ function updateSwapperValidation() {
       confirmBtn.textContent = mode === "swap" ? "Confirm 2-Way Swap" : "Confirm Duty Transfer";
     }
   } else {
+    const isOverlapConflict = (result.messages || []).some((m) => m.toLowerCase().includes("overlap")) ||
+      (result.staffA?.violations || []).includes("overlap") ||
+      (result.staffB?.violations || []).includes("overlap");
     if (badge) {
-      badge.textContent = "Conflict Detected";
-      badge.className = "validation-status-pill pill-invalid";
+      badge.textContent = isOverlapConflict ? "⚠️ OVERLAP COLLISION" : "Conflict Detected";
+      badge.className = isOverlapConflict ? "validation-status-pill pill-invalid" : "validation-status-pill pill-invalid";
     }
-    if (text) text.textContent = `Schedule conflict: ${result.messages.join(" • ")}`;
+    if (text) {
+      const msgStr = result.messages.map((m) => m.replace(/overlap/gi, "⚠️ OVERLAP COLLISION")).join(" • ");
+      text.textContent = `Schedule conflict: ${msgStr}`;
+    }
     if (confirmBtn) {
       confirmBtn.disabled = false;
       confirmBtn.textContent = mode === "swap" ? "Override & Swap (With Warning)" : "Override & Transfer (With Warning)";
@@ -8509,11 +9035,14 @@ function updateSwapperValidation() {
 
   if (metricsBox) {
     metricsBox.hidden = false;
-    if (staffAName) staffAName.textContent = `${sourceStaff.name} (After)`;
+    const aOverlap = (result.staffA?.violations || []).includes("overlap") ? ` <span class="overlap-badge">⚠️ OVERLAP</span>` : "";
+    const bOverlap = (result.staffB?.violations || []).includes("overlap") ? ` <span class="overlap-badge">⚠️ OVERLAP</span>` : "";
+
+    if (staffAName) staffAName.innerHTML = `${escapeHtml(sourceStaff.name)} (After)${aOverlap}`;
     if (staffAStats) {
       staffAStats.textContent = `Hours: ${formatHours(result.staffA.totalDutyMinutes)}h · Span: ${formatHours(result.staffA.daySpanMinutes)}h · Duties: ${result.staffA.simulatedDutiesCount}`;
     }
-    if (staffBName) staffBName.textContent = `${targetStaff.name} (After)`;
+    if (staffBName) staffBName.innerHTML = `${escapeHtml(targetStaff.name)} (After)${bOverlap}`;
     if (staffBStats) {
       staffBStats.textContent = `Hours: ${formatHours(result.staffB.totalDutyMinutes)}h · Span: ${formatHours(result.staffB.daySpanMinutes)}h · Duties: ${result.staffB.simulatedDutiesCount}`;
     }

@@ -511,6 +511,43 @@ test("buildFlightSchedule filters flights by overlapping shifts coverage", () =>
   assert.deepEqual(overlapsSchedule[0].flights.map((f) => f.flight).sort(), ["LH 100", "LH 200"]);
 });
 
+test("duties for the same flight on the same date are not marked as overlaps", () => {
+  const sameFlightDuties = [
+    { date: "18-Aug-2026", flight: "LH 100", sla: "ARR", start_utc: "08:00", release_utc: "10:00" },
+    { date: "18-Aug-2026", flight: "LH 100", sla: "DEP", start_utc: "09:30", release_utc: "11:30" },
+  ];
+  const differentFlightDuties = [
+    { date: "18-Aug-2026", flight: "LH 100", sla: "ARR", start_utc: "08:00", release_utc: "10:00" },
+    { date: "18-Aug-2026", flight: "LH 200", sla: "DEP", start_utc: "09:30", release_utc: "11:30" },
+  ];
+
+  assert.equal(OperationsUtils.hasOverlappingShifts(sameFlightDuties), false);
+  assert.equal(OperationsUtils.hasOverlappingShifts(differentFlightDuties), true);
+  
+  const sameFlightInsp = OperationsUtils.inspectDaySchedule(sameFlightDuties);
+  assert.equal(sameFlightInsp.violations.includes("overlap"), false);
+  
+  const diffFlightInsp = OperationsUtils.inspectDaySchedule(differentFlightDuties);
+  assert.equal(diffFlightInsp.violations.includes("overlap"), true);
+});
+
+test("buildAirlineRoster and buildFlightSchedule support array of SLAs for multi-select filtering", () => {
+  const rows = [
+    { ...baseDuty, flight_id: "lh1", flight: "LH 100", sla: "GATE" },
+    { ...baseDuty, flight_id: "lh2", flight: "LH 200", sla: "CKIN" },
+    { ...baseDuty, flight_id: "lh3", flight: "LH 300", sla: "LOFO" },
+  ];
+  const windows = [{ isoDate: "2026-08-18", start: new Date("2026-08-18T00:00:00Z"), end: new Date("2026-08-19T00:00:00Z") }];
+
+  const multiAirline = OperationsUtils.buildAirlineRoster(rows, windows, { sla: ["GATE", "LOFO"] });
+  const flightsInMultiAirline = multiAirline[0].airlines.flatMap((a) => a.flights.map((f) => f.flight));
+  assert.deepEqual(flightsInMultiAirline.sort(), ["LH 100", "LH 300"]);
+
+  const multiSchedule = OperationsUtils.buildFlightSchedule(rows, windows, { sla: ["GATE", "CKIN"] });
+  assert.deepEqual(multiSchedule[0].flights.map((f) => f.flight).sort(), ["LH 100", "LH 200"]);
+});
+
+
 
 
 
