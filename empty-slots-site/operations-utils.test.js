@@ -343,3 +343,174 @@ test("comparePersonRosters matches duties by Day of Week when scan dates do not 
   assert.ok(bobSummary.entries[0].personDetail.includes("Replaced: Alice Agent"));
 });
 
+test("generates Google Flights airline logo URLs and HTML image elements", () => {
+  assert.equal(
+    OperationsUtils.getAirlineLogoUrl("LH"),
+    "https://www.gstatic.com/flights/airline_logos/70px/LH.png"
+  );
+  assert.equal(
+    OperationsUtils.getAirlineLogoUrl({ flight: "DE 1402" }, 35, true),
+    "https://www.gstatic.com/flights/airline_logos/35px/dark/DE.png"
+  );
+  const img = OperationsUtils.getAirlineLogoImg("XQ", { size: 28 });
+  assert.ok(img.includes('src="https://www.gstatic.com/flights/airline_logos/35px/XQ.png"'));
+  assert.ok(img.includes('alt="XQ"'));
+  assert.ok(img.includes('style="width:28px; height:28px;'));
+});
+
+test("contract hours limit defaults to PT (80h/mo, 20h/wk) and supports FT (160h/mo, 40h/wk)", () => {
+  const ptLimit = OperationsUtils.getContractHoursLimit("ALICE", { ALICE: "PT" });
+  assert.equal(ptLimit.contract, "PT");
+  assert.equal(ptLimit.weeklyHours, 20);
+  assert.equal(ptLimit.monthlyHours, 80);
+
+  const defaultLimit = OperationsUtils.getContractHoursLimit("BOB", {});
+  assert.equal(defaultLimit.contract, "PT");
+
+  const ftLimit = OperationsUtils.getContractHoursLimit("CAROL", { CAROL: "FT" });
+  assert.equal(ftLimit.contract, "FT");
+  assert.equal(ftLimit.weeklyHours, 40);
+  assert.equal(ftLimit.monthlyHours, 160);
+});
+
+test("German break compliance flags 8-hour continuous shifts without required break", () => {
+  // 8-hour continuous duty (08:00 to 16:00) with no break
+  const continuous8h = [{ date: "18-Aug-2026", start_utc: "08:00", release_utc: "16:00" }];
+  const inspContinuous = OperationsUtils.inspectDaySchedule(continuous8h, { breakAfterHours: 6, breakMinutes: 30, maxDutyHours: 8 });
+  assert.equal(inspContinuous.valid, false);
+  assert.ok(inspContinuous.violations.includes("break"));
+
+  // 8-hour duty split into two 4-hour shifts with a 30-min break (08:00-12:00, 12:30-16:30)
+  const split8hWithBreak = [
+    { date: "18-Aug-2026", start_utc: "08:00", release_utc: "12:00" },
+    { date: "18-Aug-2026", start_utc: "12:30", release_utc: "16:30" }
+  ];
+  const inspBreak = OperationsUtils.inspectDaySchedule(split8hWithBreak, { breakAfterHours: 6, breakMinutes: 30, maxDutyHours: 8 });
+  assert.equal(inspBreak.valid, true);
+  assert.equal(inspBreak.violations.length, 0);
+});
+
+test("buildAutoPlan balances Sunday shifts equally among available staff", () => {
+  // 16-Aug-2026 and 23-Aug-2026 are Sundays
+  const rows = [
+    { date: "16-Aug-2026", flight: "LH50", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    { date: "23-Aug-2026", flight_id: "sun1", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 0, missing: 1, staff: [] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Worker"];
+  const windows = [{ isoDate: "2026-08-23", start: new Date("2026-08-23T00:00:00Z"), end: new Date("2026-08-24T00:00:00Z") }];
+
+  const plan = OperationsUtils.buildAutoPlan(rows, directory, ["ALICE AGENT", "BOB WORKER"], windows, {
+    allowedSlas: ["GATE"],
+    staffContracts: { "ALICE AGENT": "FT", "BOB WORKER": "PT" }
+  });
+
+  assert.equal(plan.assignments.length, 1);
+  // Should select Bob Worker because Alice Agent already has a Sunday shift on 16-Aug
+  assert.equal(plan.assignments[0].person.key, "BOB WORKER");
+});
+
+test("calculateStaffRequirements computes required FTE/PTE headcount and Sunday metrics", () => {
+  const rows = [
+    { date: "18-Aug-2026", flight: "LH100", required: 2, start_utc: "08:00", release_utc: "16:00" }, // Tue: 16 hrs total
+    { date: "23-Aug-2026", flight: "LH200", required: 1, start_utc: "10:00", release_utc: "18:00" }, // Sun: 8 hrs total
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Worker", "CCC - Carol Crew"];
+  const reqs = OperationsUtils.calculateStaffRequirements(rows, directory, {
+    staffContracts: { "ALICE AGENT": "FT", "BOB WORKER": "PT", "CAROL CREW": "PT" }
+  });
+
+  assert.equal(reqs.totalStaff, 3);
+  assert.equal(reqs.ftCount, 1);
+  assert.equal(reqs.ptCount, 2);
+  assert.equal(reqs.totalDutyHours, 24);
+  assert.equal(reqs.totalSundayHours, 8);
+  assert.equal(reqs.sundayShiftCount, 1);
+  assert.equal(reqs.monthlyStaffCapacityHours, 320); // (2*80) + (1*160) = 320
+  assert.equal(reqs.fteNeeded, 0.15); // 24 / 160 = 0.15
+  assert.equal(reqs.pteNeeded, 0.3); // 24 / 80 = 0.3
+});
+
+test("vacation availability rules block staff allocation during vacation periods", () => {
+  const vacationRule = {
+    personKey: "ALICE AGENT",
+    startDate: "2026-08-15",
+    endDate: "2026-08-25",
+    shift: "vacation",
+  };
+  const rowInVacation = { date: "18-Aug-2026", start_utc: "08:00", release_utc: "16:00" };
+  const rowOutsideVacation = { date: "28-Aug-2026", start_utc: "08:00", release_utc: "16:00" };
+
+  assert.equal(OperationsUtils.isAvailableForDuty("ALICE AGENT", rowInVacation, [vacationRule]), false);
+  assert.equal(OperationsUtils.isAvailableForDuty("ALICE AGENT", rowOutsideVacation, [vacationRule]), true);
+});
+
+test("autoAdjustRoster automatically reassigns shifts when available days or vacation rules change", () => {
+  const rows = [
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "14:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Worker"];
+
+  // Alice adds a vacation rule covering 18-Aug-2026
+  const newAvailabilityRules = [
+    { personKey: "ALICE AGENT", startDate: "2026-08-15", endDate: "2026-08-20", shift: "vacation" }
+  ];
+
+  const result = OperationsUtils.autoAdjustRoster(rows, directory, {
+    availabilityRules: newAvailabilityRules,
+  });
+
+  assert.equal(result.reassignments.length, 1);
+  assert.equal(result.reassignments[0].fromPerson.key, "ALICE AGENT");
+  assert.equal(result.reassignments[0].toPerson.key, "BOB WORKER");
+  assert.ok(result.reassignments[0].reason.includes("Resolved availability / vacation conflict"));
+});
+
+test("buildAutoPlan prioritizes consistent shift timing (Morning vs Evening comfort) over double shifts", () => {
+  const rows = [
+    // Alice has a morning shift on 18-Aug (08:00 - 12:00)
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    // An evening gap opens on 18-Aug (14:00 - 18:00)
+    { date: "18-Aug-2026", flight_id: "eve1", flight: "DE200", sla: "GATE", start_utc: "14:00", release_utc: "18:00", required: 1, assigned: 0, missing: 1, staff: [] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Worker"];
+  const windows = [{ isoDate: "2026-08-18", start: new Date("2026-08-18T00:00:00Z"), end: new Date("2026-08-19T00:00:00Z") }];
+
+  const plan = OperationsUtils.buildAutoPlan(rows, directory, ["ALICE AGENT", "BOB WORKER"], windows, {
+    allowedSlas: ["GATE"],
+  });
+
+  assert.equal(plan.assignments.length, 1);
+  // Should select Bob Worker for the evening shift to avoid giving Alice a mixed morning+evening double shift
+  assert.equal(plan.assignments[0].person.key, "BOB WORKER");
+});
+
+test("hasOverlappingShifts detects overlapping duties correctly", () => {
+  const cleanDuties = [
+    { date: "18-Aug-2026", start_utc: "08:00", release_utc: "12:00" },
+    { date: "18-Aug-2026", start_utc: "13:00", release_utc: "17:00" },
+  ];
+  const overlappingDuties = [
+    { date: "18-Aug-2026", start_utc: "08:00", release_utc: "12:00" },
+    { date: "18-Aug-2026", start_utc: "11:30", release_utc: "15:00" },
+  ];
+
+  assert.equal(OperationsUtils.hasOverlappingShifts(cleanDuties), false);
+  assert.equal(OperationsUtils.hasOverlappingShifts(overlappingDuties), true);
+});
+
+test("buildFlightSchedule filters flights by overlapping shifts coverage", () => {
+  const rows = [
+    { ...baseDuty, flight_id: "f1", flight: "LH 100", scheduled_utc: "08:00", start_utc: "08:00", release_utc: "12:00", staff: ["AAA - Alice Agent"] },
+    { ...baseDuty, flight_id: "f2", flight: "LH 200", scheduled_utc: "11:00", start_utc: "11:00", release_utc: "15:00", staff: ["AAA - Alice Agent"] },
+    { ...baseDuty, flight_id: "f3", flight: "LH 300", scheduled_utc: "16:00", start_utc: "16:00", release_utc: "20:00", staff: ["BBB - Bob Clean"] },
+  ];
+  const windows = [{ isoDate: "2026-08-18", start: new Date("2026-08-18T00:00:00Z"), end: new Date("2026-08-19T00:00:00Z") }];
+
+  const overlapsSchedule = OperationsUtils.buildFlightSchedule(rows, windows, { coverage: "overlaps" });
+  assert.equal(overlapsSchedule[0].flights.length, 2);
+  assert.deepEqual(overlapsSchedule[0].flights.map((f) => f.flight).sort(), ["LH 100", "LH 200"]);
+});
+
+
+
+

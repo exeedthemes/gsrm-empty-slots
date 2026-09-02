@@ -347,6 +347,10 @@
                       <input id="resultsLocalTimeToggle" type="checkbox">
                       <span>Local time</span>
                     </label>
+                    <label class="toggle-label results-overlap-toggle">
+                      <input id="resultsOverlapFilterToggle" type="checkbox">
+                      <span>Overlapping shifts only</span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -470,6 +474,7 @@
                   <button type="button" class="preset-chip active" data-preset="all">All staff</button>
                   <button type="button" class="preset-chip" data-preset="duty">On duty</button>
                   <button type="button" class="preset-chip" data-preset="free">Free</button>
+                  <button type="button" class="preset-chip" data-preset="overlap">Overlapping shifts</button>
                 </div>
                 <div class="roster-filter-actions">
                   <button id="rosterClearFilters" class="secondary-btn" type="button">Reset filters</button>
@@ -517,6 +522,7 @@
                       <option value="">Everyone</option>
                       <option value="free">Free for entire window</option>
                       <option value="duty">On duty in window</option>
+                      <option value="overlap">Overlapping shifts (collisions)</option>
                     </select>
                   </label>
                   <label>
@@ -650,6 +656,7 @@
                     <option value="all">All flights</option>
                     <option value="gaps">Gaps only</option>
                     <option value="covered">Covered only</option>
+                    <option value="overlaps">Overlapping shifts</option>
                   </select>
                 </label>
                 <label><span>Direction</span>
