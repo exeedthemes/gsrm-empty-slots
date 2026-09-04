@@ -49,7 +49,21 @@ const MIME = {
 
 const server = http.createServer(async (req, res) => {
   try {
-    if (req.method === "POST" && req.url === "/api/connect") {
+    const urlObj = new URL(req.url, `http://localhost:${PORT}`);
+    const rawPath = urlObj.pathname;
+    const pathname = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      });
+      res.end();
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/connect") {
       const payload = await readJson(req);
       if (!payload.email || !payload.password) throw new Error("Email and password are required.");
       const session = await acquireAuthenticatedSession(String(payload.email), String(payload.password));
@@ -58,45 +72,45 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "POST" && req.url === "/api/cancel") {
+    if (req.method === "POST" && pathname === "/api/cancel") {
       const payload = await readJson(req);
       sendJson(res, 200, requestScanCancellation(payload.scanId));
       return;
     }
 
-    if (req.method === "POST" && req.url === "/api/extract") {
+    if (req.method === "POST" && pathname === "/api/extract") {
       const payload = await readJson(req);
       const result = await extractEmptySlots(payload);
       sendJson(res, 200, result);
       return;
     }
 
-    if (req.method === "POST" && req.url === "/api/airlines") {
+    if (req.method === "POST" && pathname === "/api/airlines") {
       const payload = await readJson(req);
       const result = await extractAirlines(payload);
       sendJson(res, 200, result);
       return;
     }
 
-    if (req.method === "GET" && req.url.startsWith("/api/progress")) {
-      const scanId = new URL(req.url, `http://localhost:${PORT}`).searchParams.get("scanId");
+    if (req.method === "GET" && pathname.startsWith("/api/progress")) {
+      const scanId = urlObj.searchParams.get("scanId");
       sendJson(res, 200, getScanProgress(scanId));
       return;
     }
 
-    if (req.method === "GET" && req.url === "/api/session") {
+    if (req.method === "GET" && pathname === "/api/session") {
       const connected = await verifyAuthenticatedSession(authSession);
       if (!connected && authSession) await closeAuthSession();
       sendJson(res, 200, { connected, email: connected ? authSession.email : "" });
       return;
     }
 
-    if (req.method === "GET" && req.url === "/api/notes") {
+    if (req.method === "GET" && pathname === "/api/notes") {
       sendJson(res, 200, db.getAllGapNotes());
       return;
     }
 
-    if (req.method === "POST" && req.url === "/api/notes") {
+    if (req.method === "POST" && pathname === "/api/notes") {
       const payload = await readJson(req);
       if (payload.gapId) {
         db.saveGapNote(payload.gapId, payload);
@@ -107,24 +121,24 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "GET" && req.url === "/api/availability") {
+    if (req.method === "GET" && pathname === "/api/availability") {
       sendJson(res, 200, db.getStaffAvailability() || {});
       return;
     }
 
-    if (req.method === "POST" && req.url === "/api/availability") {
+    if (req.method === "POST" && pathname === "/api/availability") {
       const payload = await readJson(req);
       db.saveStaffAvailability(payload);
       sendJson(res, 200, { success: true });
       return;
     }
 
-    if (req.method === "GET" && req.url === "/api/history") {
+    if (req.method === "GET" && pathname === "/api/history") {
       sendJson(res, 200, db.getScanHistory());
       return;
     }
 
-    if (req.method === "POST" && req.url === "/api/history") {
+    if (req.method === "POST" && pathname === "/api/history") {
       const payload = await readJson(req);
       if (Array.isArray(payload)) {
         db.saveScanHistory(payload);
@@ -135,8 +149,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "DELETE" && req.url.startsWith("/api/history")) {
-      const urlObj = new URL(req.url, `http://localhost:${PORT}`);
+    if (req.method === "DELETE" && pathname.startsWith("/api/history")) {
       const id = urlObj.searchParams.get("id");
       if (id) {
         db.deleteScanItem(id);
@@ -147,12 +160,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "GET" && req.url === "/api/cache/stats") {
+    if (req.method === "GET" && pathname === "/api/cache/stats") {
       sendJson(res, 200, db.getCacheStats());
       return;
     }
 
-    if (req.method === "POST" && req.url === "/api/cache/clear") {
+    if (req.method === "POST" && pathname === "/api/cache/clear") {
       db.clearSodCache();
       dateScanCache.clear();
       flightSodCache.clear();
@@ -160,13 +173,102 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (req.method !== "GET") {
+    // --- Absences API Routes ---
+    if (req.method === "GET" && pathname === "/api/absences") {
+      sendJson(res, 200, db.getAllAbsences());
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/absences") {
+      const payload = await readJson(req);
+      const saved = db.saveAbsence(payload);
+      sendJson(res, 200, { success: true, data: saved });
+      return;
+    }
+
+    if (req.method === "DELETE" && pathname.startsWith("/api/absences")) {
+      const id = urlObj.searchParams.get("id");
+      if (!id) throw new Error("Absence ID required.");
+      sendJson(res, 200, db.deleteAbsence(id));
+      return;
+    }
+
+    // --- Custom Rules API Routes ---
+    if (req.method === "GET" && pathname === "/api/rules") {
+      sendJson(res, 200, db.getAllCustomRules());
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/rules") {
+      const payload = await readJson(req);
+      const saved = db.saveCustomRule(payload);
+      sendJson(res, 200, { success: true, data: saved });
+      return;
+    }
+
+    if (req.method === "DELETE" && pathname.startsWith("/api/rules")) {
+      const id = urlObj.searchParams.get("id");
+      if (!id) throw new Error("Rule ID required.");
+      sendJson(res, 200, db.deleteCustomRule(id));
+      return;
+    }
+
+    // --- What-if Scenarios API Routes ---
+    if (req.method === "GET" && pathname === "/api/scenarios") {
+      sendJson(res, 200, db.getAllScenarios());
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/scenarios") {
+      const payload = await readJson(req);
+      const saved = db.saveScenario(payload);
+      sendJson(res, 200, { success: true, data: saved });
+      return;
+    }
+
+    if (req.method === "DELETE" && pathname.startsWith("/api/scenarios")) {
+      const id = urlObj.searchParams.get("id");
+      if (!id) throw new Error("Scenario ID required.");
+      sendJson(res, 200, db.deleteScenario(id));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/export/roster-pdf") {
+      const payload = await readJson(req);
+      const pdf = await createRosterSectionPdf(payload);
+      const filename = safePdfFilename(payload.filename || "gsrm-roster.pdf");
+      res.writeHead(200, {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Length": pdf.length,
+        "Cache-Control": "no-store",
+      });
+      res.end(pdf);
+      return;
+    }
+
+    if (pathname.startsWith("/api/")) {
+      const knownApiPaths = [
+        "/api/connect", "/api/cancel", "/api/extract", "/api/airlines",
+        "/api/progress", "/api/session", "/api/notes", "/api/availability",
+        "/api/history", "/api/cache/stats", "/api/cache/clear",
+        "/api/absences", "/api/rules", "/api/scenarios", "/api/export/roster-pdf"
+      ];
+      const isKnownApi = knownApiPaths.some((p) => pathname === p || pathname.startsWith(p + "?") || pathname.startsWith(p + "/"));
+      if (isKnownApi) {
+        sendJson(res, 405, { error: `Method ${req.method} not allowed for ${pathname}` });
+        return;
+      }
+      sendJson(res, 404, { error: `API endpoint not found: ${req.method} ${pathname}` });
+      return;
+    }
+
+    if (req.method !== "GET" && req.method !== "HEAD") {
       sendJson(res, 405, { error: "Method not allowed" });
       return;
     }
 
-    const urlPath = new URL(req.url, `http://localhost:${PORT}`).pathname;
-    const filePath = path.join(PUBLIC_DIR, urlPath === "/" ? "index.html" : urlPath);
+    const filePath = path.join(PUBLIC_DIR, pathname === "/" ? "index.html" : pathname);
     if (!filePath.startsWith(PUBLIC_DIR)) {
       sendJson(res, 403, { error: "Forbidden" });
       return;
@@ -1435,6 +1537,104 @@ function cleanText(value) {
   return String(value).replace(/\s+/g, " ").trim();
 }
 
+function normalizePdfText(value) {
+  return String(value || "")
+    .replace(/[–—−]/g, "-")
+    .replace(/·/g, " | ");
+}
+
+function safePdfFilename(value) {
+  const cleaned = String(value || "roster.pdf").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-");
+  return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned}.pdf`;
+}
+
+function buildRosterPdfHtml({ title, subtitle, rosterHtml, css }) {
+  const safeTitle = cleanText(normalizePdfText(title || "GSRM Duty Roster"));
+  const safeSubtitle = cleanText(normalizePdfText(subtitle || "Visible roster export"));
+  const normalizedRosterHtml = normalizePdfText(rosterHtml);
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtmlText(safeTitle)}</title>
+  <style>${css}</style>
+  <style>
+    @page { size: A4 landscape; margin: 10mm 9mm 14mm; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #0f172a; font-family: Inter, Arial, sans-serif; }
+    .browser-roster-export { width: 100%; }
+    .browser-roster-export-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 0 0 10px; padding: 0 0 9px; border-bottom: 2px solid #0d9488; }
+    .browser-roster-export-header h1 { margin: 0; font-size: 18px; line-height: 1.15; color: #0f766e; background: none !important; -webkit-background-clip: initial !important; background-clip: initial !important; -webkit-text-fill-color: currentColor !important; }
+    .browser-roster-export-header p { margin: 4px 0 0; color: #64748b; font-size: 9px; font-weight: 600; }
+    .browser-roster-export-mark { color: #0f766e; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+    .browser-roster-content, .browser-roster-content .table-wrap { width: 100% !important; max-width: none !important; max-height: none !important; overflow: visible !important; margin: 0 !important; border-radius: 8px !important; }
+    .browser-roster-content .roster-table { width: 100% !important; min-width: 0 !important; table-layout: fixed !important; border-collapse: separate !important; border-spacing: 0 !important; }
+    .browser-roster-content .roster-table.single-day,
+    .browser-roster-content .roster-table.single-day th:not(:first-child),
+    .browser-roster-content .roster-table.single-day td:not(:first-child) { min-width: 0 !important; width: auto !important; }
+    .browser-roster-content .roster-table th:first-child,
+    .browser-roster-content .roster-person-cell { position: static !important; width: 38mm !important; min-width: 38mm !important; }
+    .browser-roster-content .roster-table th,
+    .browser-roster-content .roster-table td { position: static !important; padding: 5px 6px !important; border-color: #dbe3ec !important; break-inside: avoid; }
+    .browser-roster-content .roster-table th { background: #1e293b !important; color: #fff !important; }
+    .browser-roster-content .roster-date-heading span { color: #99f6e4 !important; font-size: 8px !important; }
+    .browser-roster-content .roster-date-heading strong { color: #fff !important; font-size: 9px !important; }
+    .browser-roster-content .compact-duty { width: 100% !important; min-width: 0 !important; margin-left: 0 !important; padding: 4px 5px !important; box-shadow: none !important; cursor: default !important; break-inside: avoid; }
+    .browser-roster-content .compact-duty strong { font-size: 9px !important; }
+    .browser-roster-content .compact-duty small { font-size: 7px !important; }
+    .browser-roster-content .duty-strip-row { display: grid !important; grid-template-columns: 1fr !important; gap: 4px !important; }
+    .browser-roster-content .roster-assign-slot-btn,
+    .browser-roster-content .compact-duty-swap-btn,
+    .browser-roster-content .compact-duty-delete-btn,
+    .browser-roster-content .person-track-changes-btn,
+    .browser-roster-content .roster-single-day-summary { display: none !important; }
+    .browser-roster-content button.compact-duty { appearance: none; border-top: 0; border-right: 0; border-bottom: 0; font-family: inherit; }
+    .browser-roster-content tr { break-inside: avoid; }
+  </style>
+</head>
+<body>
+  <main class="browser-roster-export">
+    <header class="browser-roster-export-header">
+      <div><h1>${escapeHtmlText(safeTitle)}</h1><p>${escapeHtmlText(safeSubtitle)}</p></div>
+      <span class="browser-roster-export-mark">Roster section only</span>
+    </header>
+    <section class="browser-roster-content">${normalizedRosterHtml}</section>
+  </main>
+</body>
+</html>`;
+}
+
+function escapeHtmlText(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+}
+
+async function createRosterSectionPdf(payload = {}) {
+  const rosterHtml = String(payload.rosterHtml || "");
+  if (!rosterHtml || rosterHtml.length > 2_000_000) throw new Error("Roster export content is missing or too large.");
+  if (/<script\b|javascript:|\son\w+\s*=/i.test(rosterHtml)) throw new Error("Roster export contains unsupported active content.");
+
+  const css = await fs.readFile(path.join(PUBLIC_DIR, "styles.css"), "utf8");
+  const html = buildRosterPdfHtml({ title: payload.title, subtitle: payload.subtitle, rosterHtml, css });
+  const pdfBrowser = await chromium.launch({ headless: true });
+  try {
+    const page = await pdfBrowser.newPage({ viewport: { width: 1600, height: 900 } });
+    await page.setContent(html, { waitUntil: "load" });
+    await page.emulateMedia({ media: "screen" });
+    return await page.pdf({
+      format: "A4",
+      landscape: payload.orientation !== "portrait",
+      printBackground: true,
+      preferCSSPageSize: false,
+      displayHeaderFooter: true,
+      headerTemplate: "<span></span>",
+      footerTemplate: '<div style="width:100%;padding:0 10mm;color:#94a3b8;font:8px Arial;text-align:right">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>',
+      margin: { top: "10mm", right: "9mm", bottom: "14mm", left: "9mm" },
+    });
+  } finally {
+    await pdfBrowser.close();
+  }
+}
+
 async function readJson(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -1446,4 +1646,4 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-module.exports = { dateScanSucceeded, extractFlightSodRows, extractStaffDirectory, extractTableRows, fetchFlightLinks, parseSodGroups, verifyAuthenticatedSession };
+module.exports = { buildRosterPdfHtml, dateScanSucceeded, extractFlightSodRows, extractStaffDirectory, extractTableRows, fetchFlightLinks, parseSodGroups, safePdfFilename, verifyAuthenticatedSession };

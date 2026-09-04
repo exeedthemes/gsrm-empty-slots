@@ -43,6 +43,39 @@ function initDatabase(dbPath) {
       cached_at INTEGER,
       data_json TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS staff_absences (
+      id TEXT PRIMARY KEY,
+      person_key TEXT,
+      person_name TEXT,
+      category TEXT,
+      start_date TEXT,
+      end_date TEXT,
+      start_time TEXT,
+      end_time TEXT,
+      notes TEXT,
+      created_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_rules (
+      id TEXT PRIMARY KEY,
+      rule_type TEXT,
+      name TEXT,
+      target TEXT,
+      parameters_json TEXT,
+      enabled INTEGER,
+      created_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS scenarios (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      strategy TEXT,
+      options_json TEXT,
+      assignments_json TEXT,
+      metrics_json TEXT,
+      created_at INTEGER
+    );
   `);
 
   return db;
@@ -216,6 +249,141 @@ function getCacheStats(customDb) {
   return { entryCount: row ? row.count : 0, ttlMinutes: 15 };
 }
 
+// --- Absences CRUD ---
+function getAllAbsences(customDb) {
+  const db = customDb || getDb();
+  const stmt = db.prepare("SELECT * FROM staff_absences ORDER BY start_date ASC, created_at DESC");
+  return stmt.all() || [];
+}
+
+function saveAbsence(absenceObj, customDb) {
+  const db = customDb || getDb();
+  const id = absenceObj.id || `abs_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const stmt = db.prepare(`
+    INSERT INTO staff_absences (id, person_key, person_name, category, start_date, end_date, start_time, end_time, notes, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      person_key = excluded.person_key,
+      person_name = excluded.person_name,
+      category = excluded.category,
+      start_date = excluded.start_date,
+      end_date = excluded.end_date,
+      start_time = excluded.start_time,
+      end_time = excluded.end_time,
+      notes = excluded.notes
+  `);
+  stmt.run(
+    id,
+    absenceObj.person_key || "",
+    absenceObj.person_name || "",
+    absenceObj.category || "vacation",
+    absenceObj.start_date || "",
+    absenceObj.end_date || absenceObj.start_date || "",
+    absenceObj.start_time || "00:00",
+    absenceObj.end_time || "23:59",
+    absenceObj.notes || "",
+    absenceObj.created_at || Date.now()
+  );
+  return { id, ...absenceObj };
+}
+
+function deleteAbsence(id, customDb) {
+  const db = customDb || getDb();
+  const stmt = db.prepare("DELETE FROM staff_absences WHERE id = ?");
+  stmt.run(id);
+  return { success: true, id };
+}
+
+// --- Custom Rules CRUD ---
+function getAllCustomRules(customDb) {
+  const db = customDb || getDb();
+  const stmt = db.prepare("SELECT * FROM custom_rules ORDER BY created_at ASC");
+  const rows = stmt.all() || [];
+  return rows.map((r) => ({
+    ...r,
+    enabled: Boolean(r.enabled),
+    parameters: r.parameters_json ? JSON.parse(r.parameters_json) : {},
+  }));
+}
+
+function saveCustomRule(ruleObj, customDb) {
+  const db = customDb || getDb();
+  const id = ruleObj.id || `rule_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const paramsJson = JSON.stringify(ruleObj.parameters || ruleObj.parameters_json || {});
+  const stmt = db.prepare(`
+    INSERT INTO custom_rules (id, rule_type, name, target, parameters_json, enabled, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      rule_type = excluded.rule_type,
+      name = excluded.name,
+      target = excluded.target,
+      parameters_json = excluded.parameters_json,
+      enabled = excluded.enabled
+  `);
+  stmt.run(
+    id,
+    ruleObj.rule_type || "MIN_REST_HOURS",
+    ruleObj.name || "Custom Rule",
+    ruleObj.target || "GLOBAL",
+    paramsJson,
+    ruleObj.enabled === false ? 0 : 1,
+    ruleObj.created_at || Date.now()
+  );
+  return { id, ...ruleObj };
+}
+
+function deleteCustomRule(id, customDb) {
+  const db = customDb || getDb();
+  const stmt = db.prepare("DELETE FROM custom_rules WHERE id = ?");
+  stmt.run(id);
+  return { success: true, id };
+}
+
+// --- What-if Scenarios CRUD ---
+function getAllScenarios(customDb) {
+  const db = customDb || getDb();
+  const stmt = db.prepare("SELECT * FROM scenarios ORDER BY created_at DESC");
+  const rows = stmt.all() || [];
+  return rows.map((r) => ({
+    ...r,
+    options: r.options_json ? JSON.parse(r.options_json) : {},
+    assignments: r.assignments_json ? JSON.parse(r.assignments_json) : [],
+    metrics: r.metrics_json ? JSON.parse(r.metrics_json) : {},
+  }));
+}
+
+function saveScenario(scenarioObj, customDb) {
+  const db = customDb || getDb();
+  const id = scenarioObj.id || `scen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const stmt = db.prepare(`
+    INSERT INTO scenarios (id, name, strategy, options_json, assignments_json, metrics_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      strategy = excluded.strategy,
+      options_json = excluded.options_json,
+      assignments_json = excluded.assignments_json,
+      metrics_json = excluded.metrics_json
+  `);
+  stmt.run(
+    id,
+    scenarioObj.name || "Alternative Plan",
+    scenarioObj.strategy || "min_overtime",
+    JSON.stringify(scenarioObj.options || {}),
+    JSON.stringify(scenarioObj.assignments || []),
+    JSON.stringify(scenarioObj.metrics || {}),
+    scenarioObj.created_at || Date.now()
+  );
+  return { id, ...scenarioObj };
+}
+
+function deleteScenario(id, customDb) {
+  const db = customDb || getDb();
+  const stmt = db.prepare("DELETE FROM scenarios WHERE id = ?");
+  stmt.run(id);
+  return { success: true, id };
+}
+
 module.exports = {
   initDatabase,
   getDb,
@@ -233,5 +401,14 @@ module.exports = {
   setCachedSod,
   clearSodCache,
   getCacheStats,
+  getAllAbsences,
+  saveAbsence,
+  deleteAbsence,
+  getAllCustomRules,
+  saveCustomRule,
+  deleteCustomRule,
+  getAllScenarios,
+  saveScenario,
+  deleteScenario,
   CACHE_TTL_MS,
 };

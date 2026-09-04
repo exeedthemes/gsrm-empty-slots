@@ -526,6 +526,9 @@
     if (type === "FT") {
       return { contract: "FT", weeklyHours: 40, monthlyHours: 160 };
     }
+    if (type === "MJ") {
+      return { contract: "MJ", weeklyHours: 10, monthlyHours: 40 };
+    }
     return { contract: "PT", weeklyHours: 20, monthlyHours: 80 };
   }
 
@@ -535,6 +538,15 @@
     const bufferMinutes = Number(options.bufferMinutes ?? 30);
     const breakAfterMinutes = Number(options.breakAfterHours ?? 6) * 60;
     const breakMinutes = Number(options.breakMinutes ?? 30);
+    const customRules = Array.isArray(options.customRules) ? options.customRules : [];
+    
+    // Evaluate active custom rules for Max Duties per Day
+    let maxDutiesAllowed = Number(options.maxDutiesPerDay || 0);
+    const maxDutyRule = customRules.find((r) => r.enabled && r.rule_type === "MAX_DUTIES_PER_DAY");
+    if (maxDutyRule && maxDutyRule.parameters?.maxDuties) {
+      maxDutiesAllowed = Number(maxDutyRule.parameters.maxDuties);
+    }
+
     const timed = (duties || []).map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) }))
       .filter((item) => item.start && item.end && item.end > item.start)
       .sort((a, b) => a.start - b.start);
@@ -561,15 +573,50 @@
     if (totalMinutes > maxDutyMinutes) violations.push("hours");
     if (spanMinutes > maxSpanMinutes) violations.push("span");
     if (breakAfterMinutes > 0 && (longestContinuousMinutes > breakAfterMinutes || (totalMinutes > breakAfterMinutes && timed.length === 1))) violations.push("break");
+    if (maxDutiesAllowed > 0 && timed.length > maxDutiesAllowed) violations.push("maxDuties");
+
+    // Check SLA Restriction Rules from customRules
+    for (const item of timed) {
+      const slaRule = customRules.find((r) => r.enabled && r.rule_type === "STAFF_SLA_RESTRICTION" && (r.target === "GLOBAL" || r.target === options.personKey));
+      if (slaRule && Array.isArray(slaRule.parameters?.prohibitedSlas) && slaRule.parameters.prohibitedSlas.includes(item.row.sla)) {
+        violations.push("slaRestriction");
+        break;
+      }
+    }
+
     return { valid: violations.length === 0, violations: [...new Set(violations)], dutyCount: timed.length, totalMinutes, spanMinutes, shortestBufferMinutes, longestContinuousMinutes };
   }
 
-  function isAvailableForDuty(personKey, row, rules = []) {
+  function isAvailableForDuty(personKey, row, rules = [], absences = []) {
     const pKey = (StaffUtils?.parseStaffIdentity(personKey)?.key || String(personKey || "")).toUpperCase();
     const dutyStart = parseDutyTime(row.date, row.start_utc);
     const dutyEnd = parseDutyTime(row.date, row.release_utc);
     if (!dutyStart || !dutyEnd) return false;
     const isoDate = dutyStart.toISOString().slice(0, 10);
+
+    // 1. Check absence records (vacation, sickness, training, etc.)
+    if (Array.isArray(absences) && absences.length > 0) {
+      const isAbsent = absences.some((abs) => {
+        const absKey = (StaffUtils?.parseStaffIdentity(abs.person_key || abs.person_name)?.key || String(abs.person_key || abs.person_name || "")).toUpperCase();
+        if (absKey !== pKey) return false;
+        const absStartDate = abs.start_date;
+        const absEndDate = abs.end_date || abs.start_date;
+        if (isoDate >= absStartDate && isoDate <= absEndDate) {
+          // If specific time bounds exist
+          if (abs.start_time && abs.end_time) {
+            const absStart = new Date(`${isoDate}T${abs.start_time}:00Z`);
+            let absEnd = new Date(`${isoDate}T${abs.end_time}:00Z`);
+            if (absEnd <= absStart) absEnd = new Date(absEnd.getTime() + 86400000);
+            return dutyStart < absEnd && dutyEnd > absStart;
+          }
+          return true; // Full day absence
+        }
+        return false;
+      });
+      if (isAbsent) return false;
+    }
+
+    // 2. Check general availability rules
     const weekday = String(dutyStart.getUTCDay());
     const matches = (rules || []).filter((rule) => {
       const rKey = (StaffUtils?.parseStaffIdentity(rule.personKey)?.key || String(rule.personKey || "")).toUpperCase();
@@ -658,12 +705,12 @@
           const inspection = inspectDaySchedule([...sameDay, row], options);
           if (!inspection.valid) continue;
 
-          // Enforce per-person contract limits (PT: 20h/wk, 80h/mo vs FT: 40h/wk, 160h/mo)
+          // Enforce per-person contract limits (MJ: 10h/wk, 40h/mo; PT: 20/80; FT: 40/160).
           const contractInfo = getContractHoursLimit(person.key, staffContracts);
           const personOptions = {
             ...options,
-            maxWeeklyHours: options.maxWeeklyHours || contractInfo.weeklyHours,
-            maxMonthlyHours: options.maxMonthlyHours || contractInfo.monthlyHours,
+            maxWeeklyHours: Number(options.maxWeeklyHours) > 0 ? Math.min(Number(options.maxWeeklyHours), contractInfo.weeklyHours) : contractInfo.weeklyHours,
+            maxMonthlyHours: Number(options.maxMonthlyHours) > 0 ? Math.min(Number(options.maxMonthlyHours), contractInfo.monthlyHours) : contractInfo.monthlyHours,
           };
           const periodInspection = inspectPeriodWorkload([...(schedules.get(person.key) || []), row], personOptions);
           if (!periodInspection.valid) continue;
@@ -721,9 +768,13 @@
     const totalStaff = people.length;
     let ptCount = 0;
     let ftCount = 0;
+    let mjCount = 0;
     for (const p of people) {
-      if ((staffContracts[p.key] || "PT").toUpperCase() === "FT") {
+      const contract = (staffContracts[p.key] || "PT").toUpperCase();
+      if (contract === "FT") {
         ftCount += 1;
+      } else if (contract === "MJ") {
+        mjCount += 1;
       } else {
         ptCount += 1;
       }
@@ -748,8 +799,8 @@
     }
 
     const totalSundayHours = sundayDutyMinutes / 60;
-    const monthlyStaffCapacityHours = (ptCount * 80) + (ftCount * 160);
-    const weeklyStaffCapacityHours = (ptCount * 20) + (ftCount * 40);
+    const monthlyStaffCapacityHours = (mjCount * 40) + (ptCount * 80) + (ftCount * 160);
+    const weeklyStaffCapacityHours = (mjCount * 10) + (ptCount * 20) + (ftCount * 40);
 
     const fteNeeded = totalDutyHours / 160;
     const pteNeeded = totalDutyHours / 80;
@@ -759,6 +810,7 @@
       totalStaff,
       ptCount,
       ftCount,
+      mjCount,
       totalDutyHours: Number(totalDutyHours.toFixed(1)),
       totalSundayHours: Number(totalSundayHours.toFixed(1)),
       sundayShiftCount,
@@ -1110,12 +1162,123 @@
         entries: filteredEntries,
       };
     };
-
-    return {
+return {
       allStaff,
       entries,
       getStaffAuditSummary,
     };
+  }
+
+  function inspectDaySchedule(duties, options = {}) {
+    const maxDutyMinutes = Number(options.maxDutyHours ?? 8) * 60;
+    const maxSpanMinutes = Number(options.maxSpanHours ?? 10) * 60;
+    const bufferMinutes = Number(options.bufferMinutes ?? 30);
+    const breakAfterMinutes = Number(options.breakAfterHours ?? 6) * 60;
+    const breakMinutes = Number(options.breakMinutes ?? 30);
+    const timed = (duties || []).map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) }))
+      .filter((item) => item.start && item.end && item.end > item.start)
+      .sort((a, b) => a.start - b.start);
+    const totalMinutes = timed.reduce((sum, item) => sum + Math.round((item.end - item.start) / 60000), 0);
+    const spanMinutes = timed.length ? Math.round((timed.at(-1).end - timed[0].start) / 60000) : 0;
+    let shortestBufferMinutes = null;
+    let longestContinuousMinutes = 0;
+    let blockStart = timed[0]?.start || null;
+    const violations = [];
+
+    for (let i = 0; i < timed.length; i += 1) {
+      for (let j = i + 1; j < timed.length; j += 1) {
+        const prev = timed[i];
+        const curr = timed[j];
+        const isSameFlight = isSameFlightDuty(prev.row, curr.row);
+        const gap = Math.round((curr.start - prev.end) / 60000);
+        if (gap < 0 && !isSameFlight) {
+          violations.push("overlap");
+        }
+      }
+    }
+
+    for (let index = 1; index < timed.length; index += 1) {
+      const prev = timed[index - 1];
+      const curr = timed[index];
+      const isSameFlight = isSameFlightDuty(prev.row, curr.row);
+      const gap = Math.round((curr.start - prev.end) / 60000);
+      shortestBufferMinutes = shortestBufferMinutes == null ? gap : Math.min(shortestBufferMinutes, gap);
+      if (gap >= 0 && gap < bufferMinutes && !isSameFlight) violations.push("buffer");
+      if (breakMinutes > 0 && gap >= breakMinutes) {
+        longestContinuousMinutes = Math.max(longestContinuousMinutes, Math.round((prev.end - blockStart) / 60000));
+        blockStart = curr.start;
+      }
+    }
+    if (timed.length) longestContinuousMinutes = Math.max(longestContinuousMinutes, Math.round((timed.at(-1).end - blockStart) / 60000));
+    if (totalMinutes > maxDutyMinutes) violations.push("hours");
+    if (spanMinutes > maxSpanMinutes) violations.push("span");
+    if (breakAfterMinutes > 0 && (longestContinuousMinutes > breakAfterMinutes || (totalMinutes > breakAfterMinutes && timed.length === 1))) violations.push("break");
+    return { valid: violations.length === 0, violations: [...new Set(violations)], dutyCount: timed.length, totalMinutes, spanMinutes, shortestBufferMinutes, longestContinuousMinutes };
+  }
+
+  function isAvailableForDuty(personKey, row, rules = []) {
+    const pKey = (StaffUtils?.parseStaffIdentity(personKey)?.key || String(personKey || "")).toUpperCase();
+    const dutyStart = parseDutyTime(row.date, row.start_utc);
+    const dutyEnd = parseDutyTime(row.date, row.release_utc);
+    if (!dutyStart || !dutyEnd) return false;
+    const isoDate = dutyStart.toISOString().slice(0, 10);
+    const weekday = String(dutyStart.getUTCDay());
+    const matches = (rules || []).filter((rule) => {
+      const rKey = (StaffUtils?.parseStaffIdentity(rule.personKey)?.key || String(rule.personKey || "")).toUpperCase();
+      return rKey === pKey
+        && (!rule.startDate || isoDate >= rule.startDate)
+        && (!rule.endDate || isoDate <= rule.endDate)
+        && (!rule.dates?.length || rule.dates.includes(isoDate))
+        && (!rule.weekdays?.length || rule.weekdays.includes(weekday));
+    });
+    if (!matches.length) return true;
+    const rule = matches.at(-1);
+    if (rule.shift === "unavailable" || rule.shift === "vacation" || rule.shift === "off") return false;
+    if (rule.shift === "full") return true;
+    const ranges = { morning: ["04:00", "12:00"], evening: ["12:00", "23:59"] };
+    const [from, to] = ranges[rule.shift] || [rule.from || "00:00", rule.to || "23:59"];
+    const windowStart = new Date(`${isoDate}T${from}:00Z`);
+    let windowEnd = new Date(`${isoDate}T${to}:00Z`);
+    if (windowEnd <= windowStart) windowEnd = new Date(windowEnd.getTime() + 86400000);
+    return dutyStart >= windowStart && dutyEnd <= windowEnd;
+  }
+
+  function isoWeekKey(date) {
+    const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    day.setUTCDate(day.getUTCDate() + 4 - (day.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(day.getUTCFullYear(), 0, 1));
+    const week = Math.ceil((((day - yearStart) / 86400000) + 1) / 7);
+    return `${day.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+  }
+
+  function inspectPeriodWorkload(duties, options = {}) {
+    const weeks = new Map();
+    const months = new Map();
+    const seen = new Set();
+    for (const row of duties || []) {
+      const key = rowKey(row);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const start = parseDutyTime(row.date, row.start_utc);
+      if (!start) continue;
+      const minutes = dutyMinutes(row);
+      const date = start.toISOString().slice(0, 10);
+      const weekKey = isoWeekKey(start);
+      const monthKey = date.slice(0, 7);
+      if (!weeks.has(weekKey)) weeks.set(weekKey, { key: weekKey, minutes: 0, dates: new Set() });
+      weeks.get(weekKey).minutes += minutes;
+      weeks.get(weekKey).dates.add(date);
+      if (!months.has(monthKey)) months.set(monthKey, { key: monthKey, minutes: 0 });
+      months.get(monthKey).minutes += minutes;
+    }
+    const maxWeeklyMinutes = Number(options.maxWeeklyHours || 0) * 60;
+    const maxMonthlyMinutes = Number(options.maxMonthlyHours || 0) * 60;
+    const maxDays = Number(options.maxWorkingDaysPerWeek || 7);
+    const violations = [];
+    if (maxWeeklyMinutes && [...weeks.values()].some((week) => week.minutes > maxWeeklyMinutes)) violations.push("weeklyHours");
+    if ([...weeks.values()].some((week) => week.dates.size > maxDays)) violations.push("weeklyDays");
+    if (maxMonthlyMinutes && [...months.values()].some((month) => month.minutes > maxMonthlyMinutes)) violations.push("monthlyHours");
+    return { valid: violations.length === 0, violations, weeks: [...weeks.values()].map((week) => ({ ...week, dates: [...week.dates] })), months: [...months.values()] };
   }
 
   function autoAdjustRoster(rows, staffDirectory, options = {}) {
@@ -1212,8 +1375,8 @@
               const contractInfo = getContractHoursLimit(candidatePerson.key, options.staffContracts);
               const candidateOptions = {
                 ...options,
-                maxWeeklyHours: options.maxWeeklyHours || contractInfo.weeklyHours,
-                maxMonthlyHours: options.maxMonthlyHours || contractInfo.monthlyHours,
+                maxWeeklyHours: Number(options.maxWeeklyHours) > 0 ? Math.min(Number(options.maxWeeklyHours), contractInfo.weeklyHours) : contractInfo.weeklyHours,
+                maxMonthlyHours: Number(options.maxMonthlyHours) > 0 ? Math.min(Number(options.maxMonthlyHours), contractInfo.monthlyHours) : contractInfo.monthlyHours,
               };
               const bPeriod = inspectPeriodWorkload([...bDuties, dutyToMove], candidateOptions);
               if (!bPeriod.valid) continue;
@@ -1254,7 +1417,6 @@
         }
 
         if (changedInPass) break;
-        if (duties.length < 2) continue;
 
         const byDate = new Map();
         for (const d of duties) {
@@ -1268,83 +1430,94 @@
             .filter((item) => item.start && item.end && item.end > item.start)
             .sort((a, b) => a.start - b.start);
 
-          for (let i = 1; i < timed.length; i += 1) {
+          const conflictPairs = [];
+          for (let i = 0; i < timed.length; i += 1) {
+            for (let j = i + 1; j < timed.length; j += 1) {
+              const prev = timed[i];
+              const curr = timed[j];
+              const gap = Math.round((curr.start - prev.end) / 60000);
+              const isSameFlight = isSameFlightDuty(prev.row, curr.row);
+              if (isTargetConflict(gap) && !isSameFlight) {
+                conflictPairs.push({ prev, curr, gap });
+              }
+            }
+          }
+
+          // Prioritize resolving severe conflicts first: negative gaps (overlaps) before break violations
+          conflictPairs.sort((a, b) => a.gap - b.gap);
+
+          for (const { prev, curr, gap } of conflictPairs) {
             if (maxMovements > 0 && reassignments.length >= maxMovements) break;
-            const prev = timed[i - 1];
-            const curr = timed[i];
-            const gap = Math.round((curr.start - prev.end) / 60000);
 
-            const isSameFlight = isSameFlightDuty(prev.row, curr.row);
-            if (isTargetConflict(gap) && !isSameFlight) {
-              const targetDutiesToMove = [curr.row, prev.row];
+            const targetDutiesToMove = [curr.row, prev.row];
+            for (const dutyToMove of targetDutiesToMove) {
+              const currentStaffLabels = dutyToMove.staff || [];
+              const identityToMove = currentStaffLabels.find((s) => StaffUtils?.parseStaffIdentity(s)?.key === person.key);
+              if (!identityToMove) continue;
 
-              for (const dutyToMove of targetDutiesToMove) {
-                const currentStaffLabels = dutyToMove.staff || [];
-                const identityToMove = currentStaffLabels.find((s) => StaffUtils?.parseStaffIdentity(s)?.key === person.key);
-                if (!identityToMove) continue;
+              const candidates = [];
+              for (const candidatePerson of peopleList) {
+                if (candidatePerson.key === person.key) continue;
 
-                const candidates = [];
-                for (const candidatePerson of peopleList) {
-                  if (candidatePerson.key === person.key) continue;
+                const bAssignedKeys = getRowPersonKeys(dutyToMove);
+                if (bAssignedKeys.has(candidatePerson.key)) continue;
 
-                  const bAssignedKeys = getRowPersonKeys(dutyToMove);
-                  if (bAssignedKeys.has(candidatePerson.key)) continue;
+                if (Array.isArray(options.allowedSlas) && options.allowedSlas.length && !options.allowedSlas.includes(dutyToMove.sla)) continue;
+                if (!isAvailableForDuty(candidatePerson.key, dutyToMove, options.availabilityRules)) continue;
 
-                  if (Array.isArray(options.allowedSlas) && options.allowedSlas.length && !options.allowedSlas.includes(dutyToMove.sla)) continue;
-                  if (!isAvailableForDuty(candidatePerson.key, dutyToMove, options.availabilityRules)) continue;
+                const bDuties = schedules.get(candidatePerson.key) || [];
+                const bSameDay = bDuties.filter((d) => d.date === dutyToMove.date);
+                const bInsp = inspectDaySchedule([...bSameDay, dutyToMove], { ...options, bufferMinutes: minBreakMinutes });
+                const candidateHasOverlap = (bInsp.violations || []).includes("overlap");
+                if (candidateHasOverlap) continue;
+                if (isViolationForType(bInsp)) continue;
 
-                  const bDuties = schedules.get(candidatePerson.key) || [];
-                  const bSameDay = bDuties.filter((d) => d.date === dutyToMove.date);
-                  const bInsp = inspectDaySchedule([...bSameDay, dutyToMove], { ...options, bufferMinutes: minBreakMinutes });
-                  if (!bInsp.valid) continue;
+                const contractInfo = getContractHoursLimit(candidatePerson.key, options.staffContracts);
+                const candidateOptions = {
+                  ...options,
+                  maxWeeklyHours: Number(options.maxWeeklyHours) > 0 ? Math.min(Number(options.maxWeeklyHours), contractInfo.weeklyHours) : contractInfo.weeklyHours,
+                  maxMonthlyHours: Number(options.maxMonthlyHours) > 0 ? Math.min(Number(options.maxMonthlyHours), contractInfo.monthlyHours) : contractInfo.monthlyHours,
+                };
+                const bPeriod = inspectPeriodWorkload([...bDuties, dutyToMove], candidateOptions);
+                if (!bPeriod.valid) continue;
 
-                  const contractInfo = getContractHoursLimit(candidatePerson.key, options.staffContracts);
-                  const candidateOptions = {
-                    ...options,
-                    maxWeeklyHours: options.maxWeeklyHours || contractInfo.weeklyHours,
-                    maxMonthlyHours: options.maxMonthlyHours || contractInfo.monthlyHours,
-                  };
-                  const bPeriod = inspectPeriodWorkload([...bDuties, dutyToMove], candidateOptions);
-                  if (!bPeriod.valid) continue;
+                const personRemainingDay = dayDuties.filter((d) => rowKey(d) !== rowKey(dutyToMove));
+                const pInsp = inspectDaySchedule(personRemainingDay, { ...options, bufferMinutes: minBreakMinutes });
 
-                  const personRemainingDay = dayDuties.filter((d) => rowKey(d) !== rowKey(dutyToMove));
-                  const pInsp = inspectDaySchedule(personRemainingDay, { ...options, bufferMinutes: minBreakMinutes });
+                const score = (pInsp.valid ? 1000 : 500) + (bInsp.shortestBufferMinutes || 0);
+                candidates.push({ candidatePerson, score, bInsp });
+              }
 
-                  const score = (pInsp.valid ? 1000 : 500) + (bInsp.shortestBufferMinutes || 0);
-                  candidates.push({ candidatePerson, score, bInsp });
-                }
+              candidates.sort((a, b) => b.score - a.score || a.candidatePerson.name.localeCompare(b.candidatePerson.name));
+              const bestCandidate = candidates[0];
 
-                candidates.sort((a, b) => b.score - a.score || a.candidatePerson.name.localeCompare(b.candidatePerson.name));
-                const bestCandidate = candidates[0];
+              if (bestCandidate) {
+                const targetRowInCloned = rowMap.get(rowKey(dutyToMove));
+                if (targetRowInCloned) {
+                  targetRowInCloned.staff = targetRowInCloned.staff.filter((s) => StaffUtils?.parseStaffIdentity(s)?.key !== person.key);
+                  const newLabel = `${bestCandidate.candidatePerson.initials || "STF"} - ${bestCandidate.candidatePerson.name}`;
+                  targetRowInCloned.staff.push(newLabel);
+                  targetRowInCloned.assigned = targetRowInCloned.staff.length;
+                  targetRowInCloned.missing = Math.max(0, Number(targetRowInCloned.required || 0) - targetRowInCloned.assigned);
 
-                if (bestCandidate) {
-                  const targetRowInCloned = rowMap.get(rowKey(dutyToMove));
-                  if (targetRowInCloned) {
-                    targetRowInCloned.staff = targetRowInCloned.staff.filter((s) => StaffUtils?.parseStaffIdentity(s)?.key !== person.key);
-                    const newLabel = `${bestCandidate.candidatePerson.initials || "STF"} - ${bestCandidate.candidatePerson.name}`;
-                    targetRowInCloned.staff.push(newLabel);
-                    targetRowInCloned.assigned = targetRowInCloned.staff.length;
-                    targetRowInCloned.missing = Math.max(0, Number(targetRowInCloned.required || 0) - targetRowInCloned.assigned);
+                  reassignments.push({
+                    rowKey: rowKey(dutyToMove),
+                    flight: dutyToMove.flight,
+                    sla: dutyToMove.sla,
+                    date: dutyToMove.date,
+                    start_utc: dutyToMove.start_utc,
+                    release_utc: dutyToMove.release_utc,
+                    fromPerson: person,
+                    toPerson: bestCandidate.candidatePerson,
+                    reason: gap < 0 ? `Resolved overlap (${gap}m)` : `Enforced minimum break (${gap}m < ${minBreakMinutes}m requirement)`,
+                  });
 
-                    reassignments.push({
-                      rowKey: rowKey(dutyToMove),
-                      flight: dutyToMove.flight,
-                      sla: dutyToMove.sla,
-                      date: dutyToMove.date,
-                      start_utc: dutyToMove.start_utc,
-                      release_utc: dutyToMove.release_utc,
-                      fromPerson: person,
-                      toPerson: bestCandidate.candidatePerson,
-                      reason: gap < 0 ? `Resolved overlap (${gap}m)` : `Enforced minimum break (${gap}m < ${minBreakMinutes}m requirement)`,
-                    });
-
-                    changedInPass = true;
-                    break;
-                  }
+                  changedInPass = true;
+                  break;
                 }
               }
-              if (changedInPass) break;
             }
+            if (changedInPass) break;
           }
           if (changedInPass) break;
         }
@@ -1518,11 +1691,182 @@
     };
   }
 
+  function evaluateScenarioMetrics(rows, planAssignments = [], staffDirectory = []) {
+    const assignmentsByRow = new Map();
+    for (const assignment of planAssignments || []) {
+      if (!assignment?.rowKey || !assignment?.candidateLabel) continue;
+      if (!assignmentsByRow.has(assignment.rowKey)) assignmentsByRow.set(assignment.rowKey, []);
+      assignmentsByRow.get(assignment.rowKey).push(assignment);
+    }
+
+    const simulatedRows = (rows || []).map((row) => {
+      const planned = assignmentsByRow.get(rowKey(row)) || [];
+      if (!planned.length) return { ...row, staff: [...(row.staff || [])] };
+      const staff = [...(row.staff || [])];
+      const staffKeys = new Set(staff.map((label) => StaffUtils?.parseStaffIdentity(label)?.key).filter(Boolean));
+      let added = 0;
+      let remaining = Number(row.missing || 0);
+      for (const assignment of planned) {
+        const identity = StaffUtils?.parseStaffIdentity(assignment.candidateLabel);
+        if (!identity || staffKeys.has(identity.key) || remaining <= 0) continue;
+        staff.push(assignment.candidateLabel);
+        staffKeys.add(identity.key);
+        added += 1;
+        remaining -= 1;
+      }
+      return {
+        ...row,
+        staff,
+        assigned: Number(row.assigned || 0) + added,
+        missing: Math.max(0, Number(row.missing || 0) - added),
+      };
+    });
+
+    let uncoveredHours = 0;
+    let filledPositions = 0;
+    let unfilledPositions = 0;
+
+    for (const row of simulatedRows) {
+      const mins = dutyMinutes(row);
+      const missing = Number(row.missing || 0);
+      const assigned = Number(row.assigned || 0);
+      uncoveredHours += (missing * mins) / 60;
+      unfilledPositions += missing;
+      filledPositions += assigned;
+    }
+
+    const warnings = buildWarnings(simulatedRows, staffDirectory);
+    const conflictCount = warnings.filter((w) => w.severity === "high").length;
+
+    const people = buildPeople(simulatedRows, staffDirectory);
+    const personHoursList = people.map((p) => {
+      const totalMins = p.duties.reduce((sum, d) => sum + dutyMinutes(d), 0);
+      return totalMins / 60;
+    });
+
+    const totalDutyHours = personHoursList.reduce((a, b) => a + b, 0);
+    const meanHours = personHoursList.length ? totalDutyHours / personHoursList.length : 0;
+    const variance = personHoursList.length
+      ? personHoursList.reduce((sum, h) => sum + Math.pow(h - meanHours, 2), 0) / personHoursList.length
+      : 0;
+    const workloadSpread = Math.sqrt(variance);
+    const estimatedCost = totalDutyHours * 25 + personHoursList.reduce((over, h) => over + Math.max(0, h - 35) * 12.5, 0);
+
+    return {
+      totalDuties: (simulatedRows || []).length,
+      uncoveredGapsCount: unfilledPositions,
+      uncoveredHours: Number(uncoveredHours.toFixed(1)),
+      filledPositions,
+      unfilledPositions,
+      conflictCount,
+      totalDutyHours: Number(totalDutyHours.toFixed(1)),
+      estimatedCost: Math.round(estimatedCost),
+      workloadSpread: Number(workloadSpread.toFixed(2)),
+      coverageRatePercent: Math.round(((filledPositions) / Math.max(1, filledPositions + unfilledPositions)) * 100),
+    };
+  }
+
+  function generateIcsCalendar(rows, options = {}) {
+    const staffKey = (options.staffKey || "").toUpperCase();
+    const calendarTitle = options.title || (staffKey ? `GSRM Schedule - ${options.staffName || staffKey}` : "GSRM Station Roster");
+    const filteredRows = (rows || []).filter((row) => {
+      if (!staffKey) return (row.staff || []).length > 0;
+      return (row.staff || []).some((label) => {
+        const id = StaffUtils?.parseStaffIdentity(label);
+        return (id?.key || "").toUpperCase() === staffKey || (id?.initials || "").toUpperCase() === staffKey;
+      });
+    });
+
+    const formatIcsTime = (dt) => {
+      if (!dt || Number.isNaN(dt.getTime())) return "";
+      return dt.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+    };
+
+    const nowStr = formatIcsTime(new Date());
+    const events = [];
+
+    for (const row of filteredRows) {
+      const startDt = parseDutyTime(row.date, row.start_utc);
+      const releaseDt = parseDutyTime(row.date, row.release_utc);
+      if (!startDt || !releaseDt) continue;
+
+      const uid = `duty-${rowKey(row).replace(/[^a-zA-Z0-9]/g, "_")}@gsrm.app`;
+      const summary = `[${row.sla || "DUTY"}] ${row.flight || "Flight Duty"} (${row.route || ""})`;
+      const staffList = (row.staff || []).join(", ");
+      const description = `Flight: ${row.flight || "N/A"}\\nSLA: ${row.sla || "N/A"}\\nRoute: ${row.route || "N/A"}\\nAircraft: ${row.aircraft || "N/A"}\\nAssigned Staff: ${staffList || "None"}`;
+
+      events.push([
+        "BEGIN:VEVENT",
+        `UID:${uid}`,
+        `DTSTAMP:${nowStr}`,
+        `DTSTART:${formatIcsTime(startDt)}`,
+        `DTEND:${formatIcsTime(releaseDt)}`,
+        `SUMMARY:${summary}`,
+        `DESCRIPTION:${description}`,
+        "LOCATION:Station Airport Ramp / Terminal",
+        "STATUS:CONFIRMED",
+        "END:VEVENT"
+      ].join("\r\n"));
+    }
+
+    return [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//GSRM Roster Management//Shift Export 1.0//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      `X-WR-CALNAME:${calendarTitle}`,
+      ...events,
+      "END:VCALENDAR"
+    ].join("\r\n");
+  }
+
+  function generateHandoverSummary(rows, gapNotes = {}, warnings = [], absences = [], customNotes = "") {
+    const totalRows = (rows || []).length;
+    let missingRows = 0;
+    const unresolvedGaps = [];
+    const pendingConfirmations = [];
+
+    for (const row of rows || []) {
+      const missing = Number(row.missing || 0);
+      const rKey = rowKey(row);
+      const note = gapNotes[rKey] || gapNotes[row.gap_id];
+      const status = note?.status || "Open";
+
+      if (missing > 0) {
+        missingRows += 1;
+        if (status === "Contacted" || status === "Pending") {
+          pendingConfirmations.push({ row, note });
+        } else if (status !== "Covered") {
+          unresolvedGaps.push({ row, note });
+        }
+      }
+    }
+
+    const highRiskWarnings = (warnings || []).filter((w) => w.severity === "high" || w.type === "Overlap");
+    const activeAbsences = Array.isArray(absences) ? absences : [];
+    const coverageRatePercent = totalRows ? Math.round(((totalRows - missingRows) / totalRows) * 100) : 100;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      totalDuties: totalRows,
+      coverageRatePercent,
+      unresolvedGapsCount: unresolvedGaps.length,
+      pendingConfirmationsCount: pendingConfirmations.length,
+      riskyDutiesCount: highRiskWarnings.length,
+      activeAbsencesCount: activeAbsences.length,
+      unresolvedGaps,
+      pendingConfirmations,
+      riskyDuties: highRiskWarnings,
+      activeAbsences,
+      customNotes: customNotes || "",
+    };
+  }
+
   function hasOverlappingShifts(duties) {
     const insp = inspectDaySchedule(duties);
     return (insp.violations || []).includes("overlap");
   }
 
-  return { parseDutyTime, rowKey, dutyMinutes, buildPeople, rankCandidates, getDutyGapCandidates: rankCandidates, simulateCoverage, airlineCode, getAirlineLogoUrl, getAirlineLogoImg, operationalPeriod, buildAirlineRoster, buildFlightSchedule, inspectDaySchedule, inspectPeriodWorkload, isAvailableForDuty, getContractHoursLimit, buildAutoPlan, calculateStaffRequirements, autoAdjustRoster, validateShiftSwap, validateAutoAssignments, buildWarnings, buildWorkload, summarizeDutyHours, buildAnalytics, compareSnapshots, comparePersonRosters, hasOverlappingShifts };
+  return { parseDutyTime, rowKey, dutyMinutes, isSameFlightDuty, buildPeople, rankCandidates, getDutyGapCandidates: rankCandidates, simulateCoverage, airlineCode, getAirlineLogoUrl, getAirlineLogoImg, operationalPeriod, buildAirlineRoster, buildFlightSchedule, inspectDaySchedule, inspectPeriodWorkload, isAvailableForDuty, getContractHoursLimit, buildAutoPlan, calculateStaffRequirements, autoAdjustRoster, validateShiftSwap, validateAutoAssignments, buildWarnings, buildWorkload, summarizeDutyHours, buildAnalytics, compareSnapshots, comparePersonRosters, hasOverlappingShifts, evaluateScenarioMetrics, generateIcsCalendar, generateHandoverSummary };
 });
-

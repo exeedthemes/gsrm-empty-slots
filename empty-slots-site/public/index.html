@@ -177,6 +177,8 @@
                   <option value="QH-GATE">QH-GATE</option>
                   <option value="ASVC">ASVC</option>
                   <option value="SECS">SECS</option>
+                  <option value="TRC">TRC</option>
+                  <option value="TKTG">TKTG</option>
                 </select>
               </label>
             </div>
@@ -557,6 +559,11 @@
               <div class="auto-planner-actions">
                 <div class="auto-planner-btn-group">
                   <button id="plannerAvailabilityBtn" class="secondary-btn" type="button">Availability <span id="plannerRulesBadge" class="button-count">0</span></button>
+                  <button id="absenceManagerBtn" class="secondary-btn" type="button" title="Manage employee leave, vacation, and sickness records">Absences <span id="absencesBadge" class="button-count">0</span></button>
+                  <button id="ruleBuilderBtn" class="secondary-btn" type="button" title="Configure custom scheduling &amp; rest rules">Rule Builder</button>
+                  <button id="scenarioSandboxBtn" class="secondary-btn" type="button" title="Create and compare what-if roster scenarios">What-if Sandbox</button>
+                  <button id="icsExportBtn" class="secondary-btn" type="button" title="Export schedule to Apple/Google/Outlook Calendar (.ics)">Export .ics</button>
+                  <button id="handoverReportBtn" class="secondary-btn" type="button" title="Generate automated shift handover summary">Handover Report</button>
                   <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="false">Show planner</button>
                 </div>
                 <div class="auto-planner-btn-group">
@@ -571,7 +578,6 @@
                 <div class="planner-field-heading">
                   <span>Step 1 · Eligible staff <mark id="plannerStaffBadge" class="step-count-badge">0 selected</mark></span>
                   <div class="step-heading-actions">
-                    <button id="autoPlannerAutoDetectContracts" type="button" class="secondary-btn" title="Automatically classify staff as Full-Time (≥100h/mo) or Part-Time based on duty hours">Auto FT/PT</button>
                     <button id="autoPlannerSelectFree" type="button">Use free staff</button>
                     <button id="autoPlannerSelectAll" type="button">Select all</button>
                     <button type="button" class="step-toggle-btn secondary-btn" data-target="plannerStep1Card" aria-expanded="false" title="Toggle Step 1 section">Expand</button>
@@ -798,7 +804,7 @@
                   <button type="button" class="warning-chip" data-warning-filter="span">Long Spans</button>
                 </div>
                 <input type="search" id="insightsWarningsSearch" class="warnings-search-input" placeholder="Search staff, flight, warning..." aria-label="Filter roster warnings">
-                <button type="button" id="warningsSectionToggle" class="secondary-btn" aria-expanded="false">Expand</button>
+                <button type="button" id="warningsSectionToggle" class="secondary-btn expand-toggle-btn" aria-expanded="false">Expand ▾</button>
               </div>
             </div>
             <div id="rosterWarnings" class="warnings-container" role="region" aria-label="Roster warnings list" tabindex="0"></div>
@@ -824,10 +830,10 @@
                   <button type="button" class="workload-chip active" data-workload-contract="all">All Staff</button>
                   <button type="button" class="workload-chip" data-workload-contract="ft">Full-Time</button>
                   <button type="button" class="workload-chip" data-workload-contract="pt">Part-Time</button>
+                  <button type="button" class="workload-chip" data-workload-contract="mj">Minijob</button>
                 </div>
                 <input type="search" id="insightsWorkloadSearch" class="workload-search-input" placeholder="Filter workload by staff..." aria-label="Filter staff workload table">
-                <button type="button" id="workloadAutoDetectBtn" class="secondary-btn" title="Auto-detect Full-Time (≥100h/mo) vs Part-Time staff contracts">⚡ Auto FT/PT</button>
-                <button type="button" id="workloadSectionToggle" class="secondary-btn" aria-expanded="false">Expand workload</button>
+                <button type="button" id="workloadSectionToggle" class="secondary-btn expand-toggle-btn" aria-expanded="false">Expand workload ▾</button>
               </div>
             </div>
             <div class="workload-section-body">
@@ -860,7 +866,7 @@
                 </div>
               </div>
               <div class="master-staff-controls">
-                <button type="button" id="autoDetectContractsBtn" class="secondary-btn" title="Automatically classify staff as Full-Time (≥100h/mo) or Part-Time based on duty hours">⚡ Auto-Detect Contracts</button>
+                <button type="button" id="autoDetectContractsBtn" class="secondary-btn" title="Automatically estimate Full-Time, Part-Time, or Minijob from duty hours. Minijob uses 10h/week and 40h/month.">⚡ Auto-Detect Contracts</button>
                 <select id="masterStaffStationFilter" class="master-staff-select" aria-label="Filter staff by station">
                   <option value="all">All Stations</option>
                 </select>
@@ -1003,124 +1009,40 @@
         <div class="modal-card pdf-export-modal-card" role="dialog" aria-modal="true" aria-labelledby="pdfExportModalTitle">
           <div class="modal-header pdf-export-header">
             <div class="pdf-export-header-left">
-              <span class="modal-badge">Export</span>
-              <h2 id="pdfExportModalTitle" class="pdf-export-title">Export PDF Report</h2>
+              <div class="pdf-header-title-row">
+                <span class="modal-badge">Export</span>
+                <h2 id="pdfExportModalTitle" class="pdf-export-title">Export PDF Report</h2>
+              </div>
               <p class="pdf-export-subtitle" id="pdfExportSubtitle">Choose which version to export as a PDF document</p>
             </div>
             <button type="button" id="pdfExportModalClose" class="modal-close-btn" aria-label="Close PDF export modal">&times;</button>
           </div>
 
           <div class="pdf-export-body">
-            <!-- Preview strip & Layout selector -->
-            <div class="pdf-export-controls-row">
-              <div class="pdf-export-meta" id="pdfExportMeta">
-                <div class="pdf-meta-item">
-                  <span class="pdf-meta-label">Report type</span>
-                  <strong class="pdf-meta-value" id="pdfMetaType">—</strong>
-                </div>
-                <div class="pdf-meta-item">
-                  <span class="pdf-meta-label">Records</span>
-                  <strong class="pdf-meta-value" id="pdfMetaRecords">—</strong>
-                </div>
-                <div class="pdf-meta-item">
-                  <span class="pdf-meta-label">Generated</span>
-                  <strong class="pdf-meta-value" id="pdfMetaDate">—</strong>
-                </div>
-                <div class="pdf-meta-item">
-                  <span class="pdf-meta-label">Format</span>
-                  <strong class="pdf-meta-value" id="pdfMetaFormat">A4 Landscape · Table</strong>
-                </div>
+            <!-- Metadata Summary Strip -->
+            <div class="pdf-export-meta" id="pdfExportMeta">
+              <div class="pdf-meta-item">
+                <span class="pdf-meta-label">Report Type</span>
+                <strong class="pdf-meta-value" id="pdfMetaType">—</strong>
               </div>
-
-              <div class="pdf-layout-selector-bar" id="pdfLayoutSelectorBar">
-                <div class="pdf-layout-selector-group" id="pdfLayoutSelectorGroup">
-                  <span class="pdf-layout-selector-label">PDF Layout:</span>
-                  <div class="pdf-layout-toggle-group" role="radiogroup" aria-label="PDF Layout Style">
-                    <button type="button" class="pdf-layout-option-btn active" id="pdfLayoutTableBtn" data-layout="table">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                      <span>Detailed List</span>
-                    </button>
-                    <button type="button" class="pdf-layout-option-btn" id="pdfLayoutByDayBtn" data-layout="byday">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                      <span>Staff Schedule (By Day)</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div class="pdf-staff-selector-group" id="pdfStaffSelectorGroup">
-                  <span class="pdf-layout-selector-label">Staff Scope:</span>
-                  <div class="pdf-staff-select-wrapper">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                    <select id="pdfStaffFilterSelect" class="pdf-staff-filter-select" aria-label="Filter export by staff member">
-                      <option value="ALL">All Staff Members (Full Roster)</option>
-                    </select>
-                  </div>
-                </div>
+              <div class="pdf-meta-item">
+                <span class="pdf-meta-label">Records</span>
+                <strong class="pdf-meta-value" id="pdfMetaRecords">—</strong>
+              </div>
+              <div class="pdf-meta-item">
+                <span class="pdf-meta-label">Generated</span>
+                <strong class="pdf-meta-value" id="pdfMetaDate">—</strong>
+              </div>
+              <div class="pdf-meta-item">
+                <span class="pdf-meta-label">Format</span>
+                <strong class="pdf-meta-value" id="pdfMetaFormat">A4 Landscape · Table</strong>
               </div>
             </div>
 
-            <!-- Enhanced Customizer Section -->
-            <div class="pdf-customizer-panel" id="pdfCustomizerPanel">
-              <button type="button" class="pdf-customizer-toggle-btn" id="pdfCustomizerToggleBtn" aria-expanded="true" aria-controls="pdfCustomizerGrid">
-                <div class="pdf-customizer-title">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="3"></circle>
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                  </svg>
-                  <span>Export Content & Layout Customizer</span>
-                </div>
-                <span class="customizer-collapse-badge" id="pdfCustomizerCollapseBadge">
-                  <span class="collapse-text">Hide Settings</span>
-                  <svg class="collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-                </span>
-              </button>
-              <div class="pdf-customizer-grid" id="pdfCustomizerGrid">
-                <div class="pdf-customizer-col-group" id="pdfCustomizerColGroup">
-                  <span class="customizer-subheading">Include Columns & Details</span>
-                  <div class="customizer-checkboxes">
-                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColRoute" checked><span>Route & Direction</span></label>
-                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColAircraft" checked><span>Aircraft Type</span></label>
-                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColNotes" checked><span>Planning Notes & Status</span></label>
-                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColSpan" checked><span>Duty Span & Breaks</span></label>
-                    <label class="customizer-chip-check"><input type="checkbox" id="pdfColHolidays" checked><span>Holiday Badges</span></label>
-                  </div>
-                </div>
-                <div class="pdf-customizer-opt-group" id="pdfCustomizerOptGroup">
-                  <span class="customizer-subheading">Page Layout & Filter</span>
-                  <div class="customizer-inputs-row">
-                    <label class="customizer-field">
-                      <span>Orientation</span>
-                      <select id="pdfOrientationSelect" class="bulk-select">
-                        <option value="landscape" selected>Landscape (A4)</option>
-                        <option value="portrait">Portrait (A4)</option>
-                      </select>
-                    </label>
-                    <label class="customizer-field">
-                      <span>Table Density</span>
-                      <select id="pdfDensitySelect" class="bulk-select">
-                        <option value="standard" selected>Standard (Comfortable)</option>
-                        <option value="compact">Compact (More Rows/Page)</option>
-                      </select>
-                    </label>
-                    <label class="customizer-field" id="pdfAirlineFilterField">
-                      <span>Airline Filter</span>
-                      <select id="pdfAirlineFilterSelect" class="bulk-select">
-                        <option value="ALL" selected>All Airlines</option>
-                      </select>
-                    </label>
-                  </div>
-                  <label class="customizer-field full-width" style="margin-top: 6px;">
-                    <span>Custom Station Sign-Off / Header Notes (Optional)</span>
-                    <input type="text" id="pdfCustomHeaderInput" placeholder="e.g., Station Duty Supervisor · Approved by MUC OPS Desk" class="search-input" style="height: 30px; font-size: 11px;">
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <!-- Two PDF cards -->
+            <!-- Download Action Cards (Primary focus) -->
             <div class="pdf-export-cards">
 
-              <!-- Original PDF -->
+              <!-- Original PDF Card -->
               <div class="pdf-export-card" id="pdfCardOriginal">
                 <div class="pdf-card-preview">
                   <div class="pdf-page-mock">
@@ -1137,14 +1059,11 @@
                       <div class="pdf-mock-row alt"></div>
                       <div class="pdf-mock-row"></div>
                       <div class="pdf-mock-row alt"></div>
-                      <div class="pdf-mock-row"></div>
-                      <div class="pdf-mock-row alt"></div>
-                      <div class="pdf-mock-row"></div>
                     </div>
                   </div>
                   <div class="pdf-card-badge original-badge">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                    Original
+                    Original Snapshot
                   </div>
                 </div>
                 <div class="pdf-card-body">
@@ -1162,8 +1081,8 @@
                 </div>
               </div>
 
-              <!-- Edited PDF -->
-              <div class="pdf-export-card" id="pdfCardEdited">
+              <!-- Edited PDF Card -->
+              <div class="pdf-export-card pdf-export-card-recommended" id="pdfCardEdited">
                 <div class="pdf-card-preview edited-preview">
                   <div class="pdf-page-mock">
                     <div class="pdf-page-header-mock edited">
@@ -1179,14 +1098,11 @@
                       <div class="pdf-mock-row alt"></div>
                       <div class="pdf-mock-row covered"></div>
                       <div class="pdf-mock-row alt"></div>
-                      <div class="pdf-mock-row covered"></div>
-                      <div class="pdf-mock-row alt"></div>
-                      <div class="pdf-mock-row"></div>
                     </div>
                   </div>
                   <div class="pdf-card-badge edited-badge">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    Edited
+                    Edited Working Plan
                   </div>
                 </div>
                 <div class="pdf-card-body">
@@ -1206,7 +1122,87 @@
 
             </div>
 
-            <p class="pdf-export-note">Both files are generated locally in your browser — nothing is sent to AVBIS or any external server.</p>
+            <!-- Export Customizer Panel (Collapsible settings) -->
+            <div class="pdf-customizer-panel" id="pdfCustomizerPanel">
+              <button type="button" class="pdf-customizer-toggle-btn" id="pdfCustomizerToggleBtn" aria-expanded="true" aria-controls="pdfCustomizerGrid">
+                <div class="pdf-customizer-title">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                  </svg>
+                  <span>Export Options & Customization</span>
+                </div>
+                <span class="customizer-collapse-badge" id="pdfCustomizerCollapseBadge">
+                  <span class="collapse-text">Hide Settings</span>
+                  <svg class="collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                </span>
+              </button>
+
+              <div class="pdf-customizer-grid" id="pdfCustomizerGrid">
+                <!-- Group 1: Data Filters & Scope -->
+                <div class="pdf-customizer-opt-group" id="pdfCustomizerOptGroup">
+                  <span class="customizer-subheading">Data Filters &amp; Layout</span>
+
+                  <div class="pdf-layout-selector-bar" id="pdfLayoutSelectorBar">
+                    <div class="pdf-layout-selector-group" id="pdfLayoutSelectorGroup">
+                      <span class="pdf-layout-selector-label">Export View:</span>
+                      <div class="pdf-layout-toggle-group" role="group" aria-label="PDF export view mode">
+                        <button type="button" id="pdfLayoutTableBtn" class="pdf-layout-option-btn active" aria-pressed="true">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg>
+                          Detailed List
+                        </button>
+                        <button type="button" id="pdfLayoutByDayBtn" class="pdf-layout-option-btn" aria-pressed="false">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                          Roster View
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="pdf-staff-selector-group full-width" id="pdfStaffSelectorGroup" style="margin-bottom: 12px;">
+                    <span class="pdf-layout-selector-label">Staff Member Scope:</span>
+                    <div class="pdf-staff-select-wrapper" style="flex: 1;">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                      <select id="pdfStaffFilterSelect" class="pdf-staff-filter-select" aria-label="Filter export by staff member" style="width: 100%;">
+                        <option value="ALL">All Staff Members (Full Roster)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="pdf-option-checks" aria-label="Included PDF details">
+                    <span class="pdf-option-checks-label">Included details</span>
+                    <div class="customizer-checkboxes">
+                      <label class="customizer-chip-check"><input type="checkbox" id="pdfColStaffName" checked><span>Staff Name</span></label>
+                      <label class="customizer-chip-check"><input type="checkbox" id="pdfColRoute" checked><span>Route &amp; Direction</span></label>
+                      <label class="customizer-chip-check"><input type="checkbox" id="pdfColAircraft" checked><span>Aircraft Type</span></label>
+                      <label class="customizer-chip-check"><input type="checkbox" id="pdfColNotes" checked><span>Planning Notes &amp; Status</span></label>
+                      <label class="customizer-chip-check"><input type="checkbox" id="pdfColSpan" checked><span>Duty Span &amp; Breaks</span></label>
+                      <label class="customizer-chip-check"><input type="checkbox" id="pdfColHolidays" checked><span>Holiday Badges</span></label>
+                    </div>
+                  </div>
+
+                  <div class="customizer-inputs-grid" style="margin-top: 10px;">
+                    <label class="customizer-field">
+                      <span>Table Density</span>
+                      <select id="pdfDensitySelect" class="bulk-select">
+                        <option value="standard" selected>Standard (Comfortable)</option>
+                        <option value="compact">Compact (More Rows/Page)</option>
+                      </select>
+                    </label>
+                    <label class="customizer-field" style="grid-column: span 1;">
+                      <span>Custom Header Notes (Optional)</span>
+                      <input type="text" id="pdfCustomHeaderInput" placeholder="e.g. MUC OPS Desk Sign-Off" class="search-input customizer-notes-input" style="height: 30px; font-size: 11px;">
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Security Footer Note -->
+            <p class="pdf-export-note">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              Generated securely in your browser — zero external data transfer.
+            </p>
           </div>
         </div>
       </div>
@@ -1452,6 +1448,242 @@
             <button type="button" id="autoScanModalCancelBtn" class="secondary-btn">Cancel</button>
             <button type="button" id="autoScanModalSaveBtn" class="primary-btn">Save & Apply</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- What-if Scenario Sandbox Modal -->
+    <div id="scenarioModal" class="modal-overlay" hidden aria-hidden="true">
+      <div class="modal-card scenario-modal-card">
+        <div class="modal-header">
+          <div>
+            <h2>What-If Scenario Modeling Sandbox</h2>
+            <p>Create and compare alternative roster proposals without altering the active station schedule.</p>
+          </div>
+          <button id="scenarioModalCloseBtn" class="close-btn" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body scenario-modal-body">
+          <div class="scenario-controls-bar">
+            <div class="scenario-input-group">
+              <label for="scenarioNameInput">Scenario Title</label>
+              <input id="scenarioNameInput" type="text" placeholder="e.g. Max Fairness Model" value="Minimum Overtime Proposal">
+            </div>
+            <div class="scenario-input-group">
+              <label for="scenarioStrategySelect">Optimization Strategy</label>
+              <select id="scenarioStrategySelect">
+                <option value="min_overtime">Minimum Overtime (Cap Hour Overages)</option>
+                <option value="max_fairness">Maximum Fairness (Equitable Shift Sharing)</option>
+                <option value="balanced_coverage" selected>Balanced Coverage (Standard Best-Fit)</option>
+              </select>
+            </div>
+            <button id="saveCurrentAsScenarioBtn" class="primary-btn" type="button">Simulate &amp; Save Scenario</button>
+          </div>
+
+          <div class="scenario-comparison-section">
+            <h3>Saved Scenarios &amp; Metrics Comparison</h3>
+            <div id="scenarioComparisonGrid" class="scenario-comparison-grid">
+              <div class="empty-state">No saved scenarios yet. Configure a strategy and click "Simulate &amp; Save Scenario".</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="scenarioModalDoneBtn" class="secondary-btn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Leave & Absence Manager Modal -->
+    <div id="absenceModal" class="modal-overlay" hidden aria-hidden="true">
+      <div class="modal-card absence-modal-card">
+        <div class="modal-header">
+          <div>
+            <h2>Staff Leave &amp; Absence Manager</h2>
+            <p>Log employee vacations, sick leave, and training to automatically identify affected duties &amp; replacements.</p>
+          </div>
+          <button id="absenceModalCloseBtn" class="close-btn" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body absence-modal-body">
+          <form id="absenceForm" class="absence-form">
+            <div class="form-row">
+              <label for="absenceStaffSearch">Employee Name / Initial Key</label>
+              <input id="absenceStaffSearch" type="text" list="staffOptions" placeholder="Select staff member..." required>
+            </div>
+            <div class="form-row grid-3">
+              <label for="absenceCategorySelect">Absence Category
+                <select id="absenceCategorySelect" required>
+                  <option value="Vacation">Vacation / Paid Time Off</option>
+                  <option value="Sickness">Sickness / Medical</option>
+                  <option value="Training">Training / Certification</option>
+                  <option value="Personal">Personal Leave</option>
+                  <option value="Other">Other / Standby</option>
+                </select>
+              </label>
+              <label for="absenceStartDate">Start Date
+                <input id="absenceStartDate" type="date" required>
+              </label>
+              <label for="absenceEndDate">End Date
+                <input id="absenceEndDate" type="date" required>
+              </label>
+            </div>
+            <div class="form-row">
+              <label for="absenceNotes">Notes / Reason</label>
+              <input id="absenceNotes" type="text" placeholder="e.g. Annual leave approved by Duty Manager">
+            </div>
+            <button id="saveAbsenceBtn" class="primary-btn" type="submit">Log Absence &amp; Recalculate Gaps</button>
+          </form>
+
+          <div class="absence-impact-section">
+            <h3>Affected Duties &amp; Replacement Candidates</h3>
+            <div id="absenceImpactContainer" class="absence-impact-container">
+              <p class="muted">Select or log an absence to view affected assigned duties.</p>
+            </div>
+          </div>
+
+          <div class="absence-list-section">
+            <h3>Active Absence Records</h3>
+            <div id="absenceRecordsList" class="absence-records-list">
+              <div class="empty-state">No active leave or absence records found.</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="absenceModalDoneBtn" class="secondary-btn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Configurable Rule Builder Modal -->
+    <div id="ruleBuilderModal" class="modal-overlay" hidden aria-hidden="true">
+      <div class="modal-card rule-modal-card">
+        <div class="modal-header">
+          <div>
+            <h2>Configurable Operational Rule Builder</h2>
+            <p>Define custom rest periods, duty limits, and SLA staff constraints without code modifications.</p>
+          </div>
+          <button id="ruleBuilderModalCloseBtn" class="close-btn" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body rule-modal-body">
+          <form id="ruleBuilderForm" class="rule-builder-form">
+            <div class="form-row grid-2">
+              <label for="ruleTitleInput">Rule Name / Description
+                <input id="ruleTitleInput" type="text" placeholder="e.g. Mandatory 11h Rest Rule" required>
+              </label>
+              <label for="ruleTypeSelect">Rule Category
+                <select id="ruleTypeSelect" required>
+                  <option value="MIN_REST_HOURS">Minimum Rest Period (e.g. 11h)</option>
+                  <option value="MAX_DUTIES_PER_DAY">Maximum Duties per Day</option>
+                  <option value="STAFF_SLA_RESTRICTION">SLA Qualification Restriction</option>
+                  <option value="SENIOR_STAFF_REQUIRED">Require Senior Employee per Flight</option>
+                  <option value="CONTRACT_HOURS">Custom Contract Hours Limit</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row grid-2">
+              <label for="ruleTargetSelect">Scope / Target
+                <select id="ruleTargetSelect">
+                  <option value="GLOBAL">All Station Staff (Global Rule)</option>
+                  <option value="FT">Full-Time Staff Only</option>
+                  <option value="PT">Part-Time Staff Only</option>
+                  <option value="MJ">Minijob Staff Only</option>
+                </select>
+              </label>
+              <label for="ruleParamValueInput">Parameter Value
+                <input id="ruleParamValueInput" type="text" placeholder="e.g. 11 (hours) or 2 (duties)" value="11">
+              </label>
+            </div>
+            <button id="saveRuleBtn" class="primary-btn" type="submit">Create Custom Rule</button>
+          </form>
+
+          <div class="active-rules-section">
+            <h3>Active System Rules</h3>
+            <div id="activeRulesList" class="active-rules-list">
+              <div class="empty-state">No custom rules configured yet.</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="ruleBuilderModalDoneBtn" class="secondary-btn" type="button">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Calendar Export Modal -->
+    <div id="icsExportModal" class="modal-overlay" hidden aria-hidden="true">
+      <div class="modal-card ics-modal-card">
+        <div class="modal-header">
+          <div>
+            <h2>iCalendar (.ics) Schedule Export</h2>
+            <p>Export individual or team duty schedules for sync with Apple Calendar, Google Calendar, or Outlook.</p>
+          </div>
+          <button id="icsExportModalCloseBtn" class="close-btn" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body ics-modal-body">
+          <div class="form-row">
+            <label for="icsScopeSelect">Export Target</label>
+            <select id="icsScopeSelect">
+              <option value="station">Entire Station Assigned Roster</option>
+              <option value="individual">Specific Staff Member</option>
+            </select>
+          </div>
+          <div id="icsIndividualField" class="form-row" hidden>
+            <label for="icsStaffSearch">Employee Name / Key</label>
+            <input id="icsStaffSearch" type="text" list="staffOptions" placeholder="Type staff name...">
+          </div>
+          <div class="form-row">
+            <label for="icsTitleInput">Calendar Title</label>
+            <input id="icsTitleInput" type="text" value="GSRM Station Duty Roster">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="downloadIcsBtn" class="primary-btn" type="button">Download .ics File</button>
+          <button id="icsExportModalCancelBtn" class="secondary-btn" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shift Handover Report Modal -->
+    <div id="handoverModal" class="modal-overlay" hidden aria-hidden="true">
+      <div class="modal-card handover-modal-card">
+        <div class="modal-header">
+          <div>
+            <h2>Automated Shift Handover Report</h2>
+            <p>Concise operational summary of unresolved gaps, pending confirmations, risky duties, and notes.</p>
+          </div>
+          <button id="handoverModalCloseBtn" class="close-btn" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body handover-modal-body">
+          <div class="handover-summary-metrics">
+            <div class="handover-metric-card">
+              <span class="val" id="handoverCoverageRate">100%</span>
+              <span class="lbl">Coverage Rate</span>
+            </div>
+            <div class="handover-metric-card">
+              <span class="val" id="handoverUnresolvedGaps">0</span>
+              <span class="lbl">Unresolved Gaps</span>
+            </div>
+            <div class="handover-metric-card">
+              <span class="val" id="handoverPendingConfirmations">0</span>
+              <span class="lbl">Pending Confirmations</span>
+            </div>
+            <div class="handover-metric-card">
+              <span class="val" id="handoverRiskyDuties">0</span>
+              <span class="lbl">Risky Duties</span>
+            </div>
+          </div>
+
+          <div class="handover-notes-area">
+            <label for="handoverSupervisorNotes">Supervisor Shift Notes / Special Instructions</label>
+            <textarea id="handoverSupervisorNotes" rows="3" placeholder="Enter any specific notes for incoming duty manager..."></textarea>
+          </div>
+
+          <div id="handoverReportPreview" class="handover-report-preview">
+            <!-- Dynamic Handover Content loaded via JS -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="copyHandoverSummaryBtn" class="secondary-btn" type="button">Copy to Clipboard</button>
+          <button id="printHandoverBtn" class="primary-btn" type="button">Print / Export Report</button>
+          <button id="handoverModalCloseFooterBtn" class="secondary-btn" type="button">Close</button>
         </div>
       </div>
     </div>

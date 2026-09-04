@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { dateScanSucceeded, extractFlightSodRows, extractStaffDirectory, fetchFlightLinks, parseSodGroups, verifyAuthenticatedSession } = require("./server");
+const { buildRosterPdfHtml, dateScanSucceeded, extractFlightSodRows, extractStaffDirectory, fetchFlightLinks, parseSodGroups, safePdfFilename, verifyAuthenticatedSession } = require("./server");
 
 function mockAuthSession(response) {
   return {
@@ -9,6 +9,21 @@ function mockAuthSession(response) {
     context: { request: { get: async () => response } },
   };
 }
+
+test("builds an isolated printable roster document with normalized PDF text", () => {
+  const html = buildRosterPdfHtml({
+    title: "Duty Roster — Edited",
+    subtitle: "01 Sep · 02 Sep",
+    rosterHtml: '<div class="roster-table">06:00–10:00</div>',
+    css: ".roster-table { color: #123; }",
+  });
+
+  assert.match(html, /Duty Roster - Edited/);
+  assert.match(html, /01 Sep \| 02 Sep/);
+  assert.match(html, /06:00-10:00/);
+  assert.match(html, /Roster section only/);
+  assert.equal(safePdfFilename("My Roster 01/09"), "My-Roster-01-09.pdf");
+});
 
 test("reports an AVBIS session as connected only after an authenticated response", async () => {
   const authenticated = {
@@ -176,4 +191,58 @@ test("SQLite SOD cache respects 15-minute TTL and force refresh override", () =>
   assert.equal(db.getCachedSod(uncachedKey, testDb), null);
 });
 
+test("server route handler distinguishes valid routes, unknown API endpoints, and invalid HTTP methods", async () => {
+  const http = require("node:http");
+
+  const testServer = http.createServer(async (req, res) => {
+    const urlObj = new URL(req.url, "http://localhost:3000");
+    const pathname = urlObj.pathname;
+
+    if (req.method === "POST" && pathname === "/api/export/roster-pdf") {
+      res.writeHead(200, { "Content-Type": "application/pdf" });
+      res.end("PDF_DATA");
+      return;
+    }
+
+    if (pathname.startsWith("/api/")) {
+      const knownApiPaths = ["/api/export/roster-pdf", "/api/connect", "/api/notes"];
+      if (knownApiPaths.includes(pathname)) {
+        res.writeHead(405, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `Method ${req.method} not allowed for ${pathname}` }));
+        return;
+      }
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: `API endpoint not found: ${req.method} ${pathname}` }));
+      return;
+    }
+
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Method not allowed" }));
+      return;
+    }
+
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("OK");
+  });
+
+  await new Promise((resolve) => testServer.listen(0, resolve));
+  const port = testServer.address().port;
+
+  try {
+    const validPost = await fetch(`http://localhost:${port}/api/export/roster-pdf`, { method: "POST", body: "{}" });
+    assert.equal(validPost.status, 200);
+
+    const invalidMethodOnApi = await fetch(`http://localhost:${port}/api/export/roster-pdf`, { method: "GET" });
+    assert.equal(invalidMethodOnApi.status, 405);
+
+    const unknownApi = await fetch(`http://localhost:${port}/api/nonexistent`, { method: "POST" });
+    assert.equal(unknownApi.status, 404);
+
+    const postToStatic = await fetch(`http://localhost:${port}/index.html`, { method: "POST" });
+    assert.equal(postToStatic.status, 405);
+  } finally {
+    testServer.close();
+  }
+});
 

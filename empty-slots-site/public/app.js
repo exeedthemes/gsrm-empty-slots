@@ -158,10 +158,24 @@ let showRosterDutyTotals = localStorage.getItem("gsrmRosterDutyTotals") === "tru
 let currentSingleDayScale = parseInt(localStorage.getItem("gsrm_roster_timeline_scale") || "3600", 10);
 let rosterViewMode = localStorage.getItem("gsrmRosterViewMode") === "airline" ? "airline" : "staff";
 let currentAutoPlan = null;
+let activeAbsences = [];
+let activeCustomRules = [];
+let activeScenarios = [];
+let currentScenario = null;
 let selectedPlannerStaff = new Set();
 let plannerAvailabilityRules = [];
 let plannerStaffContracts = {};
 try { plannerStaffContracts = JSON.parse(localStorage.getItem("gsrmPlannerStaffContractsV1") || "{}"); } catch { plannerStaffContracts = {}; }
+
+const STAFF_CONTRACTS = Object.freeze({
+  FT: { code: "FT", label: "Full-Time", shortLabel: "FT", weeklyHours: 40, monthlyHours: 160, className: "is-ft" },
+  PT: { code: "PT", label: "Part-Time", shortLabel: "PT", weeklyHours: 20, monthlyHours: 80, className: "is-pt" },
+  MJ: { code: "MJ", label: "Minijob", shortLabel: "MJ", weeklyHours: 10, monthlyHours: 40, className: "is-mj" },
+});
+
+function getStaffContractMeta(type) {
+  return STAFF_CONTRACTS[String(type || "PT").toUpperCase()] || STAFF_CONTRACTS.PT;
+}
 
 function savePlannerStaffContracts() {
   localStorage.setItem("gsrmPlannerStaffContractsV1", JSON.stringify(plannerStaffContracts));
@@ -170,7 +184,7 @@ function savePlannerStaffContracts() {
 function toggleStaffContract(key) {
   if (!key) return;
   const current = (plannerStaffContracts[key] || "PT").toUpperCase();
-  plannerStaffContracts[key] = current === "FT" ? "PT" : "FT";
+  plannerStaffContracts[key] = current === "PT" ? "FT" : current === "FT" ? "MJ" : "PT";
   savePlannerStaffContracts();
   if (typeof renderPlannerStaffList === "function") renderPlannerStaffList();
   if (typeof renderRosterHoursOverview === "function") {
@@ -206,7 +220,7 @@ function autoDetectStaffContracts(options = {}) {
     const actualHours = totals.totalMinutes / 60;
     const monthlyRate = (actualHours / daysInWindow) * 30;
 
-    const detected = (monthlyRate >= 100 || actualHours >= 100) ? "FT" : "PT";
+    const detected = monthlyRate <= 40 ? "MJ" : (monthlyRate >= 100 || actualHours >= 100) ? "FT" : "PT";
     if (plannerStaffContracts[person.key] !== detected) {
       plannerStaffContracts[person.key] = detected;
       updatedCount += 1;
@@ -312,6 +326,40 @@ if (availModalOverlay) {
 document.getElementById("pdfExportModalClose")?.addEventListener("click", closePdfExportModal);
 document.getElementById("pdfDownloadOriginal")?.addEventListener("click", () => generatePdfDocument({ mode: "original" }));
 document.getElementById("pdfDownloadEdited")?.addEventListener("click", () => generatePdfDocument({ mode: "edited" }));
+document.getElementById("exportOverlapsPdfBtn")?.addEventListener("click", () => openPdfExportModal("overlaps"));
+document.getElementById("rosterExportOverlapsPdfBtn")?.addEventListener("click", () => openPdfExportModal("overlaps"));
+document.getElementById("pdfShiftScopeSelect")?.addEventListener("change", () => updatePdfModalMetaAndPreviews());
+document.getElementById("pdfAirlineFilterSelect")?.addEventListener("change", () => updatePdfModalMetaAndPreviews());
+["pdfColStaffName", "pdfColRoute", "pdfColAircraft", "pdfColNotes", "pdfColSpan", "pdfColHolidays"].forEach((id) => {
+  document.getElementById(id)?.addEventListener("change", () => updatePdfModalMetaAndPreviews());
+});
+document.getElementById("pdfOrientationSelect")?.addEventListener("change", () => setPdfExportLayoutStyle(pdfExportLayoutStyle));
+document.getElementById("pdfSlaBtn")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const menu = document.getElementById("pdfSlaMenu");
+  const button = document.getElementById("pdfSlaBtn");
+  if (!menu || !button) return;
+  const willOpen = menu.hidden;
+  menu.hidden = !willOpen;
+  button.setAttribute("aria-expanded", String(willOpen));
+});
+document.getElementById("pdfSlaAllBtn")?.addEventListener("click", () => {
+  selectedPdfSlas = [...availablePdfSlas];
+  renderPdfSlaOptions();
+  updatePdfModalMetaAndPreviews();
+});
+document.getElementById("pdfSlaNoneBtn")?.addEventListener("click", () => {
+  selectedPdfSlas = [];
+  renderPdfSlaOptions();
+  updatePdfModalMetaAndPreviews();
+});
+document.getElementById("pdfSlaActiveBtn")?.addEventListener("click", () => {
+  const activeSlas = getActiveSelectedSlas().filter((sla) => availablePdfSlas.includes(sla));
+  if (!activeSlas.length) return;
+  selectedPdfSlas = activeSlas;
+  renderPdfSlaOptions();
+  updatePdfModalMetaAndPreviews();
+});
 document.getElementById("pdfLayoutTableBtn")?.addEventListener("click", () => setPdfExportLayoutStyle("table"));
 document.getElementById("pdfLayoutByDayBtn")?.addEventListener("click", () => setPdfExportLayoutStyle("byday"));
 document.getElementById("pdfCustomizerToggleBtn")?.addEventListener("click", () => {
@@ -332,6 +380,15 @@ if (pdfExportModalOverlay) {
   });
 }
 
+document.addEventListener("click", (event) => {
+  const wrap = document.getElementById("pdfSlaDropdownWrap");
+  const menu = document.getElementById("pdfSlaMenu");
+  if (wrap && menu && !menu.hidden && !wrap.contains(event.target)) {
+    menu.hidden = true;
+    document.getElementById("pdfSlaBtn")?.setAttribute("aria-expanded", "false");
+  }
+});
+
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (availModalOverlay && !availModalOverlay.hidden) closeAvailabilityModal();
@@ -345,6 +402,10 @@ document.getElementById("rosterInlineCloseBtn")?.addEventListener("click", close
 document.getElementById("clearHistoryBtn").addEventListener("click", clearScanHistory);
 gapActionStatus.addEventListener("change", saveSelectedGapAction);
 gapActionNotes.addEventListener("input", saveSelectedGapAction);
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (runBtn && !runBtn.disabled) runBtn.click();
+});
 form.email.addEventListener("input", handleCredentialChange);
 form.password.addEventListener("input", handleCredentialChange);
 csvBtn.addEventListener("click", () => {
@@ -505,18 +566,9 @@ autoPlannerToggle.addEventListener("click", () => {
 autoPlannerClear.addEventListener("click", clearAutomaticPlan);
 autoPlannerSelectAll.addEventListener("click", toggleAllPlannerStaff);
 document.getElementById("autoPlannerSelectFree")?.addEventListener("click", selectFreePlannerStaff);
-document.getElementById("autoPlannerAutoDetectContracts")?.addEventListener("click", () => {
-  const count = autoDetectStaffContracts({ forceAll: true });
-  showToast(`Auto-detected contract status for staff (${count} contract(s) updated)`, { kind: "info", duration: 4000 });
-});
 document.getElementById("autoDetectContractsBtn")?.addEventListener("click", () => {
   const count = autoDetectStaffContracts({ forceAll: true });
   showToast(`Auto-detected contract status for staff (${count} contract(s) updated)`, { kind: "info", duration: 4000 });
-});
-document.getElementById("workloadAutoDetectBtn")?.addEventListener("click", () => {
-  const count = autoDetectStaffContracts({ forceAll: true });
-  showToast(`Auto-detected contract status for staff (${count} contract(s) updated)`, { kind: "info", duration: 4000 });
-  renderInsights();
 });
 autoPlannerStaffSearch.addEventListener("input", renderPlannerStaffList);
 for (const id of plannerOptionIds) document.getElementById(id).addEventListener("change", savePlannerOptions);
@@ -631,7 +683,7 @@ if (workloadSectionToggle) {
     const section = document.getElementById("insightsWorkloadSection");
     if (!section) return;
     const isCollapsed = section.classList.toggle("collapsed");
-    workloadSectionToggle.textContent = isCollapsed ? "Expand workload" : "Collapse workload";
+    workloadSectionToggle.textContent = isCollapsed ? "Expand workload ▾" : "Collapse workload ▴";
     workloadSectionToggle.setAttribute("aria-expanded", String(!isCollapsed));
   });
 }
@@ -642,7 +694,7 @@ if (warningsSectionToggle) {
     const section = document.getElementById("insightsWarningsSection");
     if (!section) return;
     const isCollapsed = section.classList.toggle("collapsed");
-    warningsSectionToggle.textContent = isCollapsed ? "Expand" : "Collapse";
+    warningsSectionToggle.textContent = isCollapsed ? "Expand ▾" : "Collapse ▴";
     warningsSectionToggle.setAttribute("aria-expanded", String(!isCollapsed));
   });
 }
@@ -1310,7 +1362,7 @@ function populateAirlines(airlines, selected = []) {
 
 function populateSlas(slas, selected = []) {
   const selectedValues = new Set(Array.isArray(selected) ? selected : [selected].filter(Boolean));
-  const optionValues = new Set(["ASVC", "CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "SECS", ...slas.filter(Boolean).map((code) => code.toUpperCase())]);
+  const optionValues = new Set(["ASVC", "CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "SECS", "TRC", "TKTG", ...slas.filter(Boolean).map((code) => code.toUpperCase())]);
   const options = ["", ...[...optionValues].sort()];
   slasSelect.innerHTML = "";
 
@@ -2234,7 +2286,7 @@ function syncResultsSlaBtnText() {
 
 function renderSlaChips(availableSlas) {
   if (!slaChipsContainer) return;
-  const slas = availableSlas.length > 0 ? availableSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS"];
+  const slas = availableSlas.length > 0 ? availableSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS", "TRC", "TKTG"];
 
   let html = `<button type="button" class="sla-chip ${selectedResultsSlas.length === 0 ? "active" : ""}" data-sla="all">All SLAs</button>`;
   for (const sla of slas) {
@@ -2313,7 +2365,7 @@ function updateRosterFilters() {
 
 function renderRosterSlaChips(availableSlas) {
   if (!rosterSlaChipsContainer) return;
-  const slas = availableSlas && availableSlas.length > 0 ? availableSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS"];
+  const slas = availableSlas && availableSlas.length > 0 ? availableSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS", "TRC", "TKTG"];
 
   let html = `<button type="button" class="sla-chip ${selectedRosterSlas.length === 0 ? "active" : ""}" data-sla="all">All SLAs</button>`;
   for (const sla of slas) {
@@ -2902,6 +2954,8 @@ function renderRoster() {
         dayAssignments.length > 1 && OperationsUtils.inspectDaySchedule(dayAssignments, getPlannerOptions()).violations.includes("overlap")
       );
       const overlapPillHtml = personHasOverlap ? ` <span class="person-overlap-pill" title="Staff member has overlapping shift assignments on one or more dates">⚠️ Overlap</span>` : "";
+      const contractMeta = getStaffContractMeta(plannerStaffContracts[person.key]);
+      const contractLabelHtml = `<span class="roster-contract-label ${contractMeta.className}">${escapeHtml(contractMeta.label)}</span>`;
 
       tr.innerHTML = `
         <td class="roster-person-cell" draggable="true" data-staff-key="${escapeHtml(person.key)}" data-staff-name="${escapeHtml(person.name)}" data-staff-initials="${escapeHtml(person.initials)}" title="Drag ${escapeHtml(person.name)} to assign/replace on a duty slot">
@@ -2909,7 +2963,7 @@ function renderRoster() {
             <strong>${escapeHtml(person.name)}</strong>
             ${trackBtnHtml}
           </div>
-          <span>${escapeHtml(displayInitials)}${hasLocalEdit ? ' <b class="edited-badge">Edited</b>' : ""}${overlapPillHtml}</span>
+          <span class="roster-person-meta">${escapeHtml(displayInitials)} ${contractLabelHtml}${hasLocalEdit ? ' <b class="edited-badge">Edited</b>' : ""}${overlapPillHtml}</span>
           ${singleDaySummaryBadgeHtml}
         </td>
         ${person.byDay.map((assignments, index) => renderRosterDayCell(assignments, roster.dailyWindows[index], showRosterDutyTotals, person, roster.dailyWindows.length === 1)).join("")}
@@ -3527,9 +3581,8 @@ function renderRosterHoursOverview(people, windows) {
   rosterHoursBody.innerHTML = summaries.length ? summaries.map(({ person, totals }) => {
     const workload = getPersonWorkloadMeta(person.overlapping);
     const showStation = person.station || (person.initials && person.initials !== person.name && person.initials !== person.key ? person.initials : "");
-    const contract = (plannerStaffContracts[person.key] || "PT").toUpperCase();
-    const isFt = contract === "FT";
-    const targetHours = isFt ? 160 : 80;
+    const contractMeta = getStaffContractMeta(plannerStaffContracts[person.key]);
+    const targetHours = contractMeta.monthlyHours;
     const actualHours = totals.totalMinutes / 60;
     const pct = targetHours > 0 ? Math.round((actualHours / targetHours) * 100) : 0;
     const isComplete = actualHours >= targetHours;
@@ -3538,14 +3591,14 @@ function renderRosterHoursOverview(people, windows) {
     const statusText = isComplete ? '✓ 100%' : `${pct}%`;
 
     const contractPillHtml = `
-      <span class="contract-pill-btn ${isFt ? 'is-ft' : 'is-pt'}" style="cursor:default;" title="Contract defined in Directory: ${isFt ? 'Full-Time (160h/mo)' : 'Part-Time (80h/mo)'}">
-        <span>${isFt ? '👔 Full-Time' : '⏱️ Part-Time'}</span>
+      <span class="contract-pill-btn ${contractMeta.className}" style="cursor:default;" title="Contract defined in Directory: ${contractMeta.label} (${targetHours}h/mo, ${contractMeta.weeklyHours}h/wk)">
+        <span>${escapeHtml(contractMeta.label)}</span>
         <span class="contract-cap">${targetHours}h</span>
       </span>
     `;
 
     const progressCellHtml = `
-      <div class="workload-progress-cell" title="Target: ${targetHours}h/month (${isFt ? 'Full-Time: 160h' : 'Part-Time: 80h'})">
+      <div class="workload-progress-cell" title="Target: ${targetHours}h/month (${contractMeta.label})">
         <div class="workload-progress-text">
           <span class="hours-val"><strong>${actualHours.toFixed(1)}</strong> <small>/ ${targetHours}h</small></span>
           <span class="status-badge ${statusClass}">${statusText}</span>
@@ -4470,16 +4523,15 @@ function renderPlannerStaffList() {
   const visible = people.filter((person) => !query || `${person.initials} ${person.name}`.toLowerCase().includes(query));
   selectedPlannerStaff = new Set([...selectedPlannerStaff].filter((key) => people.some((person) => person.key === key)));
   autoPlannerStaffList.innerHTML = visible.length ? visible.map((person) => {
-    const contract = (plannerStaffContracts[person.key] || "PT").toUpperCase();
-    const isFt = contract === "FT";
+    const contractMeta = getStaffContractMeta(plannerStaffContracts[person.key]);
     return `
       <label style="display:flex; align-items:center; justify-content:space-between; width:100%; gap:6px;">
         <span style="display:flex; align-items:center; gap:6px;">
           <input type="checkbox" value="${escapeHtml(person.key)}" ${selectedPlannerStaff.has(person.key) ? "checked" : ""}>
           <span><strong>${escapeHtml(person.name)}</strong><small>${escapeHtml(person.initials)}</small></span>
         </span>
-        <span class="contract-pill-btn ${isFt ? 'is-ft' : 'is-pt'}" style="cursor:default; margin-left:auto; font-size:10px; padding:2px 7px;" title="Contract set in Master Directory: ${isFt ? 'Full-Time (160h)' : 'Part-Time (80h)'}">
-          ${isFt ? '👔 FT' : '⏱️ PT'}
+        <span class="contract-pill-btn ${contractMeta.className}" style="cursor:default; margin-left:auto; font-size:10px; padding:2px 7px;" title="Contract set in Master Directory: ${contractMeta.label} (${contractMeta.weeklyHours}h/week)">
+          ${contractMeta.shortLabel}
         </span>
       </label>
     `;
@@ -5778,12 +5830,169 @@ function clearGapCandidate() {
   openGapPlanner(selectedGap);
 }
 
-function exportPdf() {
-  openPdfExportModal();
+let pdfExportTargetTab = null;
+
+function exportPdf(targetTab) {
+  openPdfExportModal(typeof targetTab === "string" ? targetTab : activeTab);
+}
+
+function getActiveSelectedSlas() {
+  if (activeTab === "roster") {
+    if (typeof selectedRosterSlas !== "undefined" && selectedRosterSlas.length > 0) return selectedRosterSlas;
+    const rosterSlaVal = document.getElementById("rosterSla")?.value;
+    if (rosterSlaVal && rosterSlaVal !== "ALL") return [rosterSlaVal];
+  } else if (activeTab === "gaps") {
+    if (typeof selectedResultsSlas !== "undefined" && selectedResultsSlas.length > 0) return selectedResultsSlas;
+    const resultsSlaVal = document.getElementById("resultsSlaFilter")?.value;
+    if (resultsSlaVal && resultsSlaVal !== "ALL") return [resultsSlaVal];
+  }
+  if (typeof selectedRosterSlas !== "undefined" && selectedRosterSlas.length > 0) return selectedRosterSlas;
+  if (typeof selectedResultsSlas !== "undefined" && selectedResultsSlas.length > 0) return selectedResultsSlas;
+  return [];
+}
+
+function getPdfSelectedSlas() {
+  if (!availablePdfSlas.length || selectedPdfSlas.length === availablePdfSlas.length) return [];
+  return [...selectedPdfSlas];
+}
+
+function getPdfStaffInitials(personOrName) {
+  const name = typeof personOrName === "string" ? personOrName : personOrName?.name;
+  const initials = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("");
+  return initials || "Staff";
+}
+
+function getOverlappingShiftExportRows(rows, staffDirectory, selectedAirline = "ALL", staffFilter = "ALL", selectedSlas = [], incStaffName = true) {
+  const people = OperationsUtils.buildPeople(rows, staffDirectory || latestStaffDirectory);
+  const rowsList = [];
+  const actionsMap = getGapActions();
+
+  for (const person of people) {
+    if (staffFilter && staffFilter !== "ALL") {
+      const filterTarget = parseStaffIdentity(staffFilter);
+      const targetKey = filterTarget ? filterTarget.key : staffFilter;
+      const targetName = (filterTarget ? filterTarget.name : String(staffFilter)).toLowerCase();
+      if (person.key !== targetKey && !person.name.toLowerCase().includes(targetName)) {
+        continue;
+      }
+    }
+
+    let duties = (person.duties || [])
+      .map((row) => ({
+        row,
+        start: OperationsUtils.parseDutyTime(row.date, row.start_utc),
+        end: OperationsUtils.parseDutyTime(row.date, row.release_utc),
+      }))
+      .filter((item) => item.start && item.end)
+      .sort((a, b) => a.start - b.start);
+
+    if (selectedSlas && selectedSlas.length > 0) {
+      duties = duties.filter((item) => selectedSlas.includes(item.row.sla));
+    }
+
+    for (let i = 1; i < duties.length; i++) {
+      const prev = duties[i - 1];
+      const curr = duties[i];
+      const isSameFlight = OperationsUtils.isSameFlightDuty ? OperationsUtils.isSameFlightDuty(prev.row, curr.row) : (prev.row.flight === curr.row.flight && prev.row.date === curr.row.date);
+
+      if (curr.start < prev.end && !isSameFlight) {
+        const codePrev = OperationsUtils.airlineCode(prev.row);
+        const codeCurr = OperationsUtils.airlineCode(curr.row);
+        if (selectedAirline && selectedAirline !== "ALL" && codePrev !== selectedAirline && codeCurr !== selectedAirline) {
+          continue;
+        }
+
+        const overlapMs = prev.end.getTime() - curr.start.getTime();
+        const overlapMins = Math.round(overlapMs / 60000);
+        const keyPrev = OperationsUtils.rowKey(prev.row);
+        const keyCurr = OperationsUtils.rowKey(curr.row);
+        const actPrev = actionsMap[keyPrev] || {};
+        const actCurr = actionsMap[keyCurr] || {};
+
+        let statusText = "Open Collision Conflict";
+        if (actPrev.assignedCandidate || actCurr.assignedCandidate) {
+          statusText = `Reassigned (${actPrev.assignedCandidate || actCurr.assignedCandidate})`;
+        } else if (actPrev.status || actCurr.status) {
+          statusText = actPrev.status || actCurr.status;
+        }
+
+        const staffInitials = getPdfStaffInitials(person);
+        const displayName = incStaffName ? (person.name || "Unknown Staff") : staffInitials;
+
+        rowsList.push([
+          prev.row.date || curr.row.date || "",
+          displayName,
+          staffInitials,
+          `${prev.row.flight || "Shift A"} (${prev.row.sla || "N/A"})`,
+          `${prev.row.start_utc || ""}–${prev.row.release_utc || ""}`,
+          `${curr.row.flight || "Shift B"} (${curr.row.sla || "N/A"})`,
+          `${curr.row.start_utc || ""}–${curr.row.release_utc || ""}`,
+          `${overlapMins} mins overlap`,
+          statusText
+        ]);
+      }
+    }
+  }
+
+  return rowsList.sort((a, b) => {
+    const dateA = parseDateSortable(a[0]);
+    const dateB = parseDateSortable(b[0]);
+    if (dateA !== dateB) return dateA - dateB;
+    return a[1].localeCompare(b[1]);
+  });
 }
 
 let pdfExportLayoutStyle = "table"; // "table" | "byday"
 let pdfExportStaffFilter = "ALL"; // "ALL" or staff identity key
+let availablePdfSlas = [];
+let selectedPdfSlas = [];
+
+function renderPdfSlaOptions() {
+  const list = document.getElementById("pdfSlaCheckboxes");
+  const buttonText = document.getElementById("pdfSlaBtnText");
+  const activeButton = document.getElementById("pdfSlaActiveBtn");
+  if (!list || !buttonText) return;
+
+  const selectedSet = new Set(selectedPdfSlas);
+  list.innerHTML = availablePdfSlas.map((sla) => `
+    <label class="multi-select-item">
+      <input type="checkbox" value="${escapeHtml(sla)}" ${selectedSet.has(sla) ? "checked" : ""}>
+      <span class="compact-sla" data-sla="${escapeHtml(sla)}">${escapeHtml(sla)}</span>
+    </label>
+  `).join("");
+
+  for (const checkbox of list.querySelectorAll('input[type="checkbox"]')) {
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        if (!selectedPdfSlas.includes(checkbox.value)) selectedPdfSlas.push(checkbox.value);
+      } else {
+        selectedPdfSlas = selectedPdfSlas.filter((sla) => sla !== checkbox.value);
+      }
+      renderPdfSlaOptions();
+      updatePdfModalMetaAndPreviews();
+    });
+  }
+
+  if (availablePdfSlas.length && !selectedPdfSlas.length) {
+    buttonText.textContent = "No SLAs selected";
+  } else if (!availablePdfSlas.length || selectedPdfSlas.length === availablePdfSlas.length) {
+    buttonText.textContent = "All SLAs";
+  } else if (selectedPdfSlas.length === 1) {
+    buttonText.textContent = selectedPdfSlas[0];
+  } else {
+    buttonText.textContent = `${selectedPdfSlas.length} SLAs selected`;
+  }
+
+  if (activeButton) {
+    activeButton.hidden = getActiveSelectedSlas().filter((sla) => availablePdfSlas.includes(sla)).length === 0;
+  }
+}
 
 function setPdfExportLayoutStyle(style) {
   pdfExportLayoutStyle = style === "byday" ? "byday" : "table";
@@ -5793,8 +6002,11 @@ function setPdfExportLayoutStyle(style) {
 
   if (tableBtn) tableBtn.classList.toggle("active", pdfExportLayoutStyle === "table");
   if (byDayBtn) byDayBtn.classList.toggle("active", pdfExportLayoutStyle === "byday");
+  tableBtn?.setAttribute("aria-pressed", String(pdfExportLayoutStyle === "table"));
+  byDayBtn?.setAttribute("aria-pressed", String(pdfExportLayoutStyle === "byday"));
   if (pdfMetaFormat) {
-    pdfMetaFormat.textContent = pdfExportLayoutStyle === "byday" ? "A4 Landscape · Staff Schedule (By Day)" : "A4 Landscape · Detailed List";
+    const orientation = document.getElementById("pdfOrientationSelect")?.value === "portrait" ? "Portrait" : "Landscape";
+    pdfMetaFormat.textContent = pdfExportLayoutStyle === "byday" ? `A4 ${orientation} · Browser Roster View` : `A4 ${orientation} · Detailed List`;
   }
 
   updatePdfModalMetaAndPreviews();
@@ -5802,20 +6014,65 @@ function setPdfExportLayoutStyle(style) {
 
 function updatePdfModalMetaAndPreviews() {
   const pdfMetaRecords = document.getElementById("pdfMetaRecords");
+  const pdfMetaType = document.getElementById("pdfMetaType");
   const staffSelect = document.getElementById("pdfStaffFilterSelect");
+  const airlineSelect = document.getElementById("pdfAirlineFilterSelect");
+  const scopeSelect = document.getElementById("pdfShiftScopeSelect");
+  const incStaffName = document.getElementById("pdfColStaffName") ? document.getElementById("pdfColStaffName").checked : true;
+  const selectedSlas = getPdfSelectedSlas();
+
   if (staffSelect) {
     pdfExportStaffFilter = staffSelect.value || "ALL";
   }
 
+  const isOverlaps = pdfExportTargetTab === "overlaps" || scopeSelect?.value === "OVERLAPS" || (activeTab === "roster" && typeof rosterStatus !== "undefined" && rosterStatus?.value === "overlap" && scopeSelect?.value !== "ALL");
+
+  if (pdfMetaType) {
+    if (isOverlaps) {
+      pdfMetaType.textContent = "Overlapping Shifts (Collisions)";
+    } else {
+      const tabLabels = {
+        gaps: "Empty Slots (Gaps)",
+        replacements: "Duty Replacements",
+        roster: rosterViewMode === "airline" ? "Flight Schedule Roster" : "Staff Duty Roster",
+        insights: "Coverage & Workload Insights",
+        history: "Scan Snapshots History",
+      };
+      pdfMetaType.textContent = tabLabels[pdfExportTargetTab || activeTab] || "Operational Report";
+    }
+  }
+
+  let sourceRows = availablePdfSlas.length && !selectedPdfSlas.length ? [] : latestRows;
+  if (sourceRows.length && selectedSlas.length > 0) {
+    sourceRows = sourceRows.filter((r) => selectedSlas.includes(r.sla));
+  }
+
   if (pdfMetaRecords) {
-    if (pdfExportStaffFilter === "ALL") {
-      const gapsCount = latestRows.filter((r) => Number(r.missing || 0) > 0).length;
-      const totalRecords = activeTab === "history" ? getScanHistory().length : (activeTab === "gaps" ? gapsCount : latestRows.length);
-      pdfMetaRecords.textContent = `${totalRecords} rows (All Staff)`;
+    const slaBadge = selectedSlas.length > 0 ? ` [SLA: ${selectedSlas.join(", ")}]` : "";
+    if (isOverlaps) {
+      const overlapRows = getOverlappingShiftExportRows(sourceRows, latestStaffDirectory, airlineSelect?.value || "ALL", pdfExportStaffFilter, selectedSlas, incStaffName);
+      pdfMetaRecords.textContent = `${overlapRows.length} shift collision(s) detected${slaBadge}`;
+    } else if (availablePdfSlas.length && !selectedPdfSlas.length) {
+      pdfMetaRecords.textContent = "0 records · Select at least one SLA";
+    } else if ((pdfExportTargetTab || activeTab) === "roster" && rosterViewMode === "staff") {
+      const roster = getRosterRows();
+      let visiblePeople = roster?.rows ? filterRosterPeople(roster.rows) : [];
+      if (pdfExportStaffFilter !== "ALL") {
+        const target = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter };
+        visiblePeople = visiblePeople.filter((person) => person.key === target.key);
+      }
+      const dateCount = roster?.dailyWindows?.length || 0;
+      pdfMetaRecords.textContent = `${visiblePeople.length} staff · ${dateCount} date${dateCount === 1 ? "" : "s"}${slaBadge}`;
+    } else if (pdfExportStaffFilter === "ALL") {
+      const gapsCount = sourceRows.filter((r) => Number(r.missing || 0) > 0).length;
+      const totalRecords = activeTab === "history" ? getScanHistory().length : (activeTab === "gaps" ? gapsCount : sourceRows.length);
+      pdfMetaRecords.textContent = `${totalRecords} rows (All Staff)${slaBadge}`;
     } else {
       const filterTarget = parseStaffIdentity(pdfExportStaffFilter);
-      const staffName = filterTarget ? filterTarget.name : pdfExportStaffFilter;
-      pdfMetaRecords.textContent = `Filtered for ${staffName}`;
+      const staffName = incStaffName
+        ? (filterTarget ? filterTarget.name : pdfExportStaffFilter)
+        : (filterTarget ? (filterTarget.initials || filterTarget.key) : pdfExportStaffFilter);
+      pdfMetaRecords.textContent = `Filtered for ${staffName}${slaBadge}`;
     }
   }
 
@@ -5845,6 +6102,7 @@ function configurePdfModalForTab(tab) {
   const subtitleEl = document.getElementById("pdfExportSubtitle");
   const cardOriginal = document.getElementById("pdfCardOriginal");
   const cardEdited = document.getElementById("pdfCardEdited");
+  const scopeSelect = document.getElementById("pdfShiftScopeSelect");
 
   const cardEditedTitle = cardEdited?.querySelector(".pdf-card-title");
   const cardEditedDesc = cardEdited?.querySelector(".pdf-card-desc");
@@ -5864,6 +6122,17 @@ function configurePdfModalForTab(tab) {
   if (downloadEditedBtn) downloadEditedBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download Edited PDF`;
 
   switch (tab) {
+    case "overlaps":
+      if (layoutGroup) layoutGroup.hidden = true;
+      if (layoutBar) layoutBar.hidden = true;
+      pdfExportStaffFilter = "ALL";
+      setPdfExportLayoutStyle("table");
+      if (subtitleEl) subtitleEl.textContent = "Choose options to export overlapping shift collisions report as PDF";
+      if (cardEditedTitle) cardEditedTitle.textContent = "Export Overlapping Shifts";
+      if (cardEditedDesc) cardEditedDesc.textContent = "Exports all detected shift collisions per staff member, overlapping duration, and status.";
+      if (scopeSelect) scopeSelect.value = "OVERLAPS";
+      break;
+
     case "gaps":
       // Empty Slots / Empty Lists:
       // Staff selection is not needed for empty lists!
@@ -5875,11 +6144,18 @@ function configurePdfModalForTab(tab) {
       if (subtitleEl) subtitleEl.textContent = "Choose options to export empty slots (gaps) report as PDF";
       if (cardEditedTitle) cardEditedTitle.textContent = "Edited Empty Slots";
       if (cardEditedDesc) cardEditedDesc.textContent = "Includes gap notes, status updates (Covered/Contacted), and candidate assignments.";
+      if (scopeSelect) scopeSelect.value = "ALL";
       break;
 
     case "roster":
-      // Staff Roster: Keep layout toggle and staff selection
-      if (subtitleEl) subtitleEl.textContent = "Choose options to export staff duty roster as PDF";
+      // Match the staff roster's browser board by default. The detailed list remains available.
+      if (subtitleEl) subtitleEl.textContent = rosterViewMode === "airline"
+        ? "Export the current flight schedule with the same filters shown in the browser"
+        : "Export the current staff-by-day roster board as it appears in the browser";
+      setPdfExportLayoutStyle(rosterViewMode === "airline" ? "table" : "byday");
+      if (typeof rosterStatus !== "undefined" && rosterStatus?.value === "overlap" && scopeSelect) {
+        scopeSelect.value = "OVERLAPS";
+      }
       break;
 
     case "replacements":
@@ -5887,6 +6163,7 @@ function configurePdfModalForTab(tab) {
       if (layoutGroup) layoutGroup.hidden = true;
       if (subtitleEl) subtitleEl.textContent = "Choose options to export duty replacements report as PDF";
       setPdfExportLayoutStyle("table");
+      if (scopeSelect) scopeSelect.value = "ALL";
       break;
 
     case "insights":
@@ -5898,6 +6175,7 @@ function configurePdfModalForTab(tab) {
       if (subtitleEl) subtitleEl.textContent = "Choose options to export staff workload & coverage insights as PDF";
       if (cardEditedTitle) cardEditedTitle.textContent = "Export Workload Summary";
       if (cardEditedDesc) cardEditedDesc.textContent = "Exports staff duty counts, total hours, weekend/holiday hours, and SLAs covered.";
+      if (scopeSelect) scopeSelect.value = "ALL";
       break;
 
     case "history":
@@ -5912,6 +6190,7 @@ function configurePdfModalForTab(tab) {
       if (subtitleEl) subtitleEl.textContent = "Choose options to export scan history snapshots as PDF";
       if (cardEditedTitle) cardEditedTitle.textContent = "Export Scan History";
       if (cardEditedDesc) cardEditedDesc.textContent = "Exports history of all saved scan snapshots, flight counts, and missing position logs.";
+      if (scopeSelect) scopeSelect.value = "ALL";
       break;
 
     default:
@@ -5920,7 +6199,7 @@ function configurePdfModalForTab(tab) {
   }
 }
 
-function openPdfExportModal() {
+function openPdfExportModal(targetTab = activeTab) {
   if (!latestRows.length && activeTab !== "history") {
     return setMessage("No scan data available to export to PDF.", "warn");
   }
@@ -5928,7 +6207,8 @@ function openPdfExportModal() {
   const modal = document.getElementById("pdfExportModal");
   if (!modal) return;
 
-  configurePdfModalForTab(activeTab);
+  pdfExportTargetTab = typeof targetTab === "string" ? targetTab : activeTab;
+  configurePdfModalForTab(pdfExportTargetTab);
 
   // Populate staff filter select dropdown
   const staffSelect = document.getElementById("pdfStaffFilterSelect");
@@ -5952,7 +6232,7 @@ function openPdfExportModal() {
     uniqueStaff.forEach((person) => {
       const opt = document.createElement("option");
       opt.value = person.key;
-      opt.textContent = `${person.name} (${person.station || person.initials || "MUC"})`;
+      opt.textContent = `${person.name} · ${person.station || "MUC"} station`;
       staffSelect.appendChild(opt);
     });
     staffSelect.value = uniqueStaff.some((p) => p.key === currentVal) ? currentVal : "ALL";
@@ -5980,6 +6260,12 @@ function openPdfExportModal() {
     airlineSelect.value = airlines.includes(curAirline) ? curAirline : "ALL";
   }
 
+  // Populate the PDF multi-SLA checklist while retaining valid prior choices.
+  availablePdfSlas = [...new Set(latestRows.map((r) => r.sla).filter(Boolean))].sort();
+  selectedPdfSlas = selectedPdfSlas.filter((sla) => availablePdfSlas.includes(sla));
+  if (!selectedPdfSlas.length) selectedPdfSlas = [...availablePdfSlas];
+  renderPdfSlaOptions();
+
   setPdfExportLayoutStyle(pdfExportLayoutStyle);
 
   const now = new Date();
@@ -5992,9 +6278,10 @@ function openPdfExportModal() {
     roster: rosterViewMode === "airline" ? "Flight Schedule Roster" : "Staff Duty Roster",
     insights: "Coverage & Workload Insights",
     history: "Scan Snapshots History",
+    overlaps: "Overlapping Shifts (Collisions)",
   };
 
-  const reportTypeName = tabLabels[activeTab] || "Operational Report";
+  const reportTypeName = tabLabels[pdfExportTargetTab || activeTab] || "Operational Report";
 
   const pdfMetaType = document.getElementById("pdfMetaType");
   const pdfMetaDate = document.getElementById("pdfMetaDate");
@@ -6031,6 +6318,21 @@ function openPdfExportModal() {
   if (pdfEditedContactedCount) pdfEditedContactedCount.textContent = contactedCount;
   if (pdfEditedOpenCount) pdfEditedOpenCount.textContent = openCount;
 
+  // Only show edited PDF export option if edits have actually been made in the working plan
+  const hasGapEdits = Object.values(actions).some(
+    (act) => act && (act.status === "Covered" || act.status === "Contacted" || act.status === "Reassigned" || (act.notes && String(act.notes).trim().length > 0) || act.assignedCandidate)
+  );
+  const hasRosterEdits = (latestRows || []).some((r) => {
+    const ch = typeof getDutyRosterChange === "function" ? getDutyRosterChange(r) : null;
+    return ch && ch.changed;
+  });
+  const hasEdits = hasGapEdits || hasRosterEdits;
+  const cardEdited = document.getElementById("pdfCardEdited");
+  if (cardEdited) {
+    const isUnsupportedTab = ["overlaps", "insights", "history"].includes(pdfExportTargetTab);
+    cardEdited.hidden = isUnsupportedTab || !hasEdits;
+  }
+
   updatePdfModalMetaAndPreviews();
 
   modal.hidden = false;
@@ -6042,6 +6344,9 @@ function closePdfExportModal() {
   if (!modal) return;
   modal.hidden = true;
   modal.setAttribute("aria-hidden", "true");
+  const slaMenu = document.getElementById("pdfSlaMenu");
+  if (slaMenu) slaMenu.hidden = true;
+  document.getElementById("pdfSlaBtn")?.setAttribute("aria-expanded", "false");
 }
 
 function exportPdfOriginal() {
@@ -6071,7 +6376,127 @@ function parseDateSortable(dateStr) {
   return 0;
 }
 
+function prepareRosterSectionForPdf(mode) {
+  const previousMode = rosterStateMode;
+  let clone;
+  let subtitle = "";
+
+  try {
+    rosterStateMode = mode === "original" ? "original" : "edited";
+    renderRoster();
+    clone = rosterStaffView.cloneNode(true);
+    subtitle = rosterWindowText?.textContent?.trim() || "Visible roster period";
+  } finally {
+    rosterStateMode = previousMode;
+    renderRoster();
+  }
+
+  clone.removeAttribute("id");
+  clone.removeAttribute("hidden");
+  clone.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+  clone.querySelectorAll(".person-track-changes-btn, .compact-duty-swap-btn, .compact-duty-delete-btn, .roster-assign-slot-btn, .break-card").forEach((element) => element.remove());
+
+  const selectedStaff = pdfExportStaffFilter && pdfExportStaffFilter !== "ALL"
+    ? (parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter })
+    : null;
+  if (selectedStaff) {
+    for (const row of clone.querySelectorAll("tbody tr")) {
+      const personCell = row.querySelector(".roster-person-cell");
+      if (personCell?.dataset.staffKey !== selectedStaff.key) row.remove();
+    }
+  }
+
+  const selectedSlas = getPdfSelectedSlas();
+  const selectedAirline = document.getElementById("pdfAirlineFilterSelect")?.value || "ALL";
+  const rowByKey = new Map(latestRows.map((row) => [OperationsUtils.rowKey(row), row]));
+  for (const duty of clone.querySelectorAll(".compact-duty[data-row-key]")) {
+    const sourceRow = rowByKey.get(duty.dataset.rowKey);
+    const excludesSla = selectedSlas.length > 0 && !selectedSlas.includes(duty.dataset.sla || sourceRow?.sla);
+    const excludesAirline = selectedAirline !== "ALL" && sourceRow && OperationsUtils.airlineCode(sourceRow) !== selectedAirline;
+    if (excludesSla || excludesAirline) duty.remove();
+  }
+
+  for (const cell of clone.querySelectorAll(".roster-day-cell")) {
+    if (cell.querySelector(".compact-duty[data-row-key]")) continue;
+    cell.classList.add("free-day");
+    cell.classList.remove("has-overlap");
+    cell.innerHTML = '<div class="roster-free-day-content"><span>Free</span></div>';
+  }
+
+  const table = clone.querySelector(".roster-table");
+  if (table) {
+    table.style.removeProperty("min-width");
+    table.style.removeProperty("--single-day-width");
+  }
+  for (const duty of clone.querySelectorAll(".compact-duty")) {
+    duty.style.removeProperty("width");
+    duty.style.removeProperty("margin-left");
+  }
+
+  return { html: clone.outerHTML, subtitle, rowCount: clone.querySelectorAll("tbody tr").length };
+}
+
+async function generateBrowserRosterPdf({ mode = "original" } = {}) {
+  if (availablePdfSlas.length && !selectedPdfSlas.length) {
+    return setMessage("Select at least one SLA before exporting the PDF.", "warn");
+  }
+
+  const prepared = prepareRosterSectionForPdf(mode);
+  if (!prepared.rowCount) return setMessage("No staff match the selected PDF filters.", "warn");
+
+  const isEdited = mode === "edited";
+  const orientation = document.getElementById("pdfOrientationSelect")?.value || "landscape";
+  const customHeader = document.getElementById("pdfCustomHeaderInput")?.value?.trim();
+  const now = new Date();
+  const staffSuffix = pdfExportStaffFilter !== "ALL"
+    ? `-${(parseStaffIdentity(pdfExportStaffFilter)?.name || pdfExportStaffFilter).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+    : "";
+  const filename = `gsrm-roster-${mode}-browser-view${staffSuffix}-${now.toISOString().slice(0, 10)}.pdf`;
+  const title = isEdited ? "GSRM Staff Duty Roster (Edited)" : "GSRM Staff Duty Roster (Original)";
+  const subtitle = [prepared.subtitle, customHeader].filter(Boolean).join(" · ");
+  const downloadButton = document.getElementById(isEdited ? "pdfDownloadEdited" : "pdfDownloadOriginal");
+  const previousLabel = downloadButton?.innerHTML;
+
+  if (downloadButton) {
+    downloadButton.disabled = true;
+    downloadButton.textContent = "Rendering roster PDF...";
+  }
+  setMessage("Rendering the visible roster section as PDF...", "info");
+
+  try {
+    const response = await fetch("/api/export/roster-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, subtitle, rosterHtml: prepared.html, orientation, filename }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.error || `PDF renderer returned HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    downloadBlob(filename, blob, "application/pdf");
+    closePdfExportModal();
+    setMessage(`Roster-only browser view generated: ${filename}`, "success");
+  } catch (error) {
+    console.error("Browser roster PDF generation error:", error);
+    setMessage(`Could not render the browser-style roster PDF: ${error.message}`, "error");
+  } finally {
+    if (downloadButton) {
+      downloadButton.disabled = false;
+      downloadButton.innerHTML = previousLabel;
+    }
+  }
+}
+
 function generatePdfDocument({ mode = "original" } = {}) {
+  if (availablePdfSlas.length && !selectedPdfSlas.length) {
+    return setMessage("Select at least one SLA before exporting the PDF.", "warn");
+  }
+  const requestedTab = pdfExportTargetTab || activeTab;
+  const requestedScope = document.getElementById("pdfShiftScopeSelect")?.value || "ALL";
+  if (requestedTab === "roster" && rosterViewMode === "staff" && pdfExportLayoutStyle === "byday" && requestedScope !== "OVERLAPS") {
+    return generateBrowserRosterPdf({ mode });
+  }
   closePdfExportModal();
 
   if (!latestRows.length && activeTab !== "history") {
@@ -6115,6 +6540,10 @@ function generatePdfDocument({ mode = "original" } = {}) {
     const modeBadge = isEdited ? "EDITED ROSTER" : "ORIGINAL SCAN";
     const modeDesc = isEdited ? "Working Plan with Gap Edits & Coverage Assignments" : "Raw AVBIS Scan Snapshot";
 
+    const scopeSelect = document.getElementById("pdfShiftScopeSelect");
+    const activePdfTab = pdfExportTargetTab || activeTab;
+    const isOverlaps = activePdfTab === "overlaps" || scopeSelect?.value === "OVERLAPS" || (activeTab === "roster" && typeof rosterStatus !== "undefined" && rosterStatus?.value === "overlap" && scopeSelect?.value !== "ALL");
+
     const titles = {
       gaps: isEdited ? "GSRM Empty Slots Report (Edited Working Plan)" : "GSRM Empty Slots Report (Original Scan Data)",
       replacements: isEdited ? "GSRM Duty Replacements Report (Edited)" : "GSRM Duty Replacements Report (Original)",
@@ -6123,8 +6552,9 @@ function generatePdfDocument({ mode = "original" } = {}) {
         : (isEdited ? "GSRM Staff Duty Roster (Edited)" : "GSRM Staff Duty Roster (Original)"),
       insights: isEdited ? "GSRM Workload & Coverage Insights (Edited)" : "GSRM Workload & Coverage Insights (Original)",
       history: "GSRM Scan Snapshots History Report",
+      overlaps: isEdited ? "GSRM Overlapping Shifts & Collision Report (Edited)" : "GSRM Overlapping Shifts & Collision Report (Original)",
     };
-    const titleText = titles[activeTab] || `GSRM Operational Report (${modeBadge})`;
+    const titleText = isOverlaps ? (isEdited ? "GSRM Overlapping Shifts & Collision Report (Edited)" : "GSRM Overlapping Shifts & Collision Report (Original)") : (titles[activePdfTab] || `GSRM Operational Report (${modeBadge})`);
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(13);
@@ -6164,12 +6594,18 @@ function generatePdfDocument({ mode = "original" } = {}) {
 
     const actions = getGapActions();
 
-    // Filter by airline if selected
+    // Filter by airline and selected SLAs if selected
     let sourceScanRows = (mode === "original" && originalRows && originalRows.length)
       ? originalRows
       : ((filteredRows && filteredRows.length) ? filteredRows : latestRows);
     if (selectedAirline && selectedAirline !== "ALL") {
       sourceScanRows = sourceScanRows.filter((r) => OperationsUtils.airlineCode(r) === selectedAirline || (r.flight || "").startsWith(selectedAirline));
+    }
+    const selectedSlas = getPdfSelectedSlas();
+    const incStaffName = document.getElementById("pdfColStaffName") ? document.getElementById("pdfColStaffName").checked : true;
+
+    if (selectedSlas.length > 0) {
+      sourceScanRows = sourceScanRows.filter((r) => selectedSlas.includes(r.sla));
     }
 
     // Group / sort rows chronologically by Date first, then by Flight / Airline Number, then by Start UTC time (ONLY FOR PDF EXPORT)
@@ -6185,12 +6621,37 @@ function generatePdfDocument({ mode = "original" } = {}) {
       return String(a.start_utc || "").localeCompare(String(b.start_utc || ""));
     });
 
-    // Filter for Empty Slots (Gaps) tab so ONLY flights/airlines with actual missing positions (missing > 0) are exported
-    if (activeTab === "gaps" || (!["replacements", "roster", "insights", "history"].includes(activeTab))) {
-      sourceScanRows = sourceScanRows.filter((r) => Number(r.missing || 0) > 0);
-    }
-
-    if (activeTab === "replacements") {
+    if (isOverlaps) {
+      const overlapRows = getOverlappingShiftExportRows(sourceScanRows, latestStaffDirectory, selectedAirline, pdfExportStaffFilter, selectedSlas, incStaffName);
+      if (!incStaffName) {
+        tableHeaders = [["Date", "Staff (Initials)", "Shift A (Flight / SLA)", "Shift A Time", "Shift B (Flight / SLA)", "Shift B Time", "Collision Gap", "Status / Notes"]];
+        exportRows = overlapRows.map(([date, staff, _initials, ...shiftDetails]) => [date, staff, ...shiftDetails]);
+        columnStyles = {
+          0: { cellWidth: 22 },
+          1: { cellWidth: 22 },
+          2: { cellWidth: 42 },
+          3: { cellWidth: 28 },
+          4: { cellWidth: 42 },
+          5: { cellWidth: 28 },
+          6: { cellWidth: 28 },
+          7: { cellWidth: 36 },
+        };
+      } else {
+        tableHeaders = [["Date", "Staff Member", "Initials", "Shift A (Flight / SLA)", "Shift A Time", "Shift B (Flight / SLA)", "Shift B Time", "Collision Gap", "Status / Notes"]];
+        exportRows = overlapRows;
+        columnStyles = {
+          0: { cellWidth: 22 },
+          1: { cellWidth: 36 },
+          2: { cellWidth: 16 },
+          3: { cellWidth: 42 },
+          4: { cellWidth: 28 },
+          5: { cellWidth: 42 },
+          6: { cellWidth: 28 },
+          7: { cellWidth: 28 },
+          8: { cellWidth: 32 },
+        };
+      }
+    } else if (activeTab === "replacements") {
       tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Start UTC", "Release UTC", "Duration", "Candidates", "Top Candidate / Assignment", "Status"]];
       const initials = myInitialsInput.value.trim().toUpperCase();
       const myDuties = sourceScanRows.filter((row) => row.staff && row.staff.some((s) => matchStaffMember(s, initials)));
@@ -6232,12 +6693,20 @@ function generatePdfDocument({ mode = "original" } = {}) {
         }
         candidates.sort((a, b) => b.score - a.score || (a.connectionGapMinutes ?? Infinity) - (b.connectionGapMinutes ?? Infinity));
         
-        let matchText = candidates[0] ? `${candidates[0].name} (${candidates[0].freeAllDay ? "Free all day" : `${formatHours(candidates[0].connectionGapMinutes)}h gap`})` : "None available";
+        let candLabelText = "None available";
+        if (candidates[0]) {
+          const candName = incStaffName ? candidates[0].name : (candidates[0].initials || "Staff");
+          const freeText = candidates[0].freeAllDay ? "Free all day" : `${formatHours(candidates[0].connectionGapMinutes)}h gap`;
+          candLabelText = `${candName} (${freeText})`;
+        }
+        let matchText = candLabelText;
         let statusText = "Unassigned";
 
         if (isEdited && act) {
           if (act.assignedCandidate) {
-            matchText = `ASSIGNED: ${act.assignedCandidate}`;
+            const candId = parseStaffIdentity(act.assignedCandidate);
+            const label = incStaffName ? (candId?.name || act.assignedCandidate) : (candId?.initials || act.assignedCandidate);
+            matchText = `ASSIGNED: ${label}`;
           }
           if (act.status) {
             statusText = act.status;
@@ -6262,33 +6731,42 @@ function generatePdfDocument({ mode = "original" } = {}) {
     } else if (activeTab === "roster") {
       const roster = getRosterRows(mode);
       if (rosterViewMode === "airline") {
-        tableHeaders = [["Date", "Flight", "Dir", "Route", "Aircraft", "Sch. UTC", "SLA", "Start UTC", "Release UTC", "Req / Asgd", "Allocated Staff"]];
+        tableHeaders = [["Date", "Flight", "Dir", "Route", "Aircraft", "Sch. UTC", "SLA", "Start UTC", "Release UTC", "Req / Asgd", incStaffName ? "Allocated Staff" : "Allocated Staff (Initials)"]];
         const days = getAirlineRosterDays(roster);
         exportRows = days.flatMap((day) => day.flights
           .filter((f) => selectedAirline === "ALL" || (f.airlineCode || f.flight.slice(0, 2)) === selectedAirline)
-          .flatMap((flight) => flight.duties.map((duty) => [
-            day.isoDate || "",
-            duty.flight || "",
-            duty.direction || "",
-            duty.route || "",
-            duty.aircraft || "",
-            duty.scheduled_utc || "",
-            duty.sla || "",
-            duty.start_utc || "",
-            duty.release_utc || "",
-            `${duty.required || 0} / ${duty.assigned || 0}`,
-            (duty.staff || []).map((s) => parseStaffIdentity(s)?.name || s).join(", ") || "Unassigned"
-          ])));
+          .flatMap((flight) => flight.duties
+            .filter((duty) => selectedSlas.length === 0 || selectedSlas.includes(duty.sla))
+            .map((duty) => [
+              day.isoDate || "",
+              duty.flight || "",
+              duty.direction || "",
+              duty.route || "",
+              duty.aircraft || "",
+              duty.scheduled_utc || "",
+              duty.sla || "",
+              duty.start_utc || "",
+              duty.release_utc || "",
+              `${duty.required || 0} / ${duty.assigned || 0}`,
+              (duty.staff || []).map((s) => {
+                const id = parseStaffIdentity(s);
+                return incStaffName ? (id?.name || s) : (id?.initials || s);
+              }).join(", ") || "Unassigned"
+            ])));
       } else {
-        tableHeaders = [["Status", "Initials", "Staff Name", "Date", "Flight", "Direction", "Route", "SLA", "Start UTC", "Release UTC"]];
+        tableHeaders = [["Status", "Station", incStaffName ? "Staff Name" : "Staff Initials", "Date", "Flight", "Direction", "Route", "SLA", "Start UTC", "Release UTC"]];
         const visible = new Set(JSON.parse(rosterBody.dataset.visibleStaffKeys || "[]"));
         const people = (roster?.rows || []).filter((person) => visible.has(person.key));
         exportRows = people.flatMap((person) => {
-          const allocs = person.overlapping.filter((a) => selectedAirline === "ALL" || OperationsUtils.airlineCode(a) === selectedAirline);
+          let allocs = person.overlapping.filter((a) => selectedAirline === "ALL" || OperationsUtils.airlineCode(a) === selectedAirline);
+          if (selectedSlas.length > 0) {
+            allocs = allocs.filter((a) => selectedSlas.includes(a.sla));
+          }
+          const displayName = incStaffName ? (person.name || "") : (person.initials || person.key || "");
           return (allocs.length ? allocs : [null]).map((alloc) => [
             person.status === "free" ? "Free" : "On duty",
-            person.initials || "",
-            person.name || "",
+            person.station || "MUC",
+            displayName,
             alloc?.date || "—",
             alloc?.flight || "—",
             alloc?.direction || "—",
@@ -6301,16 +6779,22 @@ function generatePdfDocument({ mode = "original" } = {}) {
       }
 
     } else if (activeTab === "insights") {
-      tableHeaders = [["Staff Member", "Initials", "Duties", "Total Hours", "Weekday", "Saturday", "Sunday", "Holiday", "SLAs Covered", "Max Span"]];
+      tableHeaders = [[incStaffName ? "Staff Member" : "Staff (Initials)", "Initials", "Duties", "Total Hours", "Weekday", "Saturday", "Sunday", "Holiday", "SLAs Covered", "Max Span"]];
       const analytics = OperationsUtils.buildAnalytics(sourceScanRows, latestStaffDirectory);
       const roster = getRosterRows(mode);
       const windows = roster?.dailyWindows || [];
       const holidayDates = HolidayUtils.getHolidaysForSelectedMonths(scanStartDate.value, scanEndDate.value).map((h) => h.date);
 
       exportRows = analytics.workload.map((person) => {
-        const totals = OperationsUtils.summarizeDutyHours(person.duties, windows, holidayDates);
+        let duties = person.duties || [];
+        if (selectedSlas.length > 0) {
+          duties = duties.filter((d) => selectedSlas.includes(d.sla));
+        }
+        const totals = OperationsUtils.summarizeDutyHours(duties, windows, holidayDates);
+        const displayName = incStaffName ? (person.name || "") : (person.initials || "Staff");
+        const slasCovered = (person.slas || []).filter((sla) => selectedSlas.length === 0 || selectedSlas.includes(sla));
         return [
-          person.name || "",
+          displayName,
           person.initials || "",
           totals.dutyCount,
           `${formatHours(totals.totalMinutes)}h`,
@@ -6318,7 +6802,7 @@ function generatePdfDocument({ mode = "original" } = {}) {
           `${formatHours(totals.saturdayMinutes)}h`,
           `${formatHours(totals.sundayMinutes)}h`,
           `${formatHours(totals.holidayMinutes)}h`,
-          (person.slas || []).join(", ") || "—",
+          slasCovered.join(", ") || "—",
           `${(person.longestSpanHours || 0).toFixed(1)}h`,
         ];
       });
@@ -6390,12 +6874,12 @@ function generatePdfDocument({ mode = "original" } = {}) {
     }
 
     // Ensure Gaps PDF report exclusively exports rows with actual missing capacity (missing > 0)
-    if (activeTab === "gaps" || (!["replacements", "roster", "insights", "history"].includes(activeTab))) {
+    if (!isOverlaps && (activeTab === "gaps" || (!["replacements", "roster", "insights", "history"].includes(activeTab)))) {
       exportRows = exportRows.filter((row) => Number(row[7] || 0) > 0);
     }
 
     // Apply staff scope filter if selected
-    if (pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
+    if (!isOverlaps && pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
       const filterTarget = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter, name: pdfExportStaffFilter };
       const targetKey = filterTarget.key;
       const targetName = (filterTarget.name || filterTarget.key).toLowerCase();
@@ -6411,7 +6895,7 @@ function generatePdfDocument({ mode = "original" } = {}) {
     }
 
     if (!exportRows.length) {
-      return setMessage(`No matching data available on the ${activeTab} tab to export to PDF.`, "warn");
+      return setMessage(`No matching data available to export to PDF.`, "warn");
     }
 
     let staffSuffixBadge = "";
@@ -6429,7 +6913,19 @@ function generatePdfDocument({ mode = "original" } = {}) {
     const cellPad = isCompact ? 1.5 : 2.5;
 
     if (pdfExportLayoutStyle === "byday") {
-      generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateStr, timeStr, mode });
+      generatePdfStaffByDayView({
+        doc,
+        isEdited,
+        modeBadge,
+        titleText,
+        mode,
+        selectedSlas,
+        selectedAirline,
+        incStaffName,
+        pageWidth,
+        pageHeight,
+        headerDividerY,
+      });
     } else {
       let lastGroupFlight = null;
 
@@ -6460,6 +6956,59 @@ function generatePdfDocument({ mode = "original" } = {}) {
 
           const headerTitle = String(tableHeaders[0]?.[data.column.index] || "").trim();
           const rawVal = String(data.cell.raw || "").trim();
+
+          if (isOverlaps) {
+            if (headerTitle.startsWith("Staff") || headerTitle === "Staff Member") {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.textColor = [15, 23, 42];
+            }
+            if (headerTitle === "Initials") {
+              data.cell.styles.fillColor = [241, 245, 249];
+              data.cell.styles.textColor = [51, 65, 85];
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.halign = "center";
+            }
+            if (headerTitle.startsWith("Shift A") || headerTitle.startsWith("Shift B")) {
+              if (headerTitle.includes("Time")) {
+                data.cell.styles.textColor = [71, 85, 105];
+                data.cell.styles.halign = "center";
+                data.cell.styles.fontStyle = "normal";
+              } else {
+                const slaName = extractSlaFromCellRaw(rawVal);
+                const slaStyle = getSlaColorStyle(slaName);
+                if (slaStyle && slaStyle.bg) {
+                  data.cell.styles.fillColor = slaStyle.bg;
+                  data.cell.styles.textColor = slaStyle.text;
+                } else {
+                  data.cell.styles.textColor = [15, 23, 42];
+                }
+                data.cell.styles.fontStyle = "bold";
+              }
+            }
+            if (headerTitle === "Collision Gap") {
+              data.cell.styles.fillColor = [254, 243, 199];
+              data.cell.styles.textColor = [146, 64, 14];
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.halign = "center";
+            }
+            if (headerTitle === "Status / Notes") {
+              const isReassigned = rawVal.includes("Reassigned") || rawVal.includes("Covered");
+              const isContacted = rawVal.includes("Contacted");
+              if (isReassigned) {
+                data.cell.styles.fillColor = [240, 253, 244];
+                data.cell.styles.textColor = [22, 101, 52];
+              } else if (isContacted) {
+                data.cell.styles.fillColor = [239, 246, 255];
+                data.cell.styles.textColor = [29, 78, 216];
+              } else {
+                data.cell.styles.fillColor = [241, 245, 249];
+                data.cell.styles.textColor = [51, 65, 85];
+              }
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.halign = "center";
+            }
+            return;
+          }
 
           // 1. SLA Column Badge Colors
           if (headerTitle === "SLA") {
@@ -6500,6 +7049,15 @@ function generatePdfDocument({ mode = "original" } = {}) {
           }
         },
         didDrawPage: (data) => {
+          if (data.pageNumber > 1) {
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(9);
+            doc.setTextColor(15, 23, 42);
+            doc.text(titleText, 14, 11);
+            doc.setDrawColor(226, 232, 240);
+            doc.setLineWidth(0.3);
+            doc.line(14, headerDividerY, rightMarginPos, headerDividerY);
+          }
           const pageCount = doc.internal.getNumberOfPages();
           doc.setFontSize(7.5);
           doc.setTextColor(148, 163, 184);
@@ -6509,10 +7067,25 @@ function generatePdfDocument({ mode = "original" } = {}) {
       });
     }
 
-    const styleName = pdfExportLayoutStyle === "byday" ? "staff-schedule-by-day" : "list";
-    const filename = `gsrm-${activeTab}-${mode}-${styleName}${staffFilenameSuffix}-${now.toISOString().slice(0, 10)}.pdf`;
+    // autoTable does not know the final page count while each page is drawn.
+    // Repaint the footer once generation is complete so every page is accurate.
+    const finalPageCount = doc.internal.getNumberOfPages();
+    for (let pageNumber = 1; pageNumber <= finalPageCount; pageNumber++) {
+      doc.setPage(pageNumber);
+      doc.setFillColor(255, 255, 255);
+      doc.rect(0, pageHeight - 12, pageWidth, 12, "F");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`${titleText}  |  ${modeBadge}${staffSuffixBadge}${pdfExportLayoutStyle === "byday" ? " (Browser Roster View)" : ""}`, 14, footerBottomPos);
+      doc.text(`Page ${pageNumber} of ${finalPageCount}`, rightMarginPos, footerBottomPos, { align: "right" });
+    }
+
+    const styleName = pdfExportLayoutStyle === "byday" ? "browser-roster" : "list";
+    const reportKey = isOverlaps ? "overlapping-shifts" : activeTab;
+    const filename = `gsrm-${reportKey}-${mode}-${styleName}${staffFilenameSuffix}-${now.toISOString().slice(0, 10)}.pdf`;
     doc.save(filename);
-    setMessage(`PDF report (${modeBadge} · ${pdfExportLayoutStyle === "byday" ? "Staff Schedule By Day" : "Detailed List"}${staffSuffixBadge}) generated: ${filename}`, "success");
+    setMessage(`PDF report (${modeBadge} · ${pdfExportLayoutStyle === "byday" ? "Browser Roster View" : "Detailed List"}${staffSuffixBadge}) generated: ${filename}`, "success");
   } catch (err) {
     console.error("PDF generation error:", err);
     exportPdfFallback();
@@ -6528,7 +7101,9 @@ function getSlaColorStyle(slaRaw) {
     "QH-CKI":  { bg: [236, 254, 255], text: [21, 94, 117],  accent: [8, 145, 178] },   // Cyan
     "QH-GATE": { bg: [253, 242, 248], text: [157, 23, 77],  accent: [219, 39, 119] },  // Pink
     "ASVC":    { bg: [236, 253, 245], text: [6, 95, 70],    accent: [5, 150, 105] },   // Emerald
-    "SECS":    { bg: [254, 242, 242], text: [153, 27, 27],  accent: [220, 38, 38] }    // Red
+    "SECS":    { bg: [254, 242, 242], text: [153, 27, 27],  accent: [220, 38, 38] },   // Red
+    "TRC":     { bg: [238, 242, 255], text: [55, 48, 163],  accent: [79, 70, 229] },   // Indigo
+    "TKTG":    { bg: [255, 247, 237], text: [194, 65, 12],  accent: [234, 88, 12] }    // Orange
   };
 
   if (slaColorMap[sla]) return slaColorMap[sla];
@@ -6537,6 +7112,8 @@ function getSlaColorStyle(slaRaw) {
   if (sla.includes("GATE")) return slaColorMap["GATE"];
   if (sla.includes("LOFO") || sla.includes("BAG") || sla.includes("RAMP")) return slaColorMap["LOFO"];
   if (sla.includes("SEC")) return slaColorMap["SECS"];
+  if (sla.includes("TRC") || sla.includes("TRANSIT") || sla.includes("TURN")) return slaColorMap["TRC"];
+  if (sla.includes("TKT") || sla.includes("TICKET")) return slaColorMap["TKTG"];
   if (sla.includes("ASVC") || sla.includes("ARR") || sla.includes("DEP")) return slaColorMap["ASVC"];
 
   return { bg: [241, 245, 249], text: [15, 23, 42], accent: [100, 116, 139] };
@@ -6548,33 +7125,80 @@ function extractSlaFromCellRaw(cellRaw) {
   return match ? match[1].trim() : str;
 }
 
-function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateStr, timeStr, mode = "original" }) {
+function generatePdfStaffByDayView({
+  doc,
+  isEdited,
+  modeBadge,
+  titleText,
+  mode = "original",
+  selectedSlas = [],
+  selectedAirline = "ALL",
+  incStaffName = true,
+  pageWidth = 297,
+  pageHeight = 210,
+  headerDividerY = 17,
+}) {
   const rosterData = typeof getRosterRows === "function" ? getRosterRows(mode) : null;
   let datesList = [];
   let staffList = [];
+  const includeRangeTotal = !!showRosterDutyTotals;
+  const useLocal = !!rosterLocalTimeToggle?.checked;
+  const zoneLabel = useLocal ? "Local" : "Z";
 
   if (rosterData && rosterData.dailyWindows && rosterData.dailyWindows.length > 0 && rosterData.rows && rosterData.rows.length > 0) {
     datesList = rosterData.dailyWindows.map((w) => w.isoDate);
-    staffList = rosterData.rows.map((person) => {
+    let rosterPeople = typeof filterRosterPeople === "function" ? filterRosterPeople(rosterData.rows) : rosterData.rows;
+    if (pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
+      const filterTarget = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter };
+      rosterPeople = rosterPeople.filter((person) => person.key === filterTarget.key);
+    }
+
+    staffList = rosterPeople.map((person) => {
       const dayDutyCells = rosterData.dailyWindows.map((w, idx) => {
-        const assignments = person.byDay[idx] || [];
-        if (!assignments.length) return "OFF";
-        return assignments.map((a) => `${a.flight || "Duty"} (${a.sla || "SLA"})\n${a.start_utc || ""}–${a.release_utc || ""} UTC`).join("\n---\n");
+        let assignments = person.byDay[idx] || [];
+        if (selectedSlas.length > 0) {
+          assignments = assignments.filter((a) => selectedSlas.includes(a.sla));
+        }
+        if (selectedAirline && selectedAirline !== "ALL") {
+          assignments = assignments.filter((a) => OperationsUtils.airlineCode(a) === selectedAirline);
+        }
+        if (!assignments.length) return "FREE";
+        return [...assignments]
+          .sort((a, b) => getDutyStartMinutes(a, useLocal) - getDutyStartMinutes(b, useLocal))
+          .map((a) => {
+            const start = getDisplayTime(a.date, a.start_utc, useLocal);
+            const release = getDisplayTime(a.date, a.release_utc, useLocal);
+            const change = isEdited ? getDutyRosterChange(a) : { changed: false };
+            const editedLabel = change.changed ? " · EDITED" : "";
+            return `${a.flight || "Duty"} (${a.sla || "SLA"})${editedLabel}\n${start || ""}-${release || ""} ${zoneLabel}`;
+          }).join("\n---\n");
       });
-      const summary = typeof OperationsUtils !== "undefined" && OperationsUtils.summarizeDutyHours ? OperationsUtils.summarizeDutyHours(person.overlapping, rosterData.dailyWindows) : null;
+      let dutiesForSummary = person.overlapping || [];
+      if (selectedSlas.length > 0) {
+        dutiesForSummary = dutiesForSummary.filter((d) => selectedSlas.includes(d.sla));
+      }
+      if (selectedAirline && selectedAirline !== "ALL") {
+        dutiesForSummary = dutiesForSummary.filter((d) => OperationsUtils.airlineCode(d) === selectedAirline);
+      }
+      const summary = typeof OperationsUtils !== "undefined" && OperationsUtils.summarizeDutyHours ? OperationsUtils.summarizeDutyHours(dutiesForSummary, rosterData.dailyWindows) : null;
       const totalHours = summary && summary.totalMinutes ? `${formatHours(summary.totalMinutes)}h` : "0.0h";
-      return [
-        person.name || "Unknown Staff",
+      const displayName = incStaffName ? (person.name || "Unknown Staff") : getPdfStaffInitials(person);
+      const row = [
+        displayName,
         person.station || person.initials || "MUC",
         ...dayDutyCells,
-        totalHours
       ];
+      if (includeRangeTotal) row.push(totalHours);
+      return row;
     });
   } else {
     // Fallback: aggregate staff assignments directly from originalRows when mode === original
-    const sourceRows = (mode === "original" && originalRows && originalRows.length)
+    let sourceRows = (mode === "original" && originalRows && originalRows.length)
       ? originalRows
       : ((typeof filteredRows !== "undefined" && filteredRows && filteredRows.length) ? filteredRows : latestRows);
+    if (selectedSlas.length > 0) {
+      sourceRows = sourceRows.filter((r) => selectedSlas.includes(r.sla));
+    }
     const dateSet = new Set();
     const staffMap = new Map();
 
@@ -6582,7 +7206,7 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
       latestStaffDirectory.forEach((sStr) => {
         const id = parseStaffIdentity(sStr);
         if (id && !staffMap.has(id.key)) {
-          staffMap.set(id.key, { name: id.name, station: id.station || "MUC", assignmentsByDate: {} });
+          staffMap.set(id.key, { name: id.name, initials: id.initials, station: id.station || "MUC", assignmentsByDate: {} });
         }
       });
     }
@@ -6593,7 +7217,7 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
         const id = parseStaffIdentity(sStr);
         if (!id) return;
         if (!staffMap.has(id.key)) {
-          staffMap.set(id.key, { name: id.name, station: id.station || "MUC", assignmentsByDate: {} });
+          staffMap.set(id.key, { name: id.name, initials: id.initials, station: id.station || "MUC", assignmentsByDate: {} });
         }
         const person = staffMap.get(id.key);
         if (!person.assignmentsByDate[r.date]) person.assignmentsByDate[r.date] = [];
@@ -6608,7 +7232,7 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
       let totalMins = 0;
       const dayCells = datesList.map((d) => {
         const duties = person.assignmentsByDate[d] || [];
-        if (!duties.length) return "OFF";
+        if (!duties.length) return "FREE";
         return duties.map((r) => {
           if (r.duration) {
             const parts = String(r.duration).split(":");
@@ -6618,27 +7242,32 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
         }).join("\n---\n");
       });
       const totalHours = totalMins > 0 ? `${(totalMins / 60).toFixed(1)}h` : "0.0h";
-      return [
-        person.name || "Unknown Staff",
+      const displayName = incStaffName ? (person.name || "Unknown Staff") : (person.initials || "Staff");
+      const row = [
+        displayName,
         person.station || "MUC",
         ...dayCells,
-        totalHours
       ];
+      if (includeRangeTotal) row.push(totalHours);
+      return row;
     });
   }
 
-  // Filter staffList if staff filter is active
+  // The fallback data path still needs the explicit export staff filter.
   let staffSuffixBadge = "";
   if (pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
-    const filterTarget = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter, name: pdfExportStaffFilter };
+    const filterTarget = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter, name: pdfExportStaffFilter, initials: pdfExportStaffFilter };
     const targetKey = filterTarget.key;
     const targetName = (filterTarget.name || filterTarget.key).toLowerCase();
 
-    staffList = staffList.filter((row) => {
-      const rowKey = parseStaffIdentity(row[0])?.key;
-      return rowKey === targetKey || row[0].toLowerCase().includes(targetName);
-    });
-    staffSuffixBadge = ` · Staff: ${filterTarget.name || filterTarget.key}`;
+    if (!rosterData?.rows?.length) {
+      staffList = staffList.filter((row) => {
+        const rowKey = parseStaffIdentity(row[0])?.key;
+        return rowKey === targetKey || row[0].toLowerCase().includes(targetName);
+      });
+    }
+    const sName = incStaffName ? (filterTarget.name || filterTarget.key) : (filterTarget.initials || filterTarget.key);
+    staffSuffixBadge = ` · Staff: ${sName}`;
   }
 
   // Format date header strings
@@ -6651,14 +7280,31 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
     }
   });
 
-  const tableHeaders = [["Staff Member", "Station", ...dateHeaders, "Total Duty"]];
+  const staffHeading = incStaffName ? "Staff member" : "Staff (Initials)";
+  const tableHeaders = [[staffHeading, "Station", ...dateHeaders, ...(includeRangeTotal ? ["Range hours"] : [])]];
+  const lastColumnIndex = tableHeaders[0].length - 1;
+  const rightMarginPos = pageWidth - 14;
+  const footerBottomPos = pageHeight - 7;
+  const availableDateWidth = Math.max(22, Math.min(34, (pageWidth - 28 - 34 - 14 - (includeRangeTotal ? 18 : 0)) / Math.max(1, datesList.length)));
+  const rosterColumnStyles = {
+    0: { cellWidth: 34 },
+    1: { cellWidth: 14, halign: "center" },
+  };
+  datesList.forEach((_, index) => {
+    rosterColumnStyles[index + 2] = { cellWidth: availableDateWidth };
+  });
+  if (includeRangeTotal) rosterColumnStyles[lastColumnIndex] = { cellWidth: 18, halign: "center" };
 
   doc.autoTable({
     head: tableHeaders,
     body: staffList,
-    startY: 20,
-    margin: { left: 14, right: 14, top: 20, bottom: 14 },
+    startY: headerDividerY + 3,
+    margin: { left: 14, right: 14, top: headerDividerY + 3, bottom: 14 },
     theme: "grid",
+    tableWidth: "wrap",
+    horizontalPageBreak: true,
+    horizontalPageBreakRepeat: [0, 1],
+    columnStyles: rosterColumnStyles,
     headStyles: {
       fillColor: isEdited ? [20, 83, 45] : [30, 41, 59],
       textColor: [255, 255, 255],
@@ -6682,7 +7328,7 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
         } else if (data.column.index === 1) {
           data.cell.styles.halign = "center";
           data.cell.styles.textColor = [100, 116, 139];
-        } else if (data.column.index === data.table.columns.length - 1) {
+        } else if (includeRangeTotal && data.column.index === data.table.columns.length - 1) {
           data.cell.styles.halign = "center";
           data.cell.styles.fontStyle = "bold";
           data.cell.styles.textColor = [2, 132, 199];
@@ -6692,7 +7338,8 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
       }
     },
     willDrawCell: (data) => {
-      if (data.section === "body" && data.column.index >= 2 && data.column.index < data.table.columns.length - 1) {
+      const isDateColumn = data.column.index >= 2 && (!includeRangeTotal || data.column.index < data.table.columns.length - 1);
+      if (data.section === "body" && isDateColumn) {
         const raw = data.cell.raw;
         if (typeof raw === "string" && raw) {
           const cellX = data.cell.x;
@@ -6707,12 +7354,14 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
           doc.setFillColor(rowBg[0], rowBg[1], rowBg[2]);
           doc.rect(cellX, cellY, cellWidth, cellHeight, "F");
 
-          if (raw === "OFF") {
+          if (raw === "FREE") {
+            doc.setFillColor(247, 254, 249);
+            doc.rect(cellX, cellY, cellWidth, cellHeight, "F");
             doc.setFontSize(7);
-            doc.setFont("helvetica", "italic");
-            doc.setTextColor(148, 163, 184);
-            doc.text("OFF", cellX + cellWidth / 2, cellY + cellHeight / 2 + 1, { align: "center" });
-            doc.setDrawColor(226, 232, 240);
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(21, 128, 61);
+            doc.text("Free", cellX + cellWidth / 2, cellY + cellHeight / 2 + 1, { align: "center" });
+            doc.setDrawColor(220, 252, 231);
             doc.setLineWidth(0.1);
             doc.rect(cellX, cellY, cellWidth, cellHeight, "S");
             return false;
@@ -6733,21 +7382,22 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
 
             const slaStr = extractSlaFromCellRaw(line0);
             const slaStyle = getSlaColorStyle(slaStr);
+            const wasEdited = /\bEDITED\b/.test(line0);
 
             const blockY = cellY + paddingY + idx * (blockHeight + gapY);
 
             // 1. Fill Shift Box Background with SLA Tint
-            doc.setFillColor(slaStyle.bg[0], slaStyle.bg[1], slaStyle.bg[2]);
+            doc.setFillColor(wasEdited ? 240 : slaStyle.bg[0], wasEdited ? 253 : slaStyle.bg[1], wasEdited ? 244 : slaStyle.bg[2]);
             doc.rect(cellX + 0.6, blockY, cellWidth - 1.2, blockHeight, "F");
 
             // 2. Fill Left SLA Accent Stripe
-            doc.setFillColor(slaStyle.accent[0], slaStyle.accent[1], slaStyle.accent[2]);
+            doc.setFillColor(wasEdited ? 13 : slaStyle.accent[0], wasEdited ? 148 : slaStyle.accent[1], wasEdited ? 136 : slaStyle.accent[2]);
             doc.rect(cellX + 0.6, blockY, 1.4, blockHeight, "F");
 
             // 3. Render Shift Header (Flight + SLA)
             doc.setFontSize(numShifts > 1 ? 6.2 : 6.8);
             doc.setFont("helvetica", "bold");
-            doc.setTextColor(slaStyle.text[0], slaStyle.text[1], slaStyle.text[2]);
+            doc.setTextColor(wasEdited ? 15 : slaStyle.text[0], wasEdited ? 118 : slaStyle.text[1], wasEdited ? 110 : slaStyle.text[2]);
             const headerY = line1 ? (blockY + (numShifts > 1 ? 2.6 : 3.2)) : (blockY + blockHeight / 2 + 1);
             doc.text(line0, cellX + 2.8, headerY);
 
@@ -6780,10 +7430,18 @@ function generatePdfStaffByDayView({ doc, isEdited, modeBadge, titleText, dateSt
     },
     didDrawPage: (data) => {
       const pageCount = doc.internal.getNumberOfPages();
+      if (data.pageNumber > 1) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text(titleText, 14, 10);
+        doc.setDrawColor(226, 232, 240);
+        doc.line(14, 14, rightMarginPos, 14);
+      }
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
-      doc.text(`Page ${data.pageNumber} of ${pageCount}`, 283, 203, { align: "right" });
-      doc.text(`${titleText}  |  ${modeBadge}${staffSuffixBadge} (Staff Schedule By Day)`, 14, 203);
+      doc.text(`Page ${data.pageNumber} of ${pageCount}`, rightMarginPos, footerBottomPos, { align: "right" });
+      doc.text(`${titleText}  |  ${modeBadge}${staffSuffixBadge} (Browser Roster View)`, 14, footerBottomPos);
     }
   });
 }
@@ -7110,6 +7768,8 @@ function renderInsights() {
         people = people.filter((p) => (plannerStaffContracts[p.key] || "PT").toUpperCase() === "FT");
       } else if (contractFilter === "pt") {
         people = people.filter((p) => (plannerStaffContracts[p.key] || "PT").toUpperCase() === "PT");
+      } else if (contractFilter === "mj") {
+        people = people.filter((p) => (plannerStaffContracts[p.key] || "PT").toUpperCase() === "MJ");
       }
 
       if (query) {
@@ -7367,12 +8027,11 @@ function renderMasterStaffDirectoryTable() {
       ? `<button type="button" class="person-track-changes-btn" data-person-key="${escapeHtml(person.key)}" title="${trackTitle}" style="border:none; background:transparent; cursor:pointer; padding:0 2px; color:var(--primary, #2563eb); display:inline-flex; align-items:center;" aria-label="Tracked"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM2 8a6 6 0 1 1 12 0A6 6 0 0 1 2 8zm6.5-3v3.25l2.25 1.35-.75 1.2-3-1.8V5h1.5z"/></svg></button>`
       : "";
 
-    const contract = (plannerStaffContracts[person.key] || "PT").toUpperCase();
-    const isFt = contract === "FT";
+    const contractMeta = getStaffContractMeta(plannerStaffContracts[person.key]);
     const contractBtnHtml = `
-      <button type="button" class="contract-pill-btn contract-toggle-btn ${isFt ? 'is-ft' : 'is-pt'}" data-person-key="${escapeHtml(person.key)}" title="Click to toggle contract: Full-Time (160h) / Part-Time (80h)">
-        <span>${isFt ? '👔 Full-Time' : '⏱️ Part-Time'}</span>
-        <span class="contract-cap">${isFt ? 160 : 80}h</span>
+      <button type="button" class="contract-pill-btn contract-toggle-btn ${contractMeta.className}" data-person-key="${escapeHtml(person.key)}" title="Click to change contract: Part-Time → Full-Time → Minijob">
+        <span>${escapeHtml(contractMeta.label)}</span>
+        <span class="contract-cap">${contractMeta.monthlyHours}h</span>
       </button>
     `;
 
@@ -7768,7 +8427,7 @@ function renderPersonRosterAuditHtml(current, previous) {
   const summary = audit.getStaffAuditSummary(historyPersonSelectedKey);
 
   const rawSlas = [...new Set([...(current?.rows || []), ...(previous?.rows || [])].map((r) => r.sla).filter(Boolean))].sort();
-  const availableSlas = rawSlas.length > 0 ? rawSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS"];
+  const availableSlas = rawSlas.length > 0 ? rawSlas : ["CKIN", "GATE", "LOFO", "QH-CKI", "QH-GATE", "ASVC", "SECS", "TRC", "TKTG"];
 
   let entries = summary.entries;
 
@@ -8852,8 +9511,8 @@ function renderPersonChangesContent(filterMode = "all") {
   // 1. Staff Profile Header Card or Scope Header Card
   if (!isAll && person) {
     const initials = escapeHtml(person.initials || (person.name ? person.name.split(" ").map(n=>n[0]).join("") : "ST"));
-    const contractLimit = typeof getContractHoursLimit === "function" ? getContractHoursLimit(person) : 80;
-    const contractTag = contractLimit === 160 ? "Full-Time (160h)" : "Part-Time (80h)";
+    const contractMeta = getStaffContractMeta(plannerStaffContracts[person.key]);
+    const contractTag = `${contractMeta.label} (${contractMeta.monthlyHours}h)`;
 
     html += `
       <div class="audit-profile-card">
@@ -10127,6 +10786,7 @@ function readAutoScanModalFields() {
   };
 }
 
+
 function initAutoScanner() {
   document.getElementById("autoScanToggleBtn")?.addEventListener("click", () => {
     saveAutoScanSettings({ enabled: !autoScanSettings.enabled });
@@ -10172,19 +10832,552 @@ function initAutoScanner() {
   }
 }
 
+/* ==========================================================================
+   Roster Management Suite Feature Implementations
+   ========================================================================== */
+
+/* 1. What-If Scenario Modeling Sandbox */
+async function fetchScenarios() {
+  try {
+    const res = await fetch("/api/scenarios");
+    if (!res.ok) return;
+    const data = await res.json();
+    activeScenarios = Array.isArray(data) ? data : [];
+    renderScenarioComparisonGrid();
+  } catch (err) {
+    console.error("Failed to fetch scenarios:", err);
+  }
+}
+
+function openScenarioModal() {
+  const modal = document.getElementById("scenarioModal");
+  if (modal) {
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
+    fetchScenarios();
+  }
+}
+
+function closeScenarioModal() {
+  const modal = document.getElementById("scenarioModal");
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  }
+}
+
+async function handleSaveScenario() {
+  const nameInput = document.getElementById("scenarioNameInput");
+  const strategySelect = document.getElementById("scenarioStrategySelect");
+  const title = (nameInput?.value || "Untitled Scenario").trim();
+  const strategy = strategySelect?.value || "balanced_coverage";
+
+  const windows = typeof OperationsUtils.operationalPeriod === "function" ? OperationsUtils.operationalPeriod(latestRows) : [];
+  const selectedStaffKeys = typeof getPlannerSelectedKeys === "function" ? getPlannerSelectedKeys() : [];
+  const plan = typeof OperationsUtils.buildAutoPlan === "function"
+    ? OperationsUtils.buildAutoPlan(latestRows, latestStaffDirectory, selectedStaffKeys, windows, {
+        strategy,
+        customRules: activeCustomRules,
+        absences: activeAbsences,
+      })
+    : null;
+
+  const assignments = plan?.assignments || [];
+  const metrics = typeof OperationsUtils.evaluateScenarioMetrics === "function"
+    ? OperationsUtils.evaluateScenarioMetrics(latestRows, assignments, latestStaffDirectory)
+    : {};
+
+  try {
+    const res = await fetch("/api/scenarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        strategy,
+        metrics,
+        assignments,
+      }),
+    });
+    if (res.ok) {
+      if (typeof showToast === "function") showToast(`Scenario "${title}" saved successfully!`, "success");
+      fetchScenarios();
+    }
+  } catch (err) {
+    console.error("Error saving scenario:", err);
+  }
+}
+
+function renderScenarioComparisonGrid() {
+  const grid = document.getElementById("scenarioComparisonGrid");
+  if (!grid) return;
+  if (!activeScenarios.length) {
+    grid.innerHTML = `<div class="empty-state">No saved scenarios yet. Configure a strategy and click "Simulate &amp; Save Scenario".</div>`;
+    return;
+  }
+
+  grid.innerHTML = activeScenarios.map((sc) => {
+    const m = sc.metrics || {};
+    return `
+      <div class="scenario-card ${sc.id === currentScenario?.id ? "active-scenario" : ""}">
+        <div class="scenario-card-head">
+          <strong>${escapeHtml(sc.title)}</strong>
+          <span class="badge strategy-badge">${escapeHtml(sc.strategy || "balanced")}</span>
+        </div>
+        <div class="scenario-card-metrics">
+          <span>Coverage: <b>${m.coverageRatePercent ?? 100}%</b></span>
+          <span>Uncovered: <b>${m.uncoveredHours ?? 0}h</b></span>
+          <span>Conflicts: <b style="color:${(m.conflictCount || 0) > 0 ? '#dc2626' : '#16a34a'}">${m.conflictCount ?? 0}</b></span>
+          <span>Est. Cost: <b>$${m.estimatedCost ?? 0}</b></span>
+          <span>Spread (StdDev): <b>${m.workloadSpread ?? 0}h</b></span>
+          <span>Total Duty: <b>${m.totalDutyHours ?? 0}h</b></span>
+        </div>
+        <div class="scenario-card-actions" style="display:flex; gap:6px; margin-top:6px;">
+          <button type="button" class="primary-btn" onclick="applyScenarioToRoster(${sc.id})" style="flex:1; padding:4px 8px; font-size:11px;">Apply to Roster</button>
+          <button type="button" class="danger-btn" onclick="deleteScenarioById(${sc.id})" style="padding:4px 8px; font-size:11px;">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function applyScenarioToRoster(id) {
+  const sc = activeScenarios.find((s) => s.id === id);
+  if (!sc) return;
+  currentScenario = sc;
+  if (Array.isArray(sc.assignments)) {
+    if (typeof setPlannerAssignments === "function") {
+      setPlannerAssignments(sc.assignments);
+    }
+  }
+  closeScenarioModal();
+  if (typeof showToast === "function") showToast(`Applied scenario "${sc.title}" to active roster!`, "success");
+  if (typeof applyFilters === "function") applyFilters();
+}
+
+async function deleteScenarioById(id) {
+  try {
+    const res = await fetch(`/api/scenarios?id=${id}`, { method: "DELETE" });
+    if (res.ok) {
+      if (typeof showToast === "function") showToast("Scenario deleted", "info");
+      fetchScenarios();
+    }
+  } catch (err) {
+    console.error("Failed to delete scenario:", err);
+  }
+}
+
+/* 2. Leave & Absence Manager */
+async function fetchAbsences() {
+  try {
+    const res = await fetch("/api/absences");
+    if (!res.ok) return;
+    const data = await res.json();
+    activeAbsences = Array.isArray(data) ? data : [];
+
+    const badge = document.getElementById("absencesBadge");
+    if (badge) badge.textContent = activeAbsences.length;
+
+    renderAbsenceRecordsList();
+  } catch (err) {
+    console.error("Failed to fetch absences:", err);
+  }
+}
+
+function openAbsenceModal() {
+  const modal = document.getElementById("absenceModal");
+  if (modal) {
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
+    fetchAbsences();
+  }
+}
+
+function closeAbsenceModal() {
+  const modal = document.getElementById("absenceModal");
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  }
+}
+
+async function handleSaveAbsence(e) {
+  e.preventDefault();
+  const staffInput = document.getElementById("absenceStaffSearch");
+  const categorySelect = document.getElementById("absenceCategorySelect");
+  const startInput = document.getElementById("absenceStartDate");
+  const endInput = document.getElementById("absenceEndDate");
+  const notesInput = document.getElementById("absenceNotes");
+
+  const personName = (staffInput?.value || "").trim();
+  const identity = StaffUtils?.parseStaffIdentity(personName);
+  const personKey = identity?.key || personName.toUpperCase();
+
+  if (!personKey || !startInput?.value) return;
+
+  try {
+    const res = await fetch("/api/absences", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        person_key: personKey,
+        person_name: identity?.name || personName,
+        absence_type: categorySelect?.value || "Vacation",
+        start_date: startInput.value,
+        end_date: endInput.value || startInput.value,
+        notes: notesInput?.value || "",
+      }),
+    });
+    if (res.ok) {
+      if (typeof showToast === "function") showToast(`Logged absence for ${personName}`, "success");
+      staffInput.value = "";
+      notesInput.value = "";
+      fetchAbsences();
+      if (typeof applyFilters === "function") applyFilters();
+    }
+  } catch (err) {
+    console.error("Failed to save absence:", err);
+  }
+}
+
+function renderAbsenceRecordsList() {
+  const list = document.getElementById("absenceRecordsList");
+  if (!list) return;
+  if (!activeAbsences.length) {
+    list.innerHTML = `<div class="empty-state">No active leave or absence records found.</div>`;
+    return;
+  }
+
+  list.innerHTML = activeAbsences.map((abs) => `
+    <div class="absence-item">
+      <div class="absence-item-info">
+        <strong>${escapeHtml(abs.person_name || abs.person_key)} <span class="absence-tag">${escapeHtml(abs.absence_type)}</span></strong>
+        <span>${abs.start_date} to ${abs.end_date} ${abs.notes ? `(${escapeHtml(abs.notes)})` : ''}</span>
+      </div>
+      <button type="button" class="danger-btn" onclick="deleteAbsenceById(${abs.id})" style="padding:3px 8px; font-size:11px;">Delete</button>
+    </div>
+  `).join("");
+}
+
+async function deleteAbsenceById(id) {
+  try {
+    const res = await fetch(`/api/absences?id=${id}`, { method: "DELETE" });
+    if (res.ok) {
+      if (typeof showToast === "function") showToast("Absence record removed", "info");
+      fetchAbsences();
+      if (typeof applyFilters === "function") applyFilters();
+    }
+  } catch (err) {
+    console.error("Failed to delete absence:", err);
+  }
+}
+
+/* 3. Configurable Rule Builder */
+async function fetchCustomRules() {
+  try {
+    const res = await fetch("/api/rules");
+    if (!res.ok) return;
+    const data = await res.json();
+    activeCustomRules = Array.isArray(data) ? data : [];
+    renderActiveRulesList();
+  } catch (err) {
+    console.error("Failed to fetch rules:", err);
+  }
+}
+
+function openRuleBuilderModal() {
+  const modal = document.getElementById("ruleBuilderModal");
+  if (modal) {
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
+    fetchCustomRules();
+  }
+}
+
+function closeRuleBuilderModal() {
+  const modal = document.getElementById("ruleBuilderModal");
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  }
+}
+
+async function handleSaveRule(e) {
+  e.preventDefault();
+  const titleInput = document.getElementById("ruleTitleInput");
+  const typeSelect = document.getElementById("ruleTypeSelect");
+  const targetSelect = document.getElementById("ruleTargetSelect");
+  const paramValueInput = document.getElementById("ruleParamValueInput");
+
+  const title = (titleInput?.value || "Custom Rule").trim();
+  const ruleType = typeSelect?.value || "MIN_REST_HOURS";
+  const target = targetSelect?.value || "GLOBAL";
+  const val = paramValueInput?.value || "";
+
+  let parameters = {};
+  if (ruleType === "MIN_REST_HOURS") parameters = { minRestHours: Number(val) || 11 };
+  else if (ruleType === "MAX_DUTIES_PER_DAY") parameters = { maxDuties: Number(val) || 2 };
+  else if (ruleType === "STAFF_SLA_RESTRICTION") parameters = { prohibitedSlas: val.split(",").map((s) => s.trim()).filter(Boolean) };
+
+  try {
+    const res = await fetch("/api/rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        rule_type: ruleType,
+        target,
+        parameters,
+        enabled: 1,
+      }),
+    });
+    if (res.ok) {
+      if (typeof showToast === "function") showToast(`Custom rule "${title}" saved!`, "success");
+      titleInput.value = "";
+      fetchCustomRules();
+      if (typeof applyFilters === "function") applyFilters();
+    }
+  } catch (err) {
+    console.error("Failed to save rule:", err);
+  }
+}
+
+function renderActiveRulesList() {
+  const list = document.getElementById("activeRulesList");
+  if (!list) return;
+  if (!activeCustomRules.length) {
+    list.innerHTML = `<div class="empty-state">No custom rules configured yet.</div>`;
+    return;
+  }
+
+  list.innerHTML = activeCustomRules.map((rule) => `
+    <div class="rule-item">
+      <div class="rule-item-info">
+        <strong>${escapeHtml(rule.title)} <span class="badge">${escapeHtml(rule.rule_type)}</span></strong>
+        <span>Target: ${escapeHtml(rule.target)} | Params: ${escapeHtml(JSON.stringify(rule.parameters))}</span>
+      </div>
+      <button type="button" class="danger-btn" onclick="deleteRuleById(${rule.id})" style="padding:3px 8px; font-size:11px;">Delete</button>
+    </div>
+  `).join("");
+}
+
+async function deleteRuleById(id) {
+  try {
+    const res = await fetch(`/api/rules?id=${id}`, { method: "DELETE" });
+    if (res.ok) {
+      if (typeof showToast === "function") showToast("Rule removed", "info");
+      fetchCustomRules();
+      if (typeof applyFilters === "function") applyFilters();
+    }
+  } catch (err) {
+    console.error("Failed to delete rule:", err);
+  }
+}
+
+/* 4. iCalendar (.ics) Calendar Export */
+function openIcsModal() {
+  const modal = document.getElementById("icsExportModal");
+  if (modal) {
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
+  }
+}
+
+function closeIcsModal() {
+  const modal = document.getElementById("icsExportModal");
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  }
+}
+
+function handleDownloadIcs() {
+  const scopeSelect = document.getElementById("icsScopeSelect");
+  const staffInput = document.getElementById("icsStaffSearch");
+  const titleInput = document.getElementById("icsTitleInput");
+
+  const scope = scopeSelect?.value || "station";
+  const staffName = staffInput?.value || "";
+  const identity = StaffUtils?.parseStaffIdentity(staffName);
+  const staffKey = scope === "individual" ? (identity?.key || staffName) : "";
+
+  const content = typeof OperationsUtils.generateIcsCalendar === "function"
+    ? OperationsUtils.generateIcsCalendar(latestRows, {
+        staffKey,
+        staffName: identity?.name || staffName,
+        title: titleInput?.value || "GSRM Station Duty Roster",
+      })
+    : "";
+
+  const blob = new Blob([content], { type: "text/calendar;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = staffKey ? `schedule_${staffKey.toLowerCase()}.ics` : "station_roster.ics";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  if (typeof showToast === "function") showToast("Downloaded .ics calendar file!", "success");
+  closeIcsModal();
+}
+
+/* 5. Shift Handover Report Generator */
+function openHandoverModal() {
+  const modal = document.getElementById("handoverModal");
+  if (modal) {
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
+    updateHandoverPreview();
+  }
+}
+
+function closeHandoverModal() {
+  const modal = document.getElementById("handoverModal");
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  }
+}
+
+function updateHandoverPreview() {
+  const notesText = document.getElementById("handoverSupervisorNotes")?.value || "";
+  const warnings = typeof OperationsUtils.buildWarnings === "function" ? OperationsUtils.buildWarnings(latestRows, latestStaffDirectory) : [];
+  const gapNotes = typeof currentGapNotes !== "undefined" ? currentGapNotes : {};
+
+  const summary = typeof OperationsUtils.generateHandoverSummary === "function"
+    ? OperationsUtils.generateHandoverSummary(latestRows, gapNotes, warnings, activeAbsences, notesText)
+    : { coverageRatePercent: 100, unresolvedGapsCount: 0, pendingConfirmationsCount: 0, riskyDutiesCount: 0, totalDuties: 0, unresolvedGaps: [], activeAbsences: [] };
+
+  const covEl = document.getElementById("handoverCoverageRate");
+  const gapEl = document.getElementById("handoverUnresolvedGaps");
+  const pendEl = document.getElementById("handoverPendingConfirmations");
+  const riskEl = document.getElementById("handoverRiskyDuties");
+
+  if (covEl) covEl.textContent = `${summary.coverageRatePercent}%`;
+  if (gapEl) gapEl.textContent = summary.unresolvedGapsCount;
+  if (pendEl) pendEl.textContent = summary.pendingConfirmationsCount;
+  if (riskEl) riskEl.textContent = summary.riskyDutiesCount;
+
+  const preview = document.getElementById("handoverReportPreview");
+  if (preview) {
+    preview.innerHTML = `
+      <div class="handover-doc">
+        <h4 style="margin:0 0 6px; font-size:14px; font-weight:800; color:#0f172a;">GSRM STATION SHIFT HANDOVER REPORT</h4>
+        <p style="margin:2px 0; color:#475569;"><b>Generated At:</b> ${new Date(summary.generatedAt || Date.now()).toLocaleString()}</p>
+        <p style="margin:2px 0; color:#475569;"><b>Station Status:</b> ${summary.totalDuties} Total Duties | ${summary.coverageRatePercent}% Covered</p>
+        <hr style="border:0; border-top:1px solid #cbd5e1; margin:10px 0;">
+        ${summary.customNotes ? `<p style="margin-bottom:10px;"><b>Supervisor Notes:</b><br>${escapeHtml(summary.customNotes)}</p>` : ''}
+        ${summary.unresolvedGaps && summary.unresolvedGaps.length ? `
+          <h5 style="margin:8px 0 4px; color:#dc2626;">Unresolved Gaps (${summary.unresolvedGaps.length}):</h5>
+          <ul style="margin:0; padding-left:18px; color:#991b1b;">${summary.unresolvedGaps.map(g => `<li>${g.row.date} ${g.row.start_utc}–${g.row.release_utc} | Flight ${g.row.flight} (${g.row.sla})</li>`).join("")}</ul>
+        ` : '<p style="color:#16a34a; margin:4px 0;"><b>No unresolved gaps.</b></p>'}
+        ${summary.activeAbsences && summary.activeAbsences.length ? `
+          <h5 style="margin:10px 0 4px; color:#d97706;">Active Staff Absences (${summary.activeAbsences.length}):</h5>
+          <ul style="margin:0; padding-left:18px;">${summary.activeAbsences.map(a => `<li>${escapeHtml(a.person_name || a.person_key)}: ${escapeHtml(a.absence_type)} (${a.start_date} to ${a.end_date})</li>`).join("")}</ul>
+        ` : ''}
+      </div>
+    `;
+  }
+}
+
+function handleCopyHandoverSummary() {
+  const preview = document.getElementById("handoverReportPreview");
+  if (preview) {
+    navigator.clipboard.writeText(preview.innerText).then(() => {
+      if (typeof showToast === "function") showToast("Handover summary copied to clipboard!", "success");
+    });
+  }
+}
+
+function handlePrintHandoverReport() {
+  window.print();
+}
+
+function initRosterManagementFeatures() {
+  document.getElementById("scenarioSandboxBtn")?.addEventListener("click", openScenarioModal);
+  document.getElementById("scenarioModalCloseBtn")?.addEventListener("click", closeScenarioModal);
+  document.getElementById("scenarioModalDoneBtn")?.addEventListener("click", closeScenarioModal);
+  document.getElementById("saveCurrentAsScenarioBtn")?.addEventListener("click", handleSaveScenario);
+
+  const scenarioModalOverlay = document.getElementById("scenarioModal");
+  if (scenarioModalOverlay) {
+    scenarioModalOverlay.addEventListener("click", (e) => {
+      if (e.target === scenarioModalOverlay) closeScenarioModal();
+    });
+  }
+
+  document.getElementById("absenceManagerBtn")?.addEventListener("click", openAbsenceModal);
+  document.getElementById("absenceModalCloseBtn")?.addEventListener("click", closeAbsenceModal);
+  document.getElementById("absenceModalDoneBtn")?.addEventListener("click", closeAbsenceModal);
+  document.getElementById("absenceForm")?.addEventListener("submit", handleSaveAbsence);
+
+  const absenceModalOverlay = document.getElementById("absenceModal");
+  if (absenceModalOverlay) {
+    absenceModalOverlay.addEventListener("click", (e) => {
+      if (e.target === absenceModalOverlay) closeAbsenceModal();
+    });
+  }
+
+  document.getElementById("ruleBuilderBtn")?.addEventListener("click", openRuleBuilderModal);
+  document.getElementById("ruleBuilderModalCloseBtn")?.addEventListener("click", closeRuleBuilderModal);
+  document.getElementById("ruleBuilderModalDoneBtn")?.addEventListener("click", closeRuleBuilderModal);
+  document.getElementById("ruleBuilderForm")?.addEventListener("submit", handleSaveRule);
+
+  const ruleModalOverlay = document.getElementById("ruleBuilderModal");
+  if (ruleModalOverlay) {
+    ruleModalOverlay.addEventListener("click", (e) => {
+      if (e.target === ruleModalOverlay) closeRuleBuilderModal();
+    });
+  }
+
+  document.getElementById("icsExportBtn")?.addEventListener("click", openIcsModal);
+  document.getElementById("icsExportModalCloseBtn")?.addEventListener("click", closeIcsModal);
+  document.getElementById("icsExportModalCancelBtn")?.addEventListener("click", closeIcsModal);
+  document.getElementById("downloadIcsBtn")?.addEventListener("click", handleDownloadIcs);
+  document.getElementById("icsScopeSelect")?.addEventListener("change", (e) => {
+    const indField = document.getElementById("icsIndividualField");
+    if (indField) indField.hidden = e.target.value !== "individual";
+  });
+
+  const icsModalOverlay = document.getElementById("icsExportModal");
+  if (icsModalOverlay) {
+    icsModalOverlay.addEventListener("click", (e) => {
+      if (e.target === icsModalOverlay) closeIcsModal();
+    });
+  }
+
+  document.getElementById("handoverReportBtn")?.addEventListener("click", openHandoverModal);
+  document.getElementById("handoverModalCloseBtn")?.addEventListener("click", closeHandoverModal);
+  document.getElementById("handoverModalCloseFooterBtn")?.addEventListener("click", closeHandoverModal);
+  document.getElementById("copyHandoverSummaryBtn")?.addEventListener("click", handleCopyHandoverSummary);
+  document.getElementById("printHandoverBtn")?.addEventListener("click", handlePrintHandoverReport);
+  document.getElementById("handoverSupervisorNotes")?.addEventListener("input", updateHandoverPreview);
+
+  const handoverModalOverlay = document.getElementById("handoverModal");
+  if (handoverModalOverlay) {
+    handoverModalOverlay.addEventListener("click", (e) => {
+      if (e.target === handoverModalOverlay) closeHandoverModal();
+    });
+  }
+
+  fetchAbsences();
+  fetchCustomRules();
+  fetchScenarios();
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
     attachAddShiftModalListeners();
     attachRosterDragAndDropListeners();
     attachShiftSwapperModalListeners();
     initAutoScanner();
+    initRosterManagementFeatures();
   });
 } else {
   attachAddShiftModalListeners();
   attachRosterDragAndDropListeners();
   attachShiftSwapperModalListeners();
   initAutoScanner();
+  initRosterManagementFeatures();
 }
-
-
-

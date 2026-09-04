@@ -101,6 +101,22 @@ test("automatic planner honors SLA selection, availability, buffers, and hour li
   assert.equal(plan.assignments[0].person.name, "Carol Crew");
 });
 
+test("automatic planner enforces the 10-hour weekly Minijob limit", () => {
+  const rows = [
+    { ...baseDuty, date: "17-Aug-2026", flight_id: "existing", start_utc: "08:00", release_utc: "16:00", staff: ["DDD - Dana Duty"], assigned: 1, missing: 0 },
+    { ...baseDuty, date: "18-Aug-2026", flight_id: "gap", start_utc: "08:00", release_utc: "12:00", staff: [], assigned: 0, missing: 1 },
+  ];
+  const windows = [{ isoDate: "2026-08-18", start: new Date("2026-08-18T00:00:00Z"), end: new Date("2026-08-19T00:00:00Z") }];
+  const plan = OperationsUtils.buildAutoPlan(rows, ["DDD - Dana Duty"], ["DANA DUTY"], windows, {
+    maxWeeklyHours: 40,
+    maxMonthlyHours: 160,
+    staffContracts: { "DANA DUTY": "MJ" },
+  });
+
+  assert.equal(plan.assignments.length, 0);
+  assert.equal(plan.unfilled.length, 1);
+});
+
 test("availability rules can target exact non-consecutive calendar dates", () => {
   const rule = [{
     personKey: "BOB BEFORE",
@@ -391,7 +407,7 @@ test("generates Google Flights airline logo URLs and HTML image elements", () =>
   assert.ok(img.includes('style="width:28px; height:28px;'));
 });
 
-test("contract hours limit defaults to PT (80h/mo, 20h/wk) and supports FT (160h/mo, 40h/wk)", () => {
+test("contract hours limit supports PT, FT, and Minijob", () => {
   const ptLimit = OperationsUtils.getContractHoursLimit("ALICE", { ALICE: "PT" });
   assert.equal(ptLimit.contract, "PT");
   assert.equal(ptLimit.weeklyHours, 20);
@@ -404,6 +420,11 @@ test("contract hours limit defaults to PT (80h/mo, 20h/wk) and supports FT (160h
   assert.equal(ftLimit.contract, "FT");
   assert.equal(ftLimit.weeklyHours, 40);
   assert.equal(ftLimit.monthlyHours, 160);
+
+  const minijobLimit = OperationsUtils.getContractHoursLimit("DANA", { DANA: "MJ" });
+  assert.equal(minijobLimit.contract, "MJ");
+  assert.equal(minijobLimit.weeklyHours, 10);
+  assert.equal(minijobLimit.monthlyHours, 40);
 });
 
 test("German break compliance flags 8-hour continuous shifts without required break", () => {
@@ -578,6 +599,89 @@ test("buildAirlineRoster and buildFlightSchedule support array of SLAs for multi
 
   const multiSchedule = OperationsUtils.buildFlightSchedule(rows, windows, { sla: ["GATE", "CKIN"] });
   assert.deepEqual(multiSchedule[0].flights.map((f) => f.flight).sort(), ["LH 100", "LH 200"]);
+});
+
+test("autoAdjustRoster prioritizes and resolves overlapping shifts for staff", () => {
+  const rows = [
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "14:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    { date: "18-Aug-2026", flight: "LH200", sla: "CKIN", start_utc: "12:00", release_utc: "18:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Worker"];
+
+  const result = OperationsUtils.autoAdjustRoster(rows, directory, {
+    resolveConflictType: "both",
+    minBreakMinutes: 30,
+  });
+
+  assert.equal(result.reassignments.length, 1);
+  assert.equal(result.reassignments[0].fromPerson.key, "ALICE AGENT");
+  assert.equal(result.reassignments[0].toPerson.key, "BOB WORKER");
+  assert.ok(result.reassignments[0].reason.includes("Resolved overlap"));
+});
+
+test("autoAdjustRoster respects overlaps_only mode by resolving overlaps while ignoring break violations", () => {
+  const rows = [
+    // Overlapping shift pair for Alice
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "14:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    { date: "18-Aug-2026", flight: "LH200", sla: "CKIN", start_utc: "12:00", release_utc: "18:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    // Short break pair for Bob (15 min gap < 30 min minBreak)
+    { date: "18-Aug-2026", flight: "LH300", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["BBB - Bob Worker"] },
+    { date: "18-Aug-2026", flight: "LH400", sla: "CKIN", start_utc: "12:15", release_utc: "16:00", required: 1, assigned: 1, missing: 0, staff: ["BBB - Bob Worker"] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Worker", "CCC - Charlie Crew"];
+
+  const resultOverlapsOnly = OperationsUtils.autoAdjustRoster(rows, directory, {
+    resolveConflictType: "overlaps_only",
+    minBreakMinutes: 30,
+  });
+
+  assert.equal(resultOverlapsOnly.reassignments.length, 1);
+  assert.equal(resultOverlapsOnly.reassignments[0].fromPerson.key, "ALICE AGENT");
+  assert.ok(resultOverlapsOnly.reassignments[0].reason.includes("Resolved overlap"));
+});
+
+test("evaluateScenarioMetrics calculates coverage rate, uncovered hours, and conflict count", () => {
+  const rows = [
+    { ...baseDuty, flight_id: "1", required: 2, assigned: 1, missing: 1, staff: ["AAA - Alice Agent"] },
+    { ...baseDuty, flight_id: "2", required: 1, assigned: 1, missing: 0, start_utc: "10:00", release_utc: "12:00", staff: ["BBB - Bob Worker"] },
+  ];
+  const directory = ["AAA - Alice Agent", "BBB - Bob Worker"];
+  const metrics = OperationsUtils.evaluateScenarioMetrics(rows, [], directory);
+
+  assert.equal(metrics.totalDuties, 2);
+  assert.equal(metrics.uncoveredGapsCount, 1);
+  assert.equal(metrics.uncoveredHours, 1.0);
+  assert.equal(metrics.coverageRatePercent, 67);
+  assert.equal(metrics.totalDutyHours, 3.0);
+});
+
+test("generateIcsCalendar produces valid iCalendar content", () => {
+  const rows = [
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", staff: ["AAA - Alice Agent"] },
+  ];
+  const ics = OperationsUtils.generateIcsCalendar(rows, { title: "Test Roster" });
+
+  assert.ok(ics.includes("BEGIN:VCALENDAR"));
+  assert.ok(ics.includes("SUMMARY:[GATE] LH100"));
+  assert.ok(ics.includes("DTSTART:20260818T080000Z"));
+  assert.ok(ics.includes("DTEND:20260818T120000Z"));
+  assert.ok(ics.includes("END:VCALENDAR"));
+});
+
+test("generateHandoverSummary aggregates gaps, absences, and custom notes", () => {
+  const rows = [
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 0, missing: 1 },
+  ];
+  const absences = [
+    { person_key: "ALICE AGENT", person_name: "Alice Agent", absence_type: "Vacation", start_date: "2026-08-15", end_date: "2026-08-20" }
+  ];
+  const summary = OperationsUtils.generateHandoverSummary(rows, {}, [], absences, "Test supervisor note");
+
+  assert.equal(summary.totalDuties, 1);
+  assert.equal(summary.unresolvedGapsCount, 1);
+  assert.equal(summary.coverageRatePercent, 0);
+  assert.equal(summary.activeAbsences.length, 1);
+  assert.equal(summary.customNotes, "Test supervisor note");
 });
 
 
