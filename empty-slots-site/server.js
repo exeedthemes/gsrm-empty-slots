@@ -294,14 +294,21 @@ if (require.main === module) {
     }
   });
 
+  let hasOpenedBrowser = false;
+  function openBrowserOnce(url) {
+    if (hasOpenedBrowser) return;
+    hasOpenedBrowser = true;
+    if (process.env.AUTO_OPEN !== "false") {
+      const openCmd = process.platform === "win32" ? `start ${url}` : process.platform === "darwin" ? `open ${url}` : `xdg-open ${url}`;
+      require("child_process").exec(openCmd, () => {});
+    }
+  }
+
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
       const url = `http://localhost:${PORT}`;
       console.log(`\n⚠️ Port ${PORT} is already in use. Opening browser at ${url}...`);
-      if (process.env.AUTO_OPEN !== "false") {
-        const openCmd = process.platform === "win32" ? `start ${url}` : process.platform === "darwin" ? `open ${url}` : `xdg-open ${url}`;
-        require("child_process").exec(openCmd, () => {});
-      }
+      openBrowserOnce(url);
     } else {
       console.error("\n❌ Server Error:", err);
     }
@@ -310,10 +317,7 @@ if (require.main === module) {
   server.listen(PORT, "0.0.0.0", () => {
     const url = `http://localhost:${PORT}`;
     console.log(`Empty Slots app running at ${url}`);
-    if (process.env.AUTO_OPEN !== "false") {
-      const openCmd = process.platform === "win32" ? `start ${url}` : process.platform === "darwin" ? `open ${url}` : `xdg-open ${url}`;
-      require("child_process").exec(openCmd, () => {});
-    }
+    openBrowserOnce(url);
   });
 }
 
