@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/styles.css?v=20260827-5">
+    <link rel="stylesheet" href="/styles.css?v=20260905-3">
   </head>
   <body>
     <main class="app-shell">
@@ -34,14 +34,26 @@
                 </svg>
               </button>
             </div>
-            <button id="coveragePlannerBtn" class="secondary-btn" type="button" title="Open the roster coverage planner">Coverage planner</button>
+            <button id="monthlyRostersHeaderBtn" class="secondary-btn monthly-rosters-header-btn" type="button" title="View saved monthly master rosters and merged scans">
+              <svg class="btn-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              <span>Monthly Rosters</span>
+              <span id="monthlyRosterHeaderBadge" class="header-month-badge" hidden></span>
+            </button>
+            <button id="coveragePlannerBtn" class="secondary-btn" type="button" title="Open the automatic roster planner">Open roster planner</button>
             <button id="setupToggleBtn" class="secondary-btn" type="button" aria-expanded="false" aria-controls="scanForm">Edit setup</button>
-            <label class="force-refresh-label" title="Bypass server and local cache and fetch fresh data directly from AVBIS" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;color:var(--ink-muted,#475569);">
-              <input id="forceRefreshToggle" type="checkbox">
-              <span>Bypass Cache</span>
-            </label>
-            <button id="refreshScanBtn" class="secondary-btn" type="button" title="Bypass the local cache and fetch the selected dates again from AVBIS">Refresh range</button>
-            <button id="runBtn" class="primary-btn" type="button" title="Reuse recently scanned dates and fetch only dates missing from the local cache">Run</button>
+            <div class="scan-split-action">
+              <button id="runBtn" class="primary-btn" type="button" title="Reuse cached dates and scan only missing data">Scan</button>
+              <details id="scanOptionsMenu" class="header-action-menu">
+                <summary class="primary-btn" aria-label="Open scan options" title="Scan options">▾</summary>
+                <div class="header-action-menu-panel">
+                  <button id="refreshScanBtn" type="button" title="Fetch the selected dates again from AVBIS">Refresh range from AVBIS</button>
+                  <label class="force-refresh-label" title="Always bypass the server and local cache when Scan is selected">
+                    <input id="forceRefreshToggle" type="checkbox">
+                    <span>Always bypass cache</span>
+                  </label>
+                </div>
+              </details>
+            </div>
           </div>
         </div>
 
@@ -53,7 +65,21 @@
           <button type="button" id="tabHistory">History</button>
         </nav>
 
-        <div id="setupSummary" class="setup-summary" aria-live="polite"></div>
+        <div id="setupSummary" class="setup-summary" aria-live="polite" hidden></div>
+
+        <div id="scanPlanStatus" class="scan-plan-status is-empty" aria-live="polite">
+          <div class="scan-plan-stage source-stage">
+            <span><i class="scan-plan-dot"></i>AVBIS source</span>
+            <strong id="scanSourceStatus">No scan loaded</strong>
+            <small id="scanSourceDetail">Select a period and run a scan.</small>
+          </div>
+          <span class="scan-plan-arrow" aria-hidden="true">→</span>
+          <div class="scan-plan-stage plan-stage">
+            <span><i class="scan-plan-dot"></i>Local plan</span>
+            <strong id="localPlanStatus">No local changes</strong>
+            <small id="localPlanDetail">Planning changes remain on this device.</small>
+          </div>
+        </div>
 
         <form id="scanForm" autocomplete="off" hidden>
           <fieldset class="form-section-card auth-card">
@@ -216,18 +242,14 @@
           <div><span class="metric" id="dateCount">0</span><span>dates scanned</span></div>
         </div>
         <div class="context-actions">
-          <button id="csvBtn" class="secondary-btn" type="button" disabled>Download CSV</button>
-          <button id="opsCsvBtn" class="secondary-btn" type="button" disabled>Action CSV</button>
-          <button id="pdfBtn" class="primary-btn pdf-btn" type="button" disabled title="Export active view to professional PDF report">
-            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-              <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>
-            <span>Export PDF</span>
-          </button>
+          <details id="exportMenu" class="context-export-menu">
+            <summary class="secondary-btn">Export</summary>
+            <div class="context-export-menu-panel">
+              <button id="csvBtn" type="button" disabled>Current view CSV</button>
+              <button id="opsCsvBtn" type="button" disabled>Action CSV</button>
+              <button id="pdfBtn" type="button" disabled title="Export active view to a PDF report">PDF report</button>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -395,7 +417,7 @@
 
         <div id="gapPlanner" class="gap-planner" hidden>
           <div class="gap-planner-head">
-            <div><span>Coverage planner</span><strong id="gapPlannerTitle">Select an empty slot</strong></div>
+            <div><span>Fill this gap</span><strong id="gapPlannerTitle">Select an empty slot</strong></div>
             <button id="gapPlannerClose" class="secondary-btn" type="button">Close</button>
           </div>
           <div id="gapPlannerDetails"></div>
@@ -521,7 +543,15 @@
                       <option value="free">Free for entire window</option>
                       <option value="duty">On duty in window</option>
                       <option value="overlap">Overlapping shifts (collisions)</option>
+                      <option value="vacation" id="rosterStatusVacationOpt">Guessed Vacation (7+ days free)</option>
                     </select>
+                  </label>
+                  <label title="Staff with no assigned duties for this many consecutive days are flagged as guessed vacation">
+                    <span>Vacation threshold</span>
+                    <div style="display:flex; align-items:center; gap:4px;">
+                      <input id="rosterVacationDaysThreshold" type="number" min="3" max="30" value="7" style="width:60px;" aria-label="Consecutive free days to guess vacation">
+                      <small style="color:var(--muted); font-size:11px;">days</small>
+                    </div>
                   </label>
                   <label>
                     <span>SLA</span>
@@ -557,19 +587,29 @@
                 <small>Create a local staffing proposal, review it, then add it to the edited roster.</small>
               </div>
               <div class="auto-planner-actions">
-                <div class="auto-planner-btn-group">
-                  <button id="plannerAvailabilityBtn" class="secondary-btn" type="button">Availability <span id="plannerRulesBadge" class="button-count">0</span></button>
-                  <button id="absenceManagerBtn" class="secondary-btn" type="button" title="Manage employee leave, vacation, and sickness records">Absences <span id="absencesBadge" class="button-count">0</span></button>
-                  <button id="ruleBuilderBtn" class="secondary-btn" type="button" title="Configure custom scheduling &amp; rest rules">Rule Builder</button>
-                  <button id="scenarioSandboxBtn" class="secondary-btn" type="button" title="Create and compare what-if roster scenarios">What-if Sandbox</button>
-                  <button id="icsExportBtn" class="secondary-btn" type="button" title="Export schedule to Apple/Google/Outlook Calendar (.ics)">Export .ics</button>
-                  <button id="handoverReportBtn" class="secondary-btn" type="button" title="Generate automated shift handover summary">Handover Report</button>
-                  <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="false">Show planner</button>
+                <div class="auto-planner-btn-group planner-support-actions" aria-label="Planner setup and exports">
+                  <details class="planner-action-menu">
+                    <summary class="secondary-btn">People &amp; rules</summary>
+                    <div class="planner-action-menu-panel">
+                      <button id="plannerAvailabilityBtn" type="button" aria-label="Staff availability">Availability <span id="plannerRulesBadge" class="button-count">0</span></button>
+                      <button id="absenceManagerBtn" type="button" aria-label="Staff absences" title="Manage employee leave, vacation, and sickness records">Absences <span id="absencesBadge" class="button-count">0</span></button>
+                      <button id="ruleBuilderBtn" type="button" aria-label="Operational rules" title="Configure custom scheduling and rest rules">Operational rules</button>
+                      <button id="scenarioSandboxBtn" type="button" aria-label="Saved planning scenarios" title="Create and compare what-if roster scenarios">Saved scenarios</button>
+                    </div>
+                  </details>
+                  <details class="planner-action-menu">
+                    <summary class="secondary-btn">Export</summary>
+                    <div class="planner-action-menu-panel planner-export-menu">
+                      <button id="icsExportBtn" type="button" aria-label="Export calendar file" title="Export schedule to Apple, Google, or Outlook Calendar" disabled>Calendar (.ics)</button>
+                      <button id="handoverReportBtn" type="button" aria-label="Generate handover report" title="Generate an automated shift handover summary" disabled>Handover report</button>
+                    </div>
+                  </details>
                 </div>
-                <div class="auto-planner-btn-group">
-                  <button id="autoPlannerClear" class="secondary-btn" type="button">Clear plan</button>
-                  <button id="autoAdjustRun" class="secondary-btn auto-adjust-btn" type="button" title="Auto-adjust planned roster to enforce minimum break times and best-fit movement">Auto-adjust shifts</button>
-                  <button id="autoPlannerRun" class="primary-btn" type="button">Create plan</button>
+                <div class="auto-planner-btn-group planner-primary-actions">
+                  <button id="autoPlannerToggle" class="secondary-btn" type="button" aria-expanded="false">Show settings</button>
+                  <button id="autoPlannerClear" class="secondary-btn" type="button" disabled>Clear</button>
+                  <button id="autoAdjustRun" class="secondary-btn auto-adjust-btn" type="button" title="Auto-adjust the roster to resolve conflicts and enforce minimum breaks" disabled>Auto-adjust</button>
+                  <button id="autoPlannerRun" class="primary-btn" type="button" disabled>Create plan</button>
                 </div>
               </div>
             </div>
@@ -633,14 +673,15 @@
           </section>
           <div class="roster-view-toolbar">
             <div class="roster-state-toggle-group" id="rosterStateToggleGroup" title="Choose which local roster state to view">
-              <button id="stateBtnEdited" type="button" class="state-toggle-btn active" data-state-mode="edited">Edited roster</button>
-              <button id="stateBtnOriginal" type="button" class="state-toggle-btn" data-state-mode="original">Original scan</button>
-              <button id="stateBtnCompare" type="button" class="state-toggle-btn" data-state-mode="compare">Compare</button>
+              <button id="stateBtnEdited" type="button" class="state-toggle-btn" data-state-mode="edited">Edited roster</button>
+              <button id="stateBtnOriginal" type="button" class="state-toggle-btn active" data-state-mode="original">Original scan</button>
+              <button id="stateBtnChanges" type="button" class="state-toggle-btn" data-state-mode="changes" title="Show only differences from the original scan">Compare</button>
             </div>
             <div class="roster-view-switch" role="group" aria-label="Roster layout">
               <button id="rosterStaffViewBtn" type="button" aria-pressed="true">Staff roster</button>
               <button id="rosterAirlineViewBtn" type="button" aria-pressed="false">Flight schedule</button>
             </div>
+            <button id="rosterDayTimelineBtn" type="button" class="day-timeline-btn" aria-pressed="false" title="Show each staff member's duties on an hourly timeline for the selected start date">Day timeline</button>
             <button id="trackPersonChangesBtn" type="button" class="audit-trigger-btn" title="Open Person Roster Audit & Change History">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -652,6 +693,23 @@
               <span>Person Roster Audit</span>
               <span id="rosterAuditBadge" class="audit-count-badge">Audit</span>
             </button>
+            <button id="rosterUnassignedShiftsBtn" type="button" class="unassigned-trigger-btn" title="Open Unassigned Shifts &amp; Gaps Drawer (Drag and drop into roster)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+                <line x1="12" y1="14" x2="12" y2="18"></line>
+                <line x1="10" y1="16" x2="14" y2="16"></line>
+              </svg>
+              <span>Unassigned Shifts</span>
+              <span id="rosterUnassignedBadge" class="unassigned-count-badge">0</span>
+            </button>
+            <div class="roster-month-quick-loader" id="rosterMonthQuickLoader">
+              <select id="rosterMonthSelect" class="roster-month-select" title="Instantly load an accumulated monthly master roster">
+                <option value="">Load Monthly Master...</option>
+              </select>
+            </div>
             <div class="sla-chip-filter-bar roster-toolbar-sla-chips" id="rosterSlaChipFilterBar">
               <span class="chip-bar-label">SLA:</span>
               <div id="rosterSlaChipsContainer" class="sla-chips-container">
@@ -866,7 +924,7 @@
                 </div>
               </div>
               <div class="master-staff-controls">
-                <button type="button" id="autoDetectContractsBtn" class="secondary-btn" title="Automatically estimate Full-Time, Part-Time, or Minijob from duty hours. Minijob uses 10h/week and 40h/month.">⚡ Auto-Detect Contracts</button>
+                <button type="button" id="autoDetectContractsBtn" class="secondary-btn" title="Automatically estimate Full-Time, Part-Time, or Minijob from duty hours. Minijob uses 10h/week and 40h/month."><svg class="btn-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>Auto-Detect Contracts</span></button>
                 <select id="masterStaffStationFilter" class="master-staff-select" aria-label="Filter staff by station">
                   <option value="all">All Stations</option>
                 </select>
@@ -896,11 +954,118 @@
         </div>
 
         <div id="historyLayout" class="history-layout" style="display: none;">
-          <div class="history-toolbar"><p>Completed and interrupted scans are saved in this browser. Restore, rerun, or export any snapshot.</p><button id="clearHistoryBtn" class="secondary-btn" type="button">Clear history</button></div>
+          <section class="monthly-rosters-panel" id="monthlyRostersPanel">
+            <div class="monthly-rosters-header">
+              <div class="monthly-rosters-title-group">
+                <span class="modal-badge monthly-archive-badge">Master Archive</span>
+                <h3 class="monthly-archive-title">Saved Monthly Rosters</h3>
+                <p class="monthly-archive-sub">Accumulated monthly master rosters automatically updated with latest scans.</p>
+              </div>
+              <div class="monthly-rosters-actions">
+                <button type="button" id="historyMergeScansBtn" class="primary-btn"><svg class="btn-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>Merge Scans / Range</span></button>
+                <button type="button" id="refreshMonthlyRostersBtn" class="secondary-btn" title="Refresh list from backend"><svg class="btn-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg><span>Refresh</span></button>
+              </div>
+            </div>
+            <div id="historyMonthlyRostersGrid" class="monthly-rosters-cards-grid">
+              <div class="empty-monthly-rosters">No monthly rosters saved yet. Run a scan to automatically create and update monthly master rosters.</div>
+            </div>
+          </section>
+
+          <div class="history-toolbar">
+            <div>
+              <h3>Scan Snapshots</h3>
+              <p>Individual scan snapshots saved in this browser. Restore, rerun, or export any snapshot.</p>
+            </div>
+            <button id="clearHistoryBtn" class="secondary-btn" type="button">Clear history</button>
+          </div>
           <div id="historyComparison" class="history-comparison"></div>
           <div id="historyList" class="history-list"></div>
         </div>
       </section>
+
+      <!-- Monthly Master Rosters & Merge Scans Modal -->
+      <div id="monthlyRosterModal" class="modal-overlay" hidden aria-hidden="true">
+        <div class="modal-card monthly-roster-modal-card" role="dialog" aria-modal="true" aria-labelledby="monthlyRosterModalTitle">
+          <div class="modal-header">
+            <div>
+              <span class="modal-badge">Master Roster Hub</span>
+              <h2 id="monthlyRosterModalTitle">Monthly Master Rosters &amp; Merged Scans</h2>
+              <p class="modal-subtitle">View, load, and merge accumulated monthly rosters with live change detection</p>
+            </div>
+            <button type="button" id="monthlyRosterModalClose" class="modal-close-btn" aria-label="Close modal">&times;</button>
+          </div>
+          <div class="modal-body monthly-roster-modal-body">
+            <div class="modal-tab-nav">
+              <button type="button" id="monthlyModalTabRosters" class="modal-tab-btn active">Saved Months</button>
+              <button type="button" id="monthlyModalTabMerge" class="modal-tab-btn">Merge Scans &amp; Ranges</button>
+              <button type="button" id="monthlyModalTabChangelog" class="modal-tab-btn">Change History</button>
+            </div>
+            
+            <div id="monthlyModalRostersView" class="modal-tab-content">
+              <div class="monthly-hub-summary-banner" id="monthlyHubSummaryBanner">
+                <!-- Summary stats populated via JS -->
+              </div>
+              <div id="monthlyModalGrid" class="monthly-cards-grid">
+                <!-- Dynamic cards populated via JS -->
+              </div>
+            </div>
+
+            <div id="monthlyModalMergeView" class="modal-tab-content" hidden>
+              <div class="merge-tool-card">
+                <div class="merge-tool-header">
+                  <h4>Merge Multiple Scans or Custom Time Range</h4>
+                  <p>Combine multiple partial scans into a cohesive master roster dataset.</p>
+                </div>
+                <div class="merge-tool-forms">
+                  <div class="merge-option-group">
+                    <label class="merge-radio-label">
+                      <input type="radio" name="mergeModeOption" value="snapshots" checked id="mergeModeSnapshots">
+                      <strong>Merge specific scan snapshots from history</strong>
+                    </label>
+                    <div id="mergeSnapshotsSelection" class="merge-selection-box">
+                      <div id="mergeSnapshotsList" class="merge-snapshots-list">
+                        <span class="muted">No scan snapshots available to merge.</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div class="merge-option-group">
+                    <label class="merge-radio-label">
+                      <input type="radio" name="mergeModeOption" value="range" id="mergeModeRange">
+                      <strong>Merge by date range across all saved monthly data</strong>
+                    </label>
+                    <div id="mergeRangeSelection" class="merge-range-grid is-disabled">
+                      <label><span>From Date</span><input type="date" id="mergeRangeStartDate"></label>
+                      <label><span>To Date</span><input type="date" id="mergeRangeEndDate"></label>
+                    </div>
+                  </div>
+
+                  <div class="merge-actions-row">
+                    <button type="button" id="executeMergeBtn" class="primary-btn"><svg class="btn-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>Run Merge &amp; Load Roster</span></button>
+                    <span id="mergeResultHint" class="merge-result-hint" aria-live="polite"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="monthlyModalChangelogView" class="modal-tab-content" hidden>
+              <div class="changelog-filter-bar">
+                <label><span>Filter Month:</span>
+                  <select id="changelogMonthFilter" class="changelog-month-select">
+                    <option value="all">All Months</option>
+                  </select>
+                </label>
+              </div>
+              <div id="monthlyChangelogTimeline" class="changelog-timeline">
+                <div class="empty-changelog">No changes recorded yet. Scans automatically record diffs when updating months.</div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="monthlyRosterModalDone" class="secondary-btn">Close</button>
+          </div>
+        </div>
+      </div>
 
       <div id="availabilityModal" class="modal-overlay" hidden aria-hidden="true">
         <div class="modal-card availability-modal-card" role="dialog" aria-modal="true" aria-labelledby="modalAvailabilityTitle">
@@ -953,6 +1118,30 @@
         </div>
       </div>
 
+      <div id="addShiftModal" class="modal-overlay" hidden aria-hidden="true">
+        <div class="modal-card add-shift-modal-card" role="dialog" aria-modal="true" aria-labelledby="addShiftTitle" aria-describedby="addShiftSubtitle">
+          <div class="modal-header">
+            <div>
+              <span class="modal-badge">Edited roster</span>
+              <h2 id="addShiftTitle">Add shift</h2>
+              <p id="addShiftSubtitle" class="modal-subtitle">Choose an available duty for this staff member.</p>
+            </div>
+            <button type="button" id="addShiftCloseBtn" class="modal-close-btn" aria-label="Close add shift dialog">&times;</button>
+          </div>
+          <div class="modal-body add-shift-modal-body">
+            <div class="add-shift-toolbar">
+              <label><span>Search duties</span><input id="addShiftSearch" type="search" placeholder="Flight, SLA, route, or duty type"></label>
+              <label><span>Show</span><select id="addShiftFilter"><option value="gaps">Duties with gaps</option><option value="all">All duties</option></select></label>
+            </div>
+            <div id="addShiftList" class="add-shift-list" aria-live="polite"></div>
+          </div>
+          <div class="modal-footer">
+            <span>Assignments are added only to the local edited roster. AVBIS is not changed.</span>
+            <button type="button" class="secondary-btn" data-close-add-shift>Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <div id="personChangesModal" class="modal-overlay" hidden aria-hidden="true">
         <div class="modal-card person-changes-card" role="dialog" aria-modal="true" aria-labelledby="personChangesTitle">
           <div class="modal-header audit-modal-header">
@@ -980,8 +1169,8 @@
                   <button type="button" class="audit-chip" data-change-filter="modified">Changes Only</button>
                   <button type="button" class="audit-chip" data-change-filter="added">+ Added</button>
                   <button type="button" class="audit-chip" data-change-filter="removed">- Removed</button>
-                  <button type="button" class="audit-chip" data-change-filter="replaced">⇄ Replaced</button>
-                  <button type="button" class="audit-chip" data-change-filter="timing">⏱ Timing</button>
+                  <button type="button" class="audit-chip" data-change-filter="replaced"><svg class="btn-icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 5h18"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 19H3"></path></svg><span>Replaced</span></button>
+                  <button type="button" class="audit-chip" data-change-filter="timing"><svg class="btn-icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg><span>Timing</span></button>
                 </div>
               </div>
             </div>
@@ -1000,6 +1189,68 @@
             <div id="personChangesContent" class="audit-content-area">
               <div class="empty-selection">Select a staff member above to track their roster changes across scanned dates.</div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Unassigned Shifts Drag & Drop Modal -->
+      <div id="unassignedShiftsModal" class="modal-overlay unassigned-modal-overlay" hidden aria-hidden="true">
+        <div class="modal-card unassigned-shifts-card" role="dialog" aria-modal="true" aria-labelledby="unassignedShiftsTitle">
+          <div class="modal-header unassigned-modal-header">
+            <div class="unassigned-modal-title-group">
+              <span class="modal-badge unassigned-badge-tag">Drag &amp; Drop Allocation</span>
+              <h3 id="unassignedShiftsTitle" class="unassigned-modal-title">Unassigned Shifts &amp; Coverage Gaps</h3>
+              <p id="unassignedShiftsSubtitle" class="unassigned-modal-sub">Drag any unassigned duty card onto a staff member in the roster table to allocate it.</p>
+            </div>
+            <button type="button" id="unassignedShiftsCloseBtn" class="modal-close-btn" aria-label="Close unassigned shifts modal">&times;</button>
+          </div>
+          <div class="unassigned-shifts-body">
+            <div class="unassigned-controls-panel">
+              <div class="unassigned-filter-row">
+                <label class="unassigned-search-label">
+                  <span>Search duties</span>
+                  <input id="unassignedSearchInput" type="search" placeholder="Flight, route, SLA, date..." aria-label="Search unassigned duties">
+                </label>
+                <label class="unassigned-select-label">
+                  <span>SLA</span>
+                  <select id="unassignedSlaSelect">
+                    <option value="ALL">All SLAs</option>
+                  </select>
+                </label>
+                <label class="unassigned-select-label">
+                  <span>Date Scope</span>
+                  <select id="unassignedDateScopeSelect">
+                    <option value="window">Selected Window</option>
+                    <option value="all">All Scanned Dates</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <!-- Drag-to-Unassign Drop Zone -->
+            <div id="unassignedDropTarget" class="unassigned-dropzone" title="Drag any assigned shift from the roster table here to unassign it">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              <div>
+                <strong>Drop Assigned Shift Here to Unassign</strong>
+                <small>Drag a shift from the roster table into this box to remove allocated staff</small>
+              </div>
+            </div>
+
+            <div class="unassigned-status-banner">
+              <span id="unassignedListCountText">0 unassigned shifts found</span>
+              <span class="unassigned-hint-text"><svg class="btn-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right: 4px;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>Tip: Drag cards onto staff names or day cells in the roster</span>
+            </div>
+
+            <div id="unassignedDutiesList" class="unassigned-duties-grid" aria-live="polite">
+              <div class="empty-state">No unassigned shifts found in the selected date range.</div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="secondary-btn" id="unassignedShiftsFooterCloseBtn">Close</button>
           </div>
         </div>
       </div>
@@ -1573,7 +1824,6 @@
                   <option value="MIN_REST_HOURS">Minimum Rest Period (e.g. 11h)</option>
                   <option value="MAX_DUTIES_PER_DAY">Maximum Duties per Day</option>
                   <option value="STAFF_SLA_RESTRICTION">SLA Qualification Restriction</option>
-                  <option value="SENIOR_STAFF_REQUIRED">Require Senior Employee per Flight</option>
                   <option value="CONTRACT_HOURS">Custom Contract Hours Limit</option>
                 </select>
               </label>
@@ -1587,7 +1837,7 @@
                   <option value="MJ">Minijob Staff Only</option>
                 </select>
               </label>
-              <label for="ruleParamValueInput">Parameter Value
+              <label for="ruleParamValueInput"><span id="ruleParamLabel">Minimum rest hours</span>
                 <input id="ruleParamValueInput" type="text" placeholder="e.g. 11 (hours) or 2 (duties)" value="11">
               </label>
             </div>
@@ -1697,6 +1947,6 @@
     <script src="/holiday-utils.js?v=20260818-4"></script>
     <script src="/staff-utils.js?v=20260818-6"></script>
     <script src="/operations-utils.js?v=20260826-4"></script>
-    <script src="/app.js?v=20260827-5"></script>
+    <script src="/app.js?v=20260905-5"></script>
   </body>
 </html>

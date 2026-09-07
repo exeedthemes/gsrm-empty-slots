@@ -281,20 +281,69 @@
 
   function parseSodGroups(html, flightDate) {
     const doc = new DOMParser().parseFromString(html, "text/html");
-    const table = doc.querySelector("table");
-    if (!table) return [];
-    const rows = [...table.querySelectorAll("tr")].map((tr) => [...tr.cells].map((td) => clean(td.textContent))).filter((r) => r.length);
+    const tables = [...doc.querySelectorAll("table")];
+    if (!tables.length) return [];
     const groups = [];
     let current = null;
-    for (const cells of rows) {
-      if (cells[0] === "SLA") continue;
-      const requiredCell = cells.find((cell) => /Required\s*:/i.test(cell));
-      if (requiredCell) {
-        if (current) groups.push(finishGroup(current));
-        current = { sla: cells[0] || "", type: cells[1] || "", movement: (requiredCell.split(/Required\s*:/i)[0] || "").trim(), required: Number((requiredCell.match(/Required\s*:\s*(\d+)/i) || [])[1] || 0), start: stripSla(cells[3] || ""), release: stripSla(cells[4] || ""), duration: (cells[5] || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim(), staff: [], flightDate };
-      } else if (current) {
-        const staffCell = cells.find(cell => /^[A-Z0-9]{2,10}\s+-\s+/i.test((cell || "").trim()));
-        if (staffCell) current.staff.push(staffCell.trim());
+    for (const table of tables) {
+      const rows = [...table.querySelectorAll("tr")].map((tr) => {
+        const cells = [...tr.cells].map((td) => {
+          const text = clean(td.textContent);
+          if (text) return text;
+          const input = td.querySelector("input[value]");
+          return input ? clean(input.value) : "";
+        });
+        const selectedStaff = [...tr.querySelectorAll("option:checked, input[value]")]
+          .map(el => clean(el.value || el.textContent))
+          .filter(v => /^[A-Z0-9]{2,10}\s+-\s+\S/i.test(v));
+        cells.push(...selectedStaff);
+        return cells;
+      }).filter((r) => r.length);
+
+      for (const cells of rows) {
+        if (cells[0] === "SLA") continue;
+        const requiredCell = cells.find((cell) => /Required\s*:/i.test(cell));
+        if (requiredCell) {
+          if (current) groups.push(finishGroup(current));
+          current = {
+            sla: cells[0] || "",
+            type: cells[1] || "",
+            movement: (requiredCell.split(/Required\s*:/i)[0] || "").trim(),
+            required: Number((requiredCell.match(/Required\s*:\s*(\d+)/i) || [])[1] || 0),
+            start: stripSla(cells[3] || ""),
+            release: stripSla(cells[4] || ""),
+            duration: (cells[5] || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim(),
+            staff: [],
+            staff_details: [],
+            flightDate,
+          };
+        } else if (current) {
+          const staffNames = cells.filter(cell => /^[A-Z0-9]{2,10}\s+-\s+\S/i.test((cell || "").trim()));
+          for (const staffName of [...new Set(staffNames)]) {
+            current.staff.push(staffName);
+            const timeCells = cells.filter(c => /^(?:\d{1,2}\s+[A-Za-z]{3}\s+)?\d{1,2}:\d{2}$/.test(stripSla(c || "").trim()));
+            let sTime = timeCells[0] ? stripSla(timeCells[0]) : current.start;
+            let rTime = timeCells[1] ? stripSla(timeCells[1]) : current.release;
+            if (/^\d{1,2}:\d{2}$/.test(sTime) && /^(\d{1,2}\s+[A-Za-z]{3})\s+/.test(current.start)) {
+              sTime = `${current.start.match(/^(\d{1,2}\s+[A-Za-z]{3})\s+/)[1]} ${sTime}`;
+            }
+            if (/^\d{1,2}:\d{2}$/.test(rTime) && /^(\d{1,2}\s+[A-Za-z]{3})\s+/.test(current.release)) {
+              rTime = `${current.release.match(/^(\d{1,2}\s+[A-Za-z]{3})\s+/)[1]} ${rTime}`;
+            }
+            const sDate = parseSodUtc(sTime, flightDate);
+            const rDate = parseSodUtc(rTime, flightDate);
+            const gSDate = parseSodUtc(current.start, flightDate);
+            const gRDate = parseSodUtc(current.release, flightDate);
+            const isShorter = Boolean((gSDate && sDate && sDate > gSDate) || (gRDate && rDate && rDate < gRDate));
+            current.staff_details.push({
+              name: staffName,
+              start_utc: sTime,
+              release_utc: rTime,
+              duration: cells[5] || current.duration,
+              is_shorter: isShorter,
+            });
+          }
+        }
       }
     }
     if (current) groups.push(finishGroup(current));
@@ -302,8 +351,26 @@
   }
 
   function finishGroup(group) {
-    const assigned = group.staff.length;
-    return { ...group, assigned, missing: Math.max(0, group.required - assigned), startDate: parseSodUtc(group.start, group.flightDate), releaseDate: parseSodUtc(group.release, group.flightDate) };
+    const staff = [...new Set(group.staff)];
+    const assigned = staff.length;
+    const staff_details = staff.map(name => (group.staff_details || []).find(d => d.name === name) || {
+      name,
+      start_utc: group.start,
+      release_utc: group.release,
+      duration: group.duration,
+      is_shorter: false,
+    });
+    const has_shorter_assignment = staff_details.some(d => d.is_shorter);
+    return {
+      ...group,
+      staff,
+      staff_details,
+      has_shorter_assignment,
+      assigned,
+      missing: Math.max(0, group.required - assigned),
+      startDate: parseSodUtc(group.start, group.flightDate),
+      releaseDate: parseSodUtc(group.release, group.flightDate),
+    };
   }
 
   function parseFlightText(text) {

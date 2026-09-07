@@ -27,6 +27,11 @@ const cancelScanBtn = document.getElementById("cancelScanBtn");
 const gapValidationState = document.getElementById("gapValidationState");
 const contextTitle = document.getElementById("contextTitle");
 const contextHint = document.getElementById("contextHint");
+const scanPlanStatus = document.getElementById("scanPlanStatus");
+const scanSourceStatus = document.getElementById("scanSourceStatus");
+const scanSourceDetail = document.getElementById("scanSourceDetail");
+const localPlanStatus = document.getElementById("localPlanStatus");
+const localPlanDetail = document.getElementById("localPlanDetail");
 
 const tabGaps = document.getElementById("tabGaps");
 const tabReplacements = document.getElementById("tabReplacements");
@@ -56,6 +61,20 @@ const rosterStartTime = document.getElementById("rosterStartTime");
 const rosterEndTime = document.getElementById("rosterEndTime");
 const rosterStaffSearch = document.getElementById("rosterStaffSearch");
 const rosterStatus = document.getElementById("rosterStatus");
+const rosterVacationDaysThreshold = document.getElementById("rosterVacationDaysThreshold");
+const rosterStatusVacationOpt = document.getElementById("rosterStatusVacationOpt");
+const rosterUnassignedShiftsBtn = document.getElementById("rosterUnassignedShiftsBtn");
+const rosterUnassignedBadge = document.getElementById("rosterUnassignedBadge");
+const unassignedShiftsModal = document.getElementById("unassignedShiftsModal");
+const unassignedShiftsCloseBtn = document.getElementById("unassignedShiftsCloseBtn");
+const unassignedShiftsFooterCloseBtn = document.getElementById("unassignedShiftsFooterCloseBtn");
+const unassignedDutiesList = document.getElementById("unassignedDutiesList");
+const unassignedSearchInput = document.getElementById("unassignedSearchInput");
+const unassignedSlaSelect = document.getElementById("unassignedSlaSelect");
+const unassignedDateScopeSelect = document.getElementById("unassignedDateScopeSelect");
+const unassignedDropTarget = document.getElementById("unassignedDropTarget");
+const unassignedListCountText = document.getElementById("unassignedListCountText");
+let vacationGuessThresholdDays = Number(localStorage.getItem("gsrmVacationThresholdDays")) || 7;
 const rosterSla = document.getElementById("rosterSla");
 const rosterLocalTimeToggle = document.getElementById("rosterLocalTimeToggle");
 const rosterTimeModeLabel = document.getElementById("rosterTimeModeLabel");
@@ -80,9 +99,9 @@ const rosterFullscreenBtn = document.getElementById("rosterFullscreenBtn");
 const rosterTotalsBtn = document.getElementById("rosterTotalsBtn");
 const rosterStaffViewBtn = document.getElementById("rosterStaffViewBtn");
 const rosterAirlineViewBtn = document.getElementById("rosterAirlineViewBtn");
+const rosterDayTimelineBtn = document.getElementById("rosterDayTimelineBtn");
 const rosterStaffView = document.getElementById("rosterStaffView");
 const rosterAirlineView = document.getElementById("rosterAirlineView");
-const rosterViewHint = document.getElementById("rosterViewHint");
 const rosterBoardActions = document.getElementById("rosterBoardActions");
 const flightScheduleAirlineFilter = document.getElementById("flightScheduleAirlineFilter");
 const flightScheduleCoverageFilter = document.getElementById("flightScheduleCoverageFilter");
@@ -129,18 +148,12 @@ const availabilityRulesEl = document.getElementById("availabilityRules");
 const plannerSlas = document.getElementById("plannerSlas");
 const plannerOptionIds = ["plannerMaxHours", "plannerMaxSpan", "plannerBuffer", "plannerBreakAfter", "plannerBreakLength", "plannerWeeklyHours", "plannerWeeklyDays", "plannerMonthlyHours"];
 const pdfBtn = document.getElementById("pdfBtn");
-const resultsSlaBtn = document.getElementById("resultsSlaBtn");
-const resultsSlaBtnText = document.getElementById("resultsSlaBtnText");
-const resultsSlaMenu = document.getElementById("resultsSlaMenu");
-const resultsSlaCheckboxes = document.getElementById("resultsSlaCheckboxes");
-const resultsSlaAllBtn = document.getElementById("resultsSlaAllBtn");
-const resultsSlaClearBtn = document.getElementById("resultsSlaClearBtn");
 const slaChipsContainer = document.getElementById("slaChipsContainer");
 const rosterSlaChipsContainer = document.getElementById("rosterSlaChipsContainer");
 
 let latestRows = [];
 let originalRows = [];
-let rosterStateMode = "edited";
+let rosterStateMode = "original";
 let latestScannedDates = [];
 let latestStaffDirectory = [];
 let filteredRows = [];
@@ -158,6 +171,7 @@ let showRosterDutyTotals = localStorage.getItem("gsrmRosterDutyTotals") === "tru
 let currentSingleDayScale = parseInt(localStorage.getItem("gsrm_roster_timeline_scale") || "3600", 10);
 let rosterViewMode = localStorage.getItem("gsrmRosterViewMode") === "airline" ? "airline" : "staff";
 let currentAutoPlan = null;
+let scanSourceMeta = { state: "empty" };
 let activeAbsences = [];
 let activeCustomRules = [];
 let activeScenarios = [];
@@ -263,43 +277,6 @@ if (replaceAllShiftsBtn) {
   replaceAllShiftsBtn.addEventListener("click", () => executeBulkReplacement());
 }
 
-if (resultsSlaBtn) {
-  resultsSlaBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (!resultsSlaMenu) return;
-    const isHidden = resultsSlaMenu.hidden;
-    resultsSlaMenu.hidden = !isHidden;
-    resultsSlaBtn.setAttribute("aria-expanded", String(!isHidden));
-  });
-}
-
-document.addEventListener("click", (e) => {
-  if (resultsSlaMenu && !resultsSlaMenu.hidden) {
-    const wrap = document.getElementById("resultsSlaDropdownWrap");
-    if (wrap && !wrap.contains(e.target)) {
-      resultsSlaMenu.hidden = true;
-      if (resultsSlaBtn) resultsSlaBtn.setAttribute("aria-expanded", "false");
-    }
-  }
-});
-
-if (resultsSlaAllBtn) {
-  resultsSlaAllBtn.addEventListener("click", () => {
-    const uniqueSlas = [...new Set(latestRows.map((r) => r.sla).filter(Boolean))];
-    selectedResultsSlas = [...uniqueSlas];
-    updateResultsSlaFilter();
-    applyFilters();
-  });
-}
-
-if (resultsSlaClearBtn) {
-  resultsSlaClearBtn.addEventListener("click", () => {
-    selectedResultsSlas = [];
-    updateResultsSlaFilter();
-    applyFilters();
-  });
-}
-
 runBtn.addEventListener("click", () => runScan(false));
 refreshScanBtn.addEventListener("click", () => runScan(true));
 connectBtn.addEventListener("click", connectToAvbis);
@@ -312,6 +289,29 @@ scanMonth.addEventListener("input", applyScanPeriodMode);
 airlinesBtn.addEventListener("click", refreshAirlines);
 opsCsvBtn.addEventListener("click", downloadOperationalCsv);
 document.getElementById("coveragePlannerBtn")?.addEventListener("click", openCoveragePlannerWorkspace);
+document.getElementById("monthlyRostersHeaderBtn")?.addEventListener("click", () => openMonthlyRostersModal("rosters"));
+document.getElementById("historyMergeScansBtn")?.addEventListener("click", () => openMonthlyRostersModal("merge"));
+document.getElementById("refreshMonthlyRostersBtn")?.addEventListener("click", () => fetchMonthlyRosters());
+document.getElementById("rosterMonthSelect")?.addEventListener("change", (e) => {
+  if (e.target.value) loadMonthlyRoster(e.target.value);
+});
+document.getElementById("monthlyRosterModalClose")?.addEventListener("click", closeMonthlyRostersModal);
+document.getElementById("monthlyRosterModalDone")?.addEventListener("click", closeMonthlyRostersModal);
+document.getElementById("monthlyModalTabRosters")?.addEventListener("click", () => switchMonthlyModalTab("rosters"));
+document.getElementById("monthlyModalTabMerge")?.addEventListener("click", () => switchMonthlyModalTab("merge"));
+document.getElementById("monthlyModalTabChangelog")?.addEventListener("click", () => switchMonthlyModalTab("changelog"));
+document.getElementById("mergeModeSnapshots")?.addEventListener("change", () => updateMergeModeUI());
+document.getElementById("mergeModeRange")?.addEventListener("change", () => updateMergeModeUI());
+document.getElementById("executeMergeBtn")?.addEventListener("click", executeMergeScans);
+document.getElementById("changelogMonthFilter")?.addEventListener("change", (e) => renderMonthlyChangelog(e.target.value));
+
+const monthlyModalOverlay = document.getElementById("monthlyRosterModal");
+if (monthlyModalOverlay) {
+  monthlyModalOverlay.addEventListener("click", (e) => {
+    if (e.target === monthlyModalOverlay) closeMonthlyRostersModal();
+  });
+}
+
 document.getElementById("plannerAvailabilityBtn")?.addEventListener("click", openAvailabilityModal);
 document.getElementById("modalAvailabilityClose")?.addEventListener("click", closeAvailabilityModal);
 document.getElementById("modalAvailabilityDone")?.addEventListener("click", closeAvailabilityModal);
@@ -477,6 +477,48 @@ maxDutyGapUnit.addEventListener("change", () => {
   refreshReplacementCandidates();
 });
 [rosterDate, rosterEndDate, rosterStartTime, rosterEndTime, rosterStatus].forEach((control) => control.addEventListener("input", applyFilters));
+
+if (rosterVacationDaysThreshold) {
+  rosterVacationDaysThreshold.value = String(vacationGuessThresholdDays);
+  if (rosterStatusVacationOpt) {
+    rosterStatusVacationOpt.textContent = `Guessed Vacation (${vacationGuessThresholdDays}+ days free)`;
+  }
+  const handleVacationThresholdChange = () => {
+    const val = Math.max(1, Math.min(60, Number(rosterVacationDaysThreshold.value) || 7));
+    vacationGuessThresholdDays = val;
+    rosterVacationDaysThreshold.value = String(val);
+    localStorage.setItem("gsrmVacationThresholdDays", String(val));
+    if (rosterStatusVacationOpt) {
+      rosterStatusVacationOpt.textContent = `Guessed Vacation (${val}+ days free)`;
+    }
+    renderRoster();
+  };
+  rosterVacationDaysThreshold.addEventListener("change", handleVacationThresholdChange);
+  rosterVacationDaysThreshold.addEventListener("input", handleVacationThresholdChange);
+}
+
+if (rosterUnassignedShiftsBtn) {
+  rosterUnassignedShiftsBtn.addEventListener("click", openUnassignedShiftsModal);
+}
+if (unassignedShiftsCloseBtn) {
+  unassignedShiftsCloseBtn.addEventListener("click", closeUnassignedShiftsModal);
+}
+if (unassignedShiftsFooterCloseBtn) {
+  unassignedShiftsFooterCloseBtn.addEventListener("click", closeUnassignedShiftsModal);
+}
+if (unassignedSearchInput) {
+  unassignedSearchInput.addEventListener("input", renderUnassignedShiftsList);
+}
+if (unassignedSlaSelect) {
+  unassignedSlaSelect.addEventListener("change", renderUnassignedShiftsList);
+}
+if (unassignedDateScopeSelect) {
+  unassignedDateScopeSelect.addEventListener("change", () => {
+    updateUnassignedBadge();
+    renderUnassignedShiftsList();
+  });
+}
+
 rosterSla.addEventListener("change", () => {
   if (rosterSla.value) {
     selectedRosterSlas = [rosterSla.value];
@@ -539,18 +581,41 @@ if (rosterTimelineScale) {
 }
 rosterStaffViewBtn.addEventListener("click", () => setRosterViewMode("staff"));
 rosterAirlineViewBtn.addEventListener("click", () => setRosterViewMode("airline"));
+rosterDayTimelineBtn?.addEventListener("click", () => {
+  const selectedDate = rosterDate.value || [...latestScannedDates].sort()[0] || scanStartDate.value;
+  if (!selectedDate) return setMessage("Run a scan or select a roster date before opening the day timeline.", "warn");
+  rosterDate.value = selectedDate;
+  rosterEndDate.value = selectedDate;
+  rosterPeriodMode.value = "custom";
+  rosterMonthField.hidden = true;
+  setRosterViewMode("staff", false);
+  applyFilters();
+});
 document.getElementById("rosterExpandAll").addEventListener("click", () => setAllAirlineSections(true));
 document.getElementById("rosterCollapseAll").addEventListener("click", () => setAllAirlineSections(false));
 if (flightScheduleAirlineFilter) flightScheduleAirlineFilter.addEventListener("change", renderRoster);
 if (flightScheduleCoverageFilter) flightScheduleCoverageFilter.addEventListener("change", renderRoster);
 if (flightScheduleDirectionFilter) flightScheduleDirectionFilter.addEventListener("change", renderRoster);
 if (flightScheduleSearch) flightScheduleSearch.addEventListener("input", renderRoster);
+document.addEventListener("click", (event) => {
+  const selectedAction = event.target.closest(".planner-action-menu-panel button");
+  if (selectedAction) selectedAction.closest("details")?.removeAttribute("open");
+  if (!event.target.closest(".planner-action-menu")) {
+    document.querySelectorAll(".planner-action-menu[open]").forEach((menu) => menu.removeAttribute("open"));
+  }
+  const headerMenuAction = event.target.closest(".header-action-menu-panel button");
+  if (headerMenuAction) headerMenuAction.closest("details")?.removeAttribute("open");
+  const exportMenuAction = event.target.closest(".context-export-menu-panel button");
+  if (exportMenuAction) exportMenuAction.closest("details")?.removeAttribute("open");
+  if (!event.target.closest(".header-action-menu")) document.getElementById("scanOptionsMenu")?.removeAttribute("open");
+  if (!event.target.closest(".context-export-menu")) document.getElementById("exportMenu")?.removeAttribute("open");
+});
 autoPlannerRun.addEventListener("click", buildAutomaticPlan);
 if (autoAdjustRun) autoAdjustRun.addEventListener("click", buildAutoAdjustPlan);
 autoPlannerToggle.addEventListener("click", () => {
   const autoPlanner = autoPlannerToggle.closest(".auto-planner");
   const collapsed = autoPlanner.classList.toggle("collapsed");
-  autoPlannerToggle.textContent = collapsed ? "Show planner" : "Hide planner";
+  autoPlannerToggle.textContent = collapsed ? "Show settings" : "Hide settings";
   autoPlannerToggle.setAttribute("aria-expanded", String(!collapsed));
   if (!collapsed) {
     autoPlanner.querySelectorAll(".step-card").forEach((card) => {
@@ -917,7 +982,7 @@ function toggleRosterFullscreen(force) {
     rosterLayout.dataset.fullscreenPlannerWasExpanded = String(wasExpanded);
     if (wasExpanded) {
       planner.classList.add("collapsed");
-      autoPlannerToggle.textContent = "Show planner";
+      autoPlannerToggle.textContent = "Show settings";
       autoPlannerToggle.setAttribute("aria-expanded", "false");
     }
   }
@@ -928,7 +993,7 @@ function toggleRosterFullscreen(force) {
   if (!enabled) {
     if (planner && rosterLayout.dataset.fullscreenPlannerWasExpanded === "true") {
       planner.classList.remove("collapsed");
-      autoPlannerToggle.textContent = "Hide planner";
+      autoPlannerToggle.textContent = "Hide settings";
       autoPlannerToggle.setAttribute("aria-expanded", "true");
     }
     delete rosterLayout.dataset.fullscreenPlannerWasExpanded;
@@ -1178,6 +1243,11 @@ async function runScan(forceRefresh = false, options = {}) {
   }
   payload.scanId = createScanId();
   activeScanId = payload.scanId;
+  scanSourceMeta = {
+    state: "scanning",
+    detail: `${payload.startDate} to ${payload.endDate}${force ? " · bypassing cache" : ""}`,
+  };
+  updateScanPlanStatus();
   setBusy(true);
   setMessage(isAutoScan ? "Running background auto-scan..." : (forceRefresh ? "Refreshing the selected dates from AVBIS..." : "Loading cached dates and scanning only missing data..."));
   resetProgress(payload.scanId);
@@ -1213,9 +1283,29 @@ async function runScan(forceRefresh = false, options = {}) {
 
     latestRows = result.rows || [];
     originalRows = JSON.parse(JSON.stringify(result.rows || []));
+    const scanCache = result.cache || {};
+    const sourceParts = [];
+    if (scanCache.freshDates) sourceParts.push(`${scanCache.freshDates} fetched from AVBIS`);
+    if (scanCache.cachedDates) sourceParts.push(`${scanCache.cachedDates} reused from cache`);
+    scanSourceMeta = {
+      state: "loaded",
+      at: new Date(),
+      detail: sourceParts.length
+        ? sourceParts.join(" · ")
+        : `${(result.scannedDates || []).length} date${(result.scannedDates || []).length === 1 ? "" : "s"} loaded`,
+    };
+    setRosterStateMode("original");
     latestScannedDates = result.scannedDates || [];
     latestStaffDirectory = result.staffDirectory || [];
     saveScanSnapshot(result, payload);
+    if (Array.isArray(result.monthlyUpdates) && result.monthlyUpdates.length > 0) {
+      for (const u of result.monthlyUpdates) {
+        if (u.hasChanges) {
+          showToast(`${u.monthKey} Roster Updated: ${u.summary}`, { kind: "info", duration: 7000 });
+        }
+      }
+      if (typeof fetchMonthlyRosters === "function") fetchMonthlyRosters();
+    }
     connectedEmail = payload.email;
     updateConnectionState(true);
     updateStaffOptions();
@@ -1252,6 +1342,8 @@ async function runScan(forceRefresh = false, options = {}) {
     originalRows = [];
     latestScannedDates = [];
     latestStaffDirectory = [];
+    scanSourceMeta = { state: "error", detail: error.message || String(error) };
+    updateScanPlanStatus();
     updateStaffOptions();
     updateResultsSlaFilter();
     updateRosterFilters();
@@ -1605,8 +1697,8 @@ function setBusy(isBusy) {
   cancelScanBtn.hidden = !isBusy;
   cancelScanBtn.disabled = false;
   cancelScanBtn.textContent = "Cancel scan";
-  runBtn.textContent = isBusy ? "Running..." : "Run";
-  refreshScanBtn.textContent = isBusy ? "Please wait..." : "Refresh range";
+  runBtn.textContent = isBusy ? "Scanning…" : "Scan";
+  refreshScanBtn.textContent = isBusy ? "Scanning…" : "Refresh range from AVBIS";
 }
 
 function setAirlinesBusy(isBusy) {
@@ -1983,11 +2075,108 @@ function escapeHtml(value) {
 }
 
 function setRosterStateMode(mode) {
-  rosterStateMode = ["original", "compare"].includes(mode) ? mode : "edited";
+  rosterStateMode = ["original", "changes"].includes(mode) ? mode : "edited";
   document.querySelectorAll("#rosterStateToggleGroup .state-toggle-btn").forEach((button) => {
     button.classList.toggle("active", button.dataset.stateMode === rosterStateMode);
   });
+  updateScanPlanStatus();
   if (activeTab === "roster") renderRoster();
+}
+
+function hasLocalRosterEdits() {
+  return getChangedRosterRowKeys().size > 0;
+}
+
+function formatStatusTime(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function updateScanPlanStatus() {
+  if (!scanPlanStatus || !scanSourceStatus || !localPlanStatus) return;
+  const state = scanSourceMeta.state || "empty";
+  scanPlanStatus.classList.toggle("is-empty", state === "empty");
+  scanPlanStatus.classList.toggle("is-scanning", state === "scanning");
+  scanPlanStatus.classList.toggle("has-edits", latestRows.length > 0 && hasLocalRosterEdits());
+
+  if (state === "scanning") {
+    scanSourceStatus.textContent = "Scanning AVBIS…";
+    scanSourceDetail.textContent = scanSourceMeta.detail || "Loading the selected dates.";
+  } else if (state === "loaded" || state === "restored") {
+    const loadedLabel = state === "restored" ? "Snapshot restored" : "Scan loaded";
+    scanSourceStatus.textContent = `${loadedLabel}${scanSourceMeta.at ? ` · ${formatStatusTime(scanSourceMeta.at)}` : ""}`;
+    scanSourceDetail.textContent = scanSourceMeta.detail || `${latestScannedDates.length} date${latestScannedDates.length === 1 ? "" : "s"} available.`;
+  } else if (state === "error") {
+    scanSourceStatus.textContent = "Scan unavailable";
+    scanSourceDetail.textContent = scanSourceMeta.detail || "The last scan did not complete.";
+  } else {
+    scanSourceStatus.textContent = "No scan loaded";
+    scanSourceDetail.textContent = "Select a period and run a scan.";
+  }
+
+  const changedRows = latestRows.length ? getChangedRosterRowKeys() : new Set();
+  const changedStaff = changedRows.size ? getChangedRosterStaffKeys(changedRows) : new Set();
+  if (changedRows.size) {
+    localPlanStatus.textContent = `${changedRows.size} changed ${changedRows.size === 1 ? "duty" : "duties"}`;
+    localPlanDetail.textContent = `${changedStaff.size} affected staff member${changedStaff.size === 1 ? "" : "s"} · saved locally only.`;
+  } else {
+    localPlanStatus.textContent = latestRows.length ? "Matches AVBIS scan" : "No local changes";
+    localPlanDetail.textContent = latestRows.length ? "No planning edits have been applied." : "Planning changes remain on this device.";
+  }
+}
+
+function getChangedRosterRowKeys() {
+  const originalByKey = new Map(originalRows.map((row) => [OperationsUtils.rowKey(row), row]));
+  const editedByKey = new Map(latestRows.map((row) => [OperationsUtils.rowKey(row), row]));
+  const keys = new Set([...originalByKey.keys(), ...editedByKey.keys()]);
+  const changed = new Set();
+  for (const key of keys) {
+    const original = originalByKey.get(key);
+    const edited = editedByKey.get(key);
+    if (!original || !edited || original.start_utc !== edited.start_utc || original.release_utc !== edited.release_utc) {
+      changed.add(key);
+      continue;
+    }
+    const originalStaff = [...staffByKey(original).keys()].sort();
+    const editedStaff = [...staffByKey(edited).keys()].sort();
+    if (originalStaff.length !== editedStaff.length || originalStaff.some((staffKey, index) => staffKey !== editedStaff[index])) changed.add(key);
+  }
+  return changed;
+}
+
+function getChangedRosterStaffKeys(changedRowKeys = getChangedRosterRowKeys()) {
+  const changedStaff = new Set();
+  for (const row of [...originalRows, ...latestRows]) {
+    if (!changedRowKeys.has(OperationsUtils.rowKey(row))) continue;
+    for (const key of staffByKey(row).keys()) changedStaff.add(key);
+  }
+  return changedStaff;
+}
+
+function getChangedAssignmentsByDay(personKey, dailyWindows, changedRowKeys) {
+  const assignmentsByKey = new Map();
+  for (const row of originalRows) {
+    if (changedRowKeys.has(OperationsUtils.rowKey(row)) && staffByKey(row).has(personKey)) assignmentsByKey.set(OperationsUtils.rowKey(row), row);
+  }
+  for (const row of latestRows) {
+    if (changedRowKeys.has(OperationsUtils.rowKey(row)) && staffByKey(row).has(personKey)) assignmentsByKey.set(OperationsUtils.rowKey(row), row);
+  }
+  const assignments = [...assignmentsByKey.values()];
+  return dailyWindows.map((window) => assignments.filter((row) => {
+    const start = parseUtcTime(row.date, row.start_utc);
+    const end = parseUtcTime(row.date, row.release_utc);
+    return start && end && start < window.end && end > window.start;
+  }));
+}
+
+function useRosterStateForPlanning() {
+  setRosterStateMode(hasLocalRosterEdits() ? "edited" : "original");
 }
 
 function getRosterSourceRows(forcedMode) {
@@ -2102,11 +2291,12 @@ function openAccountOwnerRoster() {
   if (!owner) return;
   rosterStaffSearch.value = owner.name;
   setRosterViewMode("staff", false);
-  setRosterStateMode("edited");
+  useRosterStateForPlanning();
   switchTab("roster");
 }
 
 function applyFilters() {
+  updateScanPlanStatus();
   renderAccountOwnerDuties();
   if (activeTab === "replacements") {
     renderReplacements();
@@ -2241,47 +2431,7 @@ function updateResultsSlaFilter() {
     resultsSlaFilter.appendChild(opt);
   }
 
-  if (resultsSlaCheckboxes) {
-    resultsSlaCheckboxes.innerHTML = "";
-    if (uniqueSlas.length === 0) {
-      resultsSlaCheckboxes.innerHTML = '<span class="muted" style="padding:4px; font-size:12px;">No scan data available</span>';
-    } else {
-      for (const sla of uniqueSlas) {
-        const isChecked = selectedResultsSlas.includes(sla);
-        const label = document.createElement("label");
-        label.className = "multi-select-item";
-        label.innerHTML = `
-          <input type="checkbox" value="${escapeHtml(sla)}" ${isChecked ? "checked" : ""}>
-          <span>${escapeHtml(sla)}</span>
-        `;
-        label.querySelector("input").addEventListener("change", (e) => {
-          if (e.target.checked) {
-            if (!selectedResultsSlas.includes(sla)) selectedResultsSlas.push(sla);
-          } else {
-            selectedResultsSlas = selectedResultsSlas.filter((s) => s !== sla);
-          }
-          syncResultsSlaBtnText();
-          renderSlaChips(uniqueSlas);
-          applyFilters();
-        });
-        resultsSlaCheckboxes.appendChild(label);
-      }
-    }
-  }
-
-  syncResultsSlaBtnText();
   renderSlaChips(uniqueSlas);
-}
-
-function syncResultsSlaBtnText() {
-  if (!resultsSlaBtnText) return;
-  if (selectedResultsSlas.length === 0) {
-    resultsSlaBtnText.textContent = "All SLAs";
-  } else if (selectedResultsSlas.length === 1) {
-    resultsSlaBtnText.textContent = selectedResultsSlas[0];
-  } else {
-    resultsSlaBtnText.textContent = `${selectedResultsSlas.length} SLAs selected`;
-  }
 }
 
 function renderSlaChips(availableSlas) {
@@ -2725,12 +2875,21 @@ function getRosterRows(forcedMode) {
     const byDay = dailyWindows.map((window) => timedAssignments
       .filter((item) => item.start < window.end && item.end > window.start)
       .map((item) => item.assignment));
+    const vacationDatesScope = dailyWindows.length > 1 ? dailyWindows : (latestScannedDates.length > 1 ? latestScannedDates : dailyWindows);
+    const vacationData = typeof OperationsUtils !== "undefined" && OperationsUtils.detectStaffVacations
+      ? OperationsUtils.detectStaffVacations(person.assignments, vacationDatesScope, vacationGuessThresholdDays)
+      : { isGuessedVacation: false, maxConsecutiveFreeDays: 0, longestSpan: null, vacationSpans: [] };
+
     return {
       ...person,
       status: overlapping.length ? "duty" : "free",
       overlapping: overlapping.map((item) => item.assignment),
       otherDayAssignments: selectedDates.filter((item) => !overlapping.includes(item)).map((item) => item.assignment),
       byDay,
+      isGuessedVacation: vacationData.isGuessedVacation,
+      maxConsecutiveFreeDays: vacationData.maxConsecutiveFreeDays,
+      longestVacationSpan: vacationData.longestSpan,
+      vacationSpans: vacationData.vacationSpans,
     };
   });
 
@@ -2749,6 +2908,11 @@ function setRosterViewMode(mode, shouldRender = true) {
   const isAirline = rosterViewMode === "airline";
   rosterStaffViewBtn.setAttribute("aria-pressed", String(!isAirline));
   rosterAirlineViewBtn.setAttribute("aria-pressed", String(isAirline));
+  if (rosterDayTimelineBtn) {
+    const isTimeline = !isAirline && rosterDate.value && rosterDate.value === rosterEndDate.value;
+    rosterDayTimelineBtn.setAttribute("aria-pressed", String(Boolean(isTimeline)));
+    rosterDayTimelineBtn.textContent = isTimeline ? "Day timeline active" : "Day timeline";
+  }
   rosterStaffView.hidden = isAirline;
   rosterAirlineView.hidden = !isAirline;
   rosterLayout.classList.toggle("airline-view", isAirline);
@@ -2764,11 +2928,6 @@ function setRosterViewMode(mode, shouldRender = true) {
     btn.title = isAirline ? "Filter presets apply to staff roster view" : "";
   });
 
-  if (rosterViewHint) {
-    rosterViewHint.textContent = isAirline
-      ? "Chronological flights with coverage, assigned staff, and local edits."
-      : "People by day with replacements and local edits clearly marked.";
-  }
   rosterFreeLabel.textContent = isAirline ? "Days" : "Free";
   rosterDutyLabel.textContent = isAirline ? "Flights" : "On duty";
   if (activeTab === "roster") contextHint.textContent = isAirline
@@ -2799,7 +2958,11 @@ function updateAirlineFilterOptions() {
 
 function getAirlineRosterDays(roster) {
   const scheduleQuery = (flightScheduleSearch?.value || "").trim() || (rosterStaffSearch?.value || "").trim();
-  const sourceRows = getRosterSourceRows();
+  let sourceRows = getRosterSourceRows();
+  if (rosterStateMode === "changes") {
+    const changedRowKeys = getChangedRosterRowKeys();
+    sourceRows = sourceRows.filter((row) => changedRowKeys.has(OperationsUtils.rowKey(row)));
+  }
   return OperationsUtils.buildFlightSchedule(sourceRows, roster.dailyWindows, {
     query: scheduleQuery,
     sla: selectedRosterSlas.length > 0 ? selectedRosterSlas : rosterSla.value,
@@ -2810,6 +2973,8 @@ function getAirlineRosterDays(roster) {
 }
 
 function renderRoster() {
+  updatePlannerActionState();
+  updateScanPlanStatus();
   updateAirlineFilterOptions();
   syncRosterPresetChips();
   const roster = getRosterRows();
@@ -2847,17 +3012,25 @@ function renderRoster() {
     return;
   }
 
-  const freeCount = roster.rows.filter((person) => person.status === "free").length;
-  const dutyCount = roster.rows.length - freeCount;
-  rosterFreeCount.textContent = freeCount;
-  rosterDutyCount.textContent = dutyCount;
   const overnightSuffix = rosterEndTime.value <= rosterStartTime.value ? " (+1 day)" : "";
   const dateLabel = rosterDate.value === rosterEndDate.value ? rosterDate.value : `${rosterDate.value} to ${rosterEndDate.value}`;
   const displayZone = rosterLocalTimeToggle.checked ? "Local (Europe/Berlin)" : "Zulu (UTC)";
-  const rosterStateLabel = rosterStateMode === "original" ? "Original scan" : rosterStateMode === "compare" ? "Edited roster with changes" : "Edited roster";
+  const rosterStateLabel = rosterStateMode === "original" ? "Original scan" : rosterStateMode === "changes" ? "Compare changes" : "Edited roster";
   rosterWindowText.textContent = `${rosterStateLabel} · ${dateLabel} · ${rosterStartTime.value}–${rosterEndTime.value}${overnightSuffix} UTC · times shown in ${displayZone}.`;
-  const shown = filterRosterPeople(roster.rows);
+  const changedRowKeys = rosterStateMode === "changes" ? getChangedRosterRowKeys() : null;
+  const changedStaffKeys = changedRowKeys ? getChangedRosterStaffKeys(changedRowKeys) : null;
+  const shown = filterRosterPeople(roster.rows).filter((person) => !changedStaffKeys || changedStaffKeys.has(person.key));
+  const scopedRows = changedStaffKeys ? roster.rows.filter((person) => changedStaffKeys.has(person.key)) : roster.rows;
+  const freeCount = shown.filter((person) => person.status === "free").length;
+  const dutyCount = shown.length - freeCount;
+  rosterFreeCount.textContent = freeCount;
+  rosterDutyCount.textContent = dutyCount;
   const isSingleDay = roster.dailyWindows.length === 1;
+  if (rosterDayTimelineBtn) {
+    const isTimeline = rosterViewMode === "staff" && isSingleDay;
+    rosterDayTimelineBtn.setAttribute("aria-pressed", String(isTimeline));
+    rosterDayTimelineBtn.textContent = isTimeline ? "Day timeline active" : "Day timeline";
+  }
   const scaleControl = document.querySelector(".roster-scale-control");
   if (scaleControl) {
     scaleControl.hidden = !isSingleDay || rosterViewMode !== "staff";
@@ -2883,11 +3056,13 @@ function renderRoster() {
   }
 
   if (!shown.length) {
-    rosterBody.innerHTML = `<tr><td colspan="${roster.dailyWindows.length + 1 + (showRosterDutyTotals ? 1 : 0)}" class="empty">No staff match the current roster filters.</td></tr>`;
+    const emptyText = rosterStateMode === "changes" ? "No roster changes match the current filters." : "No staff match the current roster filters.";
+    rosterBody.innerHTML = `<tr><td colspan="${roster.dailyWindows.length + 1 + (showRosterDutyTotals ? 1 : 0)}" class="empty">${emptyText}</td></tr>`;
   } else {
     for (const person of shown) {
       const tr = document.createElement("tr");
-      const hasLocalEdit = rosterStateMode !== "original" && person.byDay.flat().some((assignment) => getDutyRosterChange(assignment).changed);
+      const displayByDay = changedRowKeys ? getChangedAssignmentsByDay(person.key, roster.dailyWindows, changedRowKeys) : person.byDay;
+      const hasLocalEdit = rosterStateMode !== "original" && (changedStaffKeys?.has(person.key) || person.byDay.flat().some((assignment) => getDutyRosterChange(assignment).changed));
       if (hasLocalEdit) tr.classList.add("roster-edited-row");
       const isTracked = typeof isStaffTracked === "function" ? isStaffTracked(person.key) : false;
       const trackTitle = `View Roster Audit & Change History for ${escapeHtml(person.name)}`;
@@ -2905,7 +3080,7 @@ function renderRoster() {
       let singleDaySummaryBadgeHtml = "";
       if (isSingleDay) {
         const useLocal = rosterLocalTimeToggle.checked;
-        const assignments = person.byDay[0] || [];
+        const assignments = displayByDay[0] || [];
         if (assignments.length) {
           const sorted = [...assignments].sort((a, b) => getDutyStartMinutes(a, useLocal) - getDutyStartMinutes(b, useLocal));
           let totalDutyMins = 0;
@@ -2950,12 +3125,15 @@ function renderRoster() {
         }
       }
 
-      const personHasOverlap = shouldShowOverlapVisuals() && person.byDay.some((dayAssignments) =>
+      const personHasOverlap = shouldShowOverlapVisuals() && displayByDay.some((dayAssignments) =>
         dayAssignments.length > 1 && OperationsUtils.inspectDaySchedule(dayAssignments, getPlannerOptions()).violations.includes("overlap")
       );
-      const overlapPillHtml = personHasOverlap ? ` <span class="person-overlap-pill" title="Staff member has overlapping shift assignments on one or more dates">⚠️ Overlap</span>` : "";
+      const overlapPillHtml = personHasOverlap ? ` <span class="person-overlap-pill" title="Staff member has overlapping shift assignments on one or more dates"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>Overlap</span></span>` : "";
       const contractMeta = getStaffContractMeta(plannerStaffContracts[person.key]);
       const contractLabelHtml = `<span class="roster-contract-label ${contractMeta.className}">${escapeHtml(contractMeta.label)}</span>`;
+      const vacationBadgeHtml = person.isGuessedVacation
+        ? `<button type="button" class="roster-vacation-badge" data-person-key="${escapeHtml(person.key)}" data-person-name="${escapeHtml(person.name)}" data-vacation-start="${escapeHtml(person.longestVacationSpan?.startDate || '')}" data-vacation-end="${escapeHtml(person.longestVacationSpan?.endDate || '')}" data-vacation-days="${person.maxConsecutiveFreeDays || 7}" title="Guessed Vacation: ${person.maxConsecutiveFreeDays} consecutive days unallocated. Click to log official absence."><svg class="vacation-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg><span>Vacation</span> <span class="vacation-days-count">${person.maxConsecutiveFreeDays}d</span></button>`
+        : "";
 
       tr.innerHTML = `
         <td class="roster-person-cell" draggable="true" data-staff-key="${escapeHtml(person.key)}" data-staff-name="${escapeHtml(person.name)}" data-staff-initials="${escapeHtml(person.initials)}" title="Drag ${escapeHtml(person.name)} to assign/replace on a duty slot">
@@ -2963,23 +3141,35 @@ function renderRoster() {
             <strong>${escapeHtml(person.name)}</strong>
             ${trackBtnHtml}
           </div>
-          <span class="roster-person-meta">${escapeHtml(displayInitials)} ${contractLabelHtml}${hasLocalEdit ? ' <b class="edited-badge">Edited</b>' : ""}${overlapPillHtml}</span>
+          <span class="roster-person-meta">${escapeHtml(displayInitials)} ${contractLabelHtml}${hasLocalEdit ? ' <b class="edited-badge">Edited</b>' : ""}${overlapPillHtml}${vacationBadgeHtml}</span>
           ${singleDaySummaryBadgeHtml}
         </td>
-        ${person.byDay.map((assignments, index) => renderRosterDayCell(assignments, roster.dailyWindows[index], showRosterDutyTotals, person, roster.dailyWindows.length === 1)).join("")}
-        ${showRosterDutyTotals ? `<td class="roster-total-cell"><span class="roster-range-total" title="Duty hours in selected range">${formatHours(OperationsUtils.summarizeDutyHours(person.overlapping, roster.dailyWindows).totalMinutes)}h</span></td>` : ""}
+        ${displayByDay.map((assignments, index) => renderRosterDayCell(assignments, roster.dailyWindows[index], showRosterDutyTotals, person, roster.dailyWindows.length === 1)).join("")}
+        ${showRosterDutyTotals ? `<td class="roster-total-cell"><span class="roster-range-total" title="Duty hours in selected range">${formatHours(OperationsUtils.summarizeDutyHours(displayByDay.flat(), roster.dailyWindows).totalMinutes)}h</span></td>` : ""}
       `;
       rosterBody.appendChild(tr);
     }
     initRosterBodyDelegation();
   }
 
-  resultCount.textContent = shown.length === roster.rows.length ? String(shown.length) : `${shown.length} of ${roster.rows.length}`;
+  resultCount.textContent = shown.length === scopedRows.length ? String(shown.length) : `${shown.length} of ${scopedRows.length}`;
   resultCount.title = "";
   csvBtn.disabled = shown.length === 0;
   rosterBody.dataset.visibleStaffKeys = JSON.stringify(shown.map((person) => person.key));
   attachRosterDragAndDropListeners();
   updateGlobalRosterAuditBadge();
+  updateUnassignedBadge();
+}
+
+function updatePlannerActionState() {
+  const hasDuties = latestRows.length > 0;
+  if (autoPlannerRun) autoPlannerRun.disabled = !hasDuties;
+  if (autoAdjustRun) autoAdjustRun.disabled = !hasDuties;
+  if (autoPlannerClear) autoPlannerClear.disabled = !currentAutoPlan && !currentAutoAdjustPlan;
+  for (const id of ["icsExportBtn", "handoverReportBtn"]) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = !hasDuties;
+  }
 }
 
 function removeStaffFromDutyRow(rowKey, staffKeyOrName) {
@@ -3046,6 +3236,31 @@ function initRosterBodyDelegation() {
       e.stopPropagation();
       const personKey = trackBtn.dataset.personKey;
       if (personKey) openPersonChangesModal(personKey);
+      return;
+    }
+
+    const vacBadge = e.target.closest(".roster-vacation-badge, .roster-vacation-day-pill");
+    if (vacBadge) {
+      e.stopPropagation();
+      e.preventDefault();
+      const pKey = vacBadge.dataset.personKey;
+      const pName = vacBadge.dataset.personName;
+      const vStart = vacBadge.dataset.vacationStart;
+      const vEnd = vacBadge.dataset.vacationEnd;
+      const vDays = vacBadge.dataset.vacationDays;
+      const absenceId = vacBadge.dataset.absenceId;
+      openAbsenceModal({
+        key: pKey,
+        name: pName,
+        startDate: vStart,
+        endDate: vEnd,
+        category: "Vacation",
+        days: vDays,
+      });
+      if (absenceId && activeAbsences?.length) {
+        const found = activeAbsences.find((item) => item.id === absenceId);
+        if (found) renderAbsenceImpact(found);
+      }
       return;
     }
 
@@ -3120,7 +3335,7 @@ function renderAirlineRoster(roster) {
   rosterDutyCount.textContent = String(visibleFlights);
   const overnightSuffix = rosterEndTime.value <= rosterStartTime.value ? " (+1 day)" : "";
   const dateLabel = rosterDate.value === rosterEndDate.value ? rosterDate.value : `${rosterDate.value} to ${rosterEndDate.value}`;
-  const scheduleStateLabel = rosterStateMode === "original" ? "Original scan" : rosterStateMode === "compare" ? "Edited schedule with changes" : "Edited schedule";
+  const scheduleStateLabel = rosterStateMode === "original" ? "Original scan" : rosterStateMode === "changes" ? "Changed duties only" : "Edited schedule";
   rosterWindowText.textContent = `${scheduleStateLabel} · ${dateLabel} · ${visibleFlights} flights · ${visibleMissing} missing · ${rosterStartTime.value}–${rosterEndTime.value}${overnightSuffix} UTC.`;
 
   rosterAirlineView.innerHTML = days.map((day) => {
@@ -3137,7 +3352,7 @@ function renderAirlineRoster(roster) {
             const displayName = identity?.name || label;
             const stationTag = identity?.initials && identity.initials !== displayName ? identity.initials : "";
             const hasOverlap = shouldShowOverlapVisuals() && isStaffOverlappingOnDate(identity?.key || label, duty.date);
-            const overlapBadge = hasOverlap ? `<span class="overlap-badge" title="Staff member has an overlapping duty shift on this date!">⚠️ Overlap</span>` : "";
+            const overlapBadge = hasOverlap ? `<span class="overlap-badge" title="Staff member has an overlapping duty shift on this date!"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>Overlap</span></span>` : "";
             return `<button type="button" draggable="true" class="board-staff-btn${hasOverlap ? " has-overlap" : ""}" data-staff-index="${staffIndex}" data-duty-row-key="${escapeHtml(rowKey)}" data-staff-key="${escapeHtml(identity?.key || "")}" data-staff-name="${escapeHtml(displayName)}" data-staff-initials="${escapeHtml(identity?.initials || "")}" title="${hasOverlap ? "OVERLAP WARNING: Staff member has an overlapping shift on this date! · " : ""}Drag or click to replace ${escapeHtml(displayName)}"><strong>${escapeHtml(displayName)}</strong>${stationTag ? `<small>${escapeHtml(stationTag)}</small>` : ""}${overlapBadge}<span class="board-staff-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(identity?.key || displayName)}" title="Remove staff from duty">×</span></button>`;
           }).join("") : '<span class="board-unassigned">Unassigned</span>';
           const planned = currentAutoPlan?.slots.filter((slot) => slot.personKey && OperationsUtils.rowKey(slot.row) === rowKey) || [];
@@ -3270,7 +3485,7 @@ function attachRosterDragAndDropListeners() {
   isRosterDragDelegated = true;
 
   document.addEventListener("dragstart", (e) => {
-    const el = e.target.closest('.roster-person-cell, .board-staff-btn, .compact-duty');
+    const el = e.target.closest('.roster-person-cell, .board-staff-btn, .compact-duty, .unassigned-duty-card');
     if (!el) return;
 
     isDraggingRosterItem = true;
@@ -3296,6 +3511,15 @@ function attachRosterDragAndDropListeners() {
         rowKey: el.dataset.rowKey || el.getAttribute("data-row-key") || "",
         sourceStaffKey: el.dataset.sourceStaffKey || el.getAttribute("data-source-staff-key") || ""
       };
+    } else if (el.classList.contains("unassigned-duty-card")) {
+      data = {
+        type: "unassigned_duty",
+        rowKey: el.dataset.unassignedRowKey || "",
+        flight: el.dataset.flight || "",
+        sla: el.dataset.sla || "",
+        date: el.dataset.date || "",
+        isUnassigned: true,
+      };
     }
 
     draggedData = data;
@@ -3307,7 +3531,7 @@ function attachRosterDragAndDropListeners() {
   });
 
   document.addEventListener("dragend", (e) => {
-    const el = e.target.closest('.roster-person-cell, .board-staff-btn, .compact-duty');
+    const el = e.target.closest('.roster-person-cell, .board-staff-btn, .compact-duty, .unassigned-duty-card');
     if (el) el.classList.remove("dragging");
     document.querySelectorAll(".drag-over").forEach((target) => target.classList.remove("drag-over"));
     draggedData = null;
@@ -3315,7 +3539,7 @@ function attachRosterDragAndDropListeners() {
   });
 
   document.addEventListener("dragover", (e) => {
-    const target = e.target.closest('.roster-day-cell, .roster-person-cell, .compact-duty, .board-staff-list, .airline-duty-table tbody tr, #rosterBody tr, .flight-card');
+    const target = e.target.closest('.roster-day-cell, .roster-person-cell, .compact-duty, .board-staff-list, .airline-duty-table tbody tr, #rosterBody tr, .flight-card, #unassignedDropTarget, .unassigned-dropzone');
     if (!target) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -3333,7 +3557,7 @@ function attachRosterDragAndDropListeners() {
   });
 
   document.addEventListener("drop", (e) => {
-    const target = e.target.closest('.roster-day-cell, .roster-person-cell, .compact-duty, .board-staff-list, .airline-duty-table tbody tr, #rosterBody tr, .flight-card');
+    const target = e.target.closest('.roster-day-cell, .roster-person-cell, .compact-duty, .board-staff-list, .airline-duty-table tbody tr, #rosterBody tr, .flight-card, #unassignedDropTarget, .unassigned-dropzone');
     if (!target) return;
     e.preventDefault();
     target.classList.remove("drag-over");
@@ -3355,6 +3579,27 @@ function handleRosterDrop(data, target) {
     document.querySelectorAll("#rosterStateToggleGroup .state-toggle-btn").forEach((b) => {
       b.classList.toggle("active", b.dataset.stateMode === "edited");
     });
+  }
+
+  // Dropped into Unassigned Drop Target (to unassign)
+  if (target.id === "unassignedDropTarget" || target.closest("#unassignedDropTarget")) {
+    let rowKeyToUnassign = "";
+    let staffKeyOrNameToUnassign = "";
+
+    if (data.type === "duty" && data.rowKey && data.sourceStaffKey) {
+      rowKeyToUnassign = data.rowKey;
+      staffKeyOrNameToUnassign = data.sourceStaffKey;
+    } else if (data.type === "staff_person" && data.sourceDutyRowKey) {
+      rowKeyToUnassign = data.sourceDutyRowKey;
+      staffKeyOrNameToUnassign = data.key || data.name;
+    }
+
+    if (rowKeyToUnassign && staffKeyOrNameToUnassign) {
+      removeStaffFromDutyRow(rowKeyToUnassign, staffKeyOrNameToUnassign);
+      updateUnassignedBadge();
+      setMessage(`Unassigned ${staffKeyOrNameToUnassign} from duty.`, "warn");
+    }
+    return;
   }
 
   if (data.type === "staff_person") {
@@ -3416,6 +3661,7 @@ function handleRosterDrop(data, target) {
       currentAutoPlan = null;
       autoPlannerResult.textContent = "Roster changed. Create a new plan to use the updated staffing.";
       requestAnimationFrame(() => renderRoster());
+      updateUnassignedBadge();
 
       let msgType = "success";
       let msgText = "";
@@ -3438,7 +3684,7 @@ function handleRosterDrop(data, target) {
       requestAnimationFrame(() => renderRoster());
       setMessage(`${personObj.name || candInitials} is already assigned to ${targetRow.flight} (${targetRow.sla}).`, "info");
     }
-  } else if (data.type === "duty") {
+  } else if (data.type === "duty" || data.type === "unassigned_duty") {
     if (!data.rowKey) return;
 
     const dutyRow = latestRows.find((r) => OperationsUtils.rowKey(r) === data.rowKey);
@@ -3484,6 +3730,7 @@ function handleRosterDrop(data, target) {
       currentAutoPlan = null;
       autoPlannerResult.textContent = "Roster changed. Create a new plan to use the updated staffing.";
       requestAnimationFrame(() => renderRoster());
+      updateUnassignedBadge();
 
       let msgType = "success";
       let msgText = "";
@@ -3510,6 +3757,177 @@ function handleRosterDrop(data, target) {
   }
 }
 
+function getUnassignedDuties(scope = "window") {
+  const sourceRows = getRosterSourceRows() || latestRows || [];
+  let filterDates = null;
+  if (scope === "window") {
+    if (rosterDate?.value && rosterEndDate?.value) {
+      filterDates = new Set();
+      const firstDay = new Date(`${rosterDate.value}T00:00:00Z`);
+      const lastDay = new Date(`${rosterEndDate.value}T00:00:00Z`);
+      if (!Number.isNaN(firstDay.getTime()) && !Number.isNaN(lastDay.getTime())) {
+        for (let day = new Date(firstDay); day <= lastDay; day = new Date(day.getTime() + 24 * 60 * 60 * 1000)) {
+          filterDates.add(day.toISOString().slice(0, 10));
+        }
+      }
+    }
+  }
+
+  const unassignedList = [];
+  const seenKeys = new Set();
+
+  for (const duty of sourceRows) {
+    if (!duty) continue;
+    const rKey = OperationsUtils.rowKey(duty);
+    if (seenKeys.has(rKey)) continue;
+    seenKeys.add(rKey);
+
+    const isoDate = OperationsUtils.normalizeDateToIso(duty.date);
+    if (filterDates && isoDate && !filterDates.has(isoDate)) continue;
+
+    const assignedCount = (duty.staff || []).length;
+    const requiredCount = Number(duty.required || 1);
+    const missingCount = Math.max(0, requiredCount - assignedCount);
+
+    if (missingCount > 0 || assignedCount === 0) {
+      unassignedList.push({
+        duty,
+        rowKey: rKey,
+        isoDate: isoDate || duty.date,
+        missingCount: missingCount || 1,
+        assignedCount,
+        requiredCount,
+      });
+    }
+  }
+
+  unassignedList.sort((a, b) => {
+    return (a.isoDate || "").localeCompare(b.isoDate || "") ||
+           (a.duty.start_utc || "").localeCompare(b.duty.start_utc || "") ||
+           (a.duty.flight || "").localeCompare(b.duty.flight || "");
+  });
+
+  return unassignedList;
+}
+
+function updateUnassignedBadge() {
+  const badge = document.getElementById("rosterUnassignedBadge");
+  if (!badge) return;
+  const scope = document.getElementById("unassignedDateScopeSelect")?.value || "window";
+  const unassigned = getUnassignedDuties(scope);
+  const totalMissing = unassigned.reduce((sum, item) => sum + item.missingCount, 0);
+  badge.textContent = String(totalMissing);
+  badge.classList.toggle("zero", totalMissing === 0);
+  badge.title = `${totalMissing} unassigned shift positions in ${scope === "all" ? "all scanned dates" : "current window"}`;
+  
+  const modal = document.getElementById("unassignedShiftsModal");
+  if (modal && !modal.hidden) {
+    renderUnassignedShiftsList();
+  }
+}
+
+function openUnassignedShiftsModal() {
+  const modal = document.getElementById("unassignedShiftsModal");
+  if (!modal) return;
+  modal.hidden = false;
+  modal.setAttribute("aria-hidden", "false");
+
+  const slaSelect = document.getElementById("unassignedSlaSelect");
+  if (slaSelect) {
+    const currentVal = slaSelect.value;
+    const slas = [...new Set((latestRows || []).map((r) => r.sla).filter(Boolean))].sort();
+    slaSelect.innerHTML = '<option value="ALL">All SLAs</option>' + slas.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join("");
+    if (slas.includes(currentVal)) slaSelect.value = currentVal;
+  }
+
+  renderUnassignedShiftsList();
+}
+
+function closeUnassignedShiftsModal() {
+  const modal = document.getElementById("unassignedShiftsModal");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function renderUnassignedShiftsList() {
+  const listEl = document.getElementById("unassignedDutiesList");
+  const countEl = document.getElementById("unassignedListCountText");
+  if (!listEl) return;
+
+  const scope = document.getElementById("unassignedDateScopeSelect")?.value || "window";
+  const selectedSla = document.getElementById("unassignedSlaSelect")?.value || "ALL";
+  const search = (document.getElementById("unassignedSearchInput")?.value || "").trim().toLowerCase();
+  const useLocal = rosterLocalTimeToggle?.checked;
+  const zoneLabel = useLocal ? "Local" : "Z";
+
+  let items = getUnassignedDuties(scope);
+
+  if (selectedSla !== "ALL") {
+    items = items.filter((item) => item.duty.sla === selectedSla);
+  }
+  if (search) {
+    items = items.filter((item) => {
+      const text = [item.duty.flight, item.duty.route, item.duty.sla, item.duty.date, item.isoDate].join(" ").toLowerCase();
+      return text.includes(search);
+    });
+  }
+
+  const totalGaps = items.reduce((sum, item) => sum + item.missingCount, 0);
+  if (countEl) {
+    countEl.textContent = `${items.length} unassigned ${items.length === 1 ? "duty" : "duties"} (${totalGaps} missing ${totalGaps === 1 ? "position" : "positions"})`;
+  }
+
+  if (!items.length) {
+    listEl.innerHTML = '<div class="empty-state" style="grid-column: 1 / -1; padding: 28px; text-align: center; color: var(--muted); background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px;">No unassigned shifts match the current filters. All duties are covered!</div>';
+    return;
+  }
+
+  listEl.innerHTML = items.map((item) => {
+    const duty = item.duty;
+    const rowKey = item.rowKey;
+    const startStr = getDisplayTime(duty.date, duty.start_utc, useLocal);
+    const releaseStr = getDisplayTime(duty.date, duty.release_utc, useLocal);
+    const airlineImg = OperationsUtils.getAirlineLogoImg(duty.flight, { size: 18, style: "margin-right:4px;" });
+
+    return `
+      <div class="unassigned-duty-card" draggable="true" data-unassigned-row-key="${escapeHtml(rowKey)}" data-flight="${escapeHtml(duty.flight)}" data-sla="${escapeHtml(duty.sla || '')}" data-date="${escapeHtml(duty.date)}" title="Drag this unassigned shift onto a staff row or day cell to assign">
+        <div class="unassigned-card-top">
+          <div class="unassigned-card-flight">
+            ${airlineImg}
+            <span>${escapeHtml(duty.flight)}</span>
+          </div>
+          <span class="unassigned-card-date">${escapeHtml(duty.date)}</span>
+        </div>
+        <div class="unassigned-card-meta">
+          <span class="unassigned-sla-pill">${escapeHtml(duty.sla || '—')}</span>
+          <span class="unassigned-time-range">${escapeHtml(startStr)}–${escapeHtml(releaseStr)} ${zoneLabel}</span>
+          ${duty.route ? `<span class="unassigned-route-text">· ${escapeHtml(duty.route)}</span>` : ''}
+        </div>
+        <div class="unassigned-card-bottom">
+          <span class="unassigned-missing-pill">${item.assignedCount}/${item.requiredCount} (${item.missingCount} missing)</span>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span class="unassigned-drag-handle" title="Drag to assign">⠿ Drag</span>
+            <button type="button" class="unassigned-quick-assign-btn" data-quick-assign-key="${escapeHtml(rowKey)}" title="Quick find candidate">Assign...</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  listEl.querySelectorAll(".unassigned-quick-assign-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const rKey = btn.dataset.quickAssignKey;
+      const dutyRow = (latestRows || []).find((r) => OperationsUtils.rowKey(r) === rKey);
+      if (dutyRow) {
+        closeUnassignedShiftsModal();
+        openRosterInlineReplacement(dutyRow, null);
+      }
+    });
+  });
+}
+
 function checkPersonHasOverlap(person) {
   if (!person) return false;
   const list = person.overlapping || person.assignments || [];
@@ -3528,6 +3946,8 @@ function filterRosterPeople(rows) {
     if (rosterStatus.value) {
       if (rosterStatus.value === "overlap" || rosterStatus.value === "overlaps") {
         if (!checkPersonHasOverlap(person)) return false;
+      } else if (rosterStatus.value === "vacation") {
+        if (!person.isGuessedVacation) return false;
       } else if (person.status !== rosterStatus.value) {
         return false;
       }
@@ -3588,7 +4008,7 @@ function renderRosterHoursOverview(people, windows) {
     const isComplete = actualHours >= targetHours;
 
     const statusClass = isComplete ? 'complete' : (pct >= 80 ? 'warning' : 'info');
-    const statusText = isComplete ? '✓ 100%' : `${pct}%`;
+    const statusText = isComplete ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-1px; margin-right:2px;"><polyline points="20 6 9 17 4 12"></polyline></svg>100%' : `${pct}%`;
 
     const contractPillHtml = `
       <span class="contract-pill-btn ${contractMeta.className}" style="cursor:default;" title="Contract defined in Directory: ${contractMeta.label} (${targetHours}h/mo, ${contractMeta.weeklyHours}h/wk)">
@@ -3847,6 +4267,7 @@ function calculateDayBreakMinutes(assignments, useLocal = false) {
 }
 
 function renderRosterDayCell(assignments, window, showTotal = false, person = null, isSingleDay = false) {
+  const reviewOnly = rosterStateMode === "changes";
   const useLocal = rosterLocalTimeToggle.checked;
   const dutyHours = showTotal ? formatHours(OperationsUtils.summarizeDutyHours(assignments, [window]).totalMinutes) : "";
   const breakMins = calculateDayBreakMinutes(assignments, useLocal);
@@ -3858,7 +4279,7 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
   const staffKeyAttr = person?.key ? ` data-staff-key="${escapeHtml(person.key)}"` : "";
   const dateAttr = window?.isoDate ? ` data-date="${escapeHtml(window.isoDate)}"` : "";
 
-  const canAssignMore = hasAssignableShiftForPersonOnDate(person?.key, window?.isoDate, assignments);
+  const canAssignMore = !reviewOnly && hasAssignableShiftForPersonOnDate(person?.key, window?.isoDate, assignments);
   const assignAddBtnHtml = canAssignMore
     ? `<button type="button" class="roster-assign-slot-btn add-more-btn" data-staff-key="${escapeHtml(person?.key || "")}" data-date="${escapeHtml(window?.isoDate || "")}" title="Assign another non-conflicting available shift during break to ${escapeHtml(person?.name || "staff member")}">
          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-right:2px; vertical-align:-1px;"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>
@@ -3868,7 +4289,33 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
 
   if (!assignments.length) {
     const isoDate = window?.isoDate;
-    const hasSlots = hasAvailableShiftsForDate(isoDate);
+    const personKey = String(person?.key || person?.initials || person?.name || "").trim().toUpperCase();
+
+    // Check if person has a logged absence on this date
+    const loggedAbsence = (activeAbsences || []).find((abs) => {
+      const absPersonKey = String(abs.person_key || abs.staff_key || "").trim().toUpperCase();
+      const absName = String(abs.person_name || "").trim().toUpperCase();
+      const matchesPerson = absPersonKey === personKey || (person?.name && absName === person.name.trim().toUpperCase());
+      return matchesPerson && abs.start_date <= isoDate && abs.end_date >= isoDate;
+    });
+
+    // Check if person has a detected/guessed vacation span covering this date
+    const guessedSpan = (person?.vacationSpans || []).find((span) => {
+      return span.startDate <= isoDate && span.endDate >= isoDate;
+    });
+
+    if (loggedAbsence) {
+      const category = loggedAbsence.category || loggedAbsence.absence_type || "Vacation";
+      const catNorm = category.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      const notesText = loggedAbsence.notes ? ` · ${escapeHtml(loggedAbsence.notes)}` : "";
+      return `<td class="roster-day-cell free-day vacation-day logged-absence category-${catNorm}"${staffKeyAttr}${dateAttr}><div class="roster-free-day-content">${showTotal ? '<span class="roster-day-total">0.0h</span>' : ""}<button type="button" class="roster-vacation-day-pill logged category-${catNorm}" data-absence-id="${escapeHtml(loggedAbsence.id || '')}" data-person-key="${escapeHtml(person?.key || '')}" title="Logged Absence: ${escapeHtml(category)} (${escapeHtml(loggedAbsence.start_date)} to ${escapeHtml(loggedAbsence.end_date)})${notesText}"><svg class="vacation-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg><span>${escapeHtml(category)}</span></button></div></td>`;
+    }
+
+    if (guessedSpan) {
+      return `<td class="roster-day-cell free-day vacation-day guessed-vacation"${staffKeyAttr}${dateAttr}><div class="roster-free-day-content">${showTotal ? '<span class="roster-day-total">0.0h</span>' : ""}<button type="button" class="roster-vacation-day-pill" data-person-key="${escapeHtml(person?.key || '')}" data-person-name="${escapeHtml(person?.name || '')}" data-vacation-start="${escapeHtml(guessedSpan.startDate || isoDate)}" data-vacation-end="${escapeHtml(guessedSpan.endDate || isoDate)}" data-vacation-days="${guessedSpan.days || 7}" title="Guessed Vacation (${guessedSpan.days} consecutive unallocated days: ${guessedSpan.startDate} to ${guessedSpan.endDate}). Click to record official absence."><svg class="vacation-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg><span>Vacation</span> <small class="vacation-span-days">(${guessedSpan.days}d)</small></button></div></td>`;
+    }
+
+    const hasSlots = !reviewOnly && hasAvailableShiftsForDate(isoDate);
     const assignBtnHtml = hasSlots
       ? `<button type="button" class="roster-assign-slot-btn" data-staff-key="${escapeHtml(person?.key || person?.initials || person?.name || "")}" data-date="${escapeHtml(isoDate || "")}" title="Assign available duty slot to ${escapeHtml(person?.name || "staff member")}">
            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-right:2px; vertical-align:-1px;"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>
@@ -3956,8 +4403,8 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
 
         prevEndMins = endMins;
         const breakTitle = breakGapMins > 0 ? ` · Break from prev duty: ${formatHours(breakGapMins)}h (${breakGapMins}m)` : "";
-        const overlapTitle = isOverlap ? "⚠️ OVERLAP CONFLICT: Shift overlaps with another duty assigned to this person! · " : "";
-        const overlapBadgeHtml = isOverlap ? ` <span class="overlap-badge" title="Overlap Collision with another assigned shift on this day">⚠️ OVERLAP</span>` : "";
+        const overlapTitle = isOverlap ? "OVERLAP CONFLICT: Shift overlaps with another duty assigned to this person! · " : "";
+        const overlapBadgeHtml = isOverlap ? ` <span class="overlap-badge" title="Overlap Collision with another assigned shift on this day"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>OVERLAP</span></span>` : "";
 
         elements.push(`
         <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}${isOverlap ? " duty-overlap" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""}${styleAttr} title="${overlapTitle}${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}${breakTitle}">
@@ -3965,8 +4412,8 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
           <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}${overlapBadgeHtml}</span>
           <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
           ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
-          ${person?.key ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
-          ${person?.key ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}
+          ${person?.key && !reviewOnly ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
+          ${person?.key && !reviewOnly ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}
         </button>`);
       });
 
@@ -3982,8 +4429,8 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
     const changeText = formatRosterChange(change);
     const rowKey = OperationsUtils.rowKey(row);
     const isOverlap = showVisuals && isRowOverlappingInAssignments(row, assignments);
-    const overlapTitle = isOverlap ? "⚠️ OVERLAP CONFLICT: Shift overlaps with another duty assigned to this person! · " : "";
-    const overlapBadgeHtml = isOverlap ? ` <span class="overlap-badge" title="Overlap Collision with another assigned shift on this day">⚠️ OVERLAP</span>` : "";
+    const overlapTitle = isOverlap ? "OVERLAP CONFLICT: Shift overlaps with another duty assigned to this person! · " : "";
+    const overlapBadgeHtml = isOverlap ? ` <span class="overlap-badge" title="Overlap Collision with another assigned shift on this day"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>OVERLAP</span></span>` : "";
 
     return `
     <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}${isOverlap ? " duty-overlap" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""} title="${overlapTitle}${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
@@ -3991,13 +4438,13 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
       <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}${overlapBadgeHtml}</span>
       <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
       ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
-      ${person?.key ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
-      ${person?.key ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}
+      ${person?.key && !reviewOnly ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
+      ${person?.key && !reviewOnly ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}
     </button>
   `;
   }).join("");
 
-  const dayTotalOverlapBadge = hasDayOverlap ? ` <span class="overlap-badge" title="Overlapping Duty Shifts Detected on this Day!">⚠️ OVERLAP</span>` : "";
+  const dayTotalOverlapBadge = hasDayOverlap ? ` <span class="overlap-badge" title="Overlapping Duty Shifts Detected on this Day!"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>OVERLAP</span></span>` : "";
   return `<td class="roster-day-cell${cellOverlapClass}"${staffKeyAttr}${dateAttr}>${showTotal ? `<span class="roster-day-total" title="Duty hours: ${dutyHours}h${breakMins > 0 ? ` · In-between break: ${formatHours(breakMins)}h` : ""}">${dutyHours}h${breakSubtext}${dayTotalOverlapBadge}</span>` : ""}<div class="duty-strip">${duties}</div>${assignAddBtnHtml}</td>`;
 }
 
@@ -4058,7 +4505,7 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
 
     const targetDuties = latestRows.filter((r) => r.date === duty.date && (r.staff || []).some((s) => isSameStaff(s, cand.key)));
     const hasOverlapConflict = cand.connectionGapMinutes < 0 || (targetDuties.length > 0 && isStaffOverlappingOnDate(cand.key, duty.date));
-    const overlapTag = hasOverlapConflict ? `<span class="overlap-badge" style="background:#fee2e2; border-color:#fca5a5; color:#991b1b; font-size:9px; font-weight:800; margin-left:6px;" title="Assigning this candidate creates an overlapping shift conflict!">⚠️ OVERLAP CONFLICT</span>` : "";
+    const overlapTag = hasOverlapConflict ? `<span class="overlap-badge" style="background:#fee2e2; border-color:#fca5a5; color:#991b1b; font-size:9px; font-weight:800; margin-left:6px;" title="Assigning this candidate creates an overlapping shift conflict!"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>OVERLAP CONFLICT</span></span>` : "";
 
     const slaExpText = cand.slaExperience ? ` · ${cand.slaExperience} ${duty.sla} duties prior` : "";
     const bestBadge = isBest ? `<span class="inline-candidate-badge-best">Best Match</span>` : "";
@@ -4092,8 +4539,9 @@ function openRosterInlineReplacement(duty, personToReplace = null) {
               return `
                 <span class="assigned-person-chip" style="display:inline-flex; align-items:center; gap:6px; background:#ffffff; border:1px solid #fca5a5; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:600; color:#7f1d1d;">
                   ${escapeHtml(displayName)}
-                  <button type="button" class="inline-remove-staff-btn danger-btn" data-remove-key="${escapeHtml(staffKey)}" data-remove-name="${escapeHtml(displayName)}" style="min-height:22px; padding:0 6px; font-size:10px; line-height:1; border-radius:4px;">
-                    ✕ Remove
+                  <button type="button" class="inline-remove-staff-btn danger-btn" data-remove-key="${escapeHtml(staffKey)}" data-remove-name="${escapeHtml(displayName)}" style="min-height:22px; padding:0 6px; font-size:10px; line-height:1; border-radius:4px; display:inline-flex; align-items:center; gap:3px;">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    <span>Remove</span>
                   </button>
                 </span>
               `;
@@ -4612,6 +5060,8 @@ function getPlannerOptions() {
     maxWorkingDaysPerWeek: Number(document.getElementById("plannerWeeklyDays").value) || 7,
     maxMonthlyHours: Number(document.getElementById("plannerMonthlyHours").value) || 0,
     availabilityRules: plannerAvailabilityRules,
+    absences: activeAbsences,
+    customRules: activeCustomRules,
     staffContracts: plannerStaffContracts,
     allowedSlas: [...plannerSlas.selectedOptions].map((option) => option.value),
     resolveConflictType: conflictModeEl ? conflictModeEl.value : "both",
@@ -4810,7 +5260,7 @@ function renderPlannerSlaOptions() {
 }
 
 function buildAutomaticPlan() {
-  if (rosterStateMode !== "edited") setRosterStateMode("edited");
+  useRosterStateForPlanning();
   const roster = getRosterRows();
   if (!roster) return setMessage("Choose a scanned roster date and time window before building a plan.", "warn");
   if (!selectedPlannerStaff.size) return setMessage("Select at least one eligible staff member for automatic planning.", "warn");
@@ -4820,7 +5270,7 @@ function buildAutomaticPlan() {
   if (autoPlannerCard && autoPlannerCard.classList.contains("collapsed")) {
     autoPlannerCard.classList.remove("collapsed");
     if (autoPlannerToggle) {
-      autoPlannerToggle.textContent = "Hide planner";
+      autoPlannerToggle.textContent = "Hide settings";
       autoPlannerToggle.setAttribute("aria-expanded", "true");
     }
     localStorage.setItem("gsrmAutoPlannerCollapsed", "false");
@@ -4838,6 +5288,7 @@ function buildAutomaticPlan() {
     for (let position = 1; position <= Number(row.missing || 0); position += 1) slots.push({ row, position, personKey: assignmentBySlot.get(`${OperationsUtils.rowKey(row)}|${position}`) || "" });
   }
   currentAutoPlan = { ...generated, slots };
+  updatePlannerActionState();
   renderAutomaticPlan();
   if (rosterViewMode === "airline") renderRoster();
   setMessage(`Automatic plan filled ${generated.assignments.length} of ${generated.requestedPositions} missing position(s).`);
@@ -4846,6 +5297,8 @@ function buildAutomaticPlan() {
 
 function clearAutomaticPlan() {
   currentAutoPlan = null;
+  currentAutoAdjustPlan = null;
+  updatePlannerActionState();
   autoPlannerResult.textContent = "Plan cleared. Select eligible staff, adjust the rules, then create a plan.";
   if (rosterViewMode === "airline") renderRoster();
 }
@@ -4866,7 +5319,7 @@ function openCoveragePlannerWorkspace() {
   const planner = rosterLayout.querySelector(".auto-planner");
   if (planner?.classList.contains("collapsed")) {
     planner.classList.remove("collapsed");
-    autoPlannerToggle.textContent = "Hide planner";
+    autoPlannerToggle.textContent = "Hide settings";
     autoPlannerToggle.setAttribute("aria-expanded", "true");
   }
   planner?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -4881,12 +5334,21 @@ function closeAvailabilityModal() {
 }
 
 function plannerViolationText(result) {
-  const labels = { staff: "unknown staff", availability: "outside staff availability", sla: "not eligible for this SLA", duplicate: "already assigned to this duty", overlap: "overlapping duties", buffer: "buffer too short", hours: "daily hours exceeded", span: "day span exceeded", break: "required break missing", weeklyHours: "weekly hours exceeded", weeklyDays: "weekly working days exceeded", monthlyHours: "monthly hours exceeded" };
+  const labels = { staff: "unknown staff", availability: "outside staff availability or absent", sla: "not eligible for this SLA", slaRestriction: "blocked by an SLA rule", duplicate: "already assigned to this duty", overlap: "overlapping duties", buffer: "buffer too short", hours: "daily hours exceeded", span: "day span exceeded", break: "required break missing", rest: "minimum rest period not met", maxDuties: "maximum duties per day exceeded", weeklyHours: "weekly hours exceeded", weeklyDays: "weekly working days exceeded", monthlyHours: "monthly hours exceeded" };
   return [...new Set(result.violations.flatMap((item) => item.codes || []).map((code) => labels[code] || code))].join(", ");
 }
 
 function applyPlanToRosterBoard() {
   if (!currentAutoPlan) return;
+  const proposed = currentAutoPlan.slots.filter((slot) => slot.personKey);
+  if (!proposed.length) return showToast("Assign at least one position before applying the plan.", { kind: "warn" });
+  const liveRows = new Map(latestRows.map((row) => [OperationsUtils.rowKey(row), row]));
+  if (proposed.some((slot) => !liveRows.has(OperationsUtils.rowKey(slot.row)))) {
+    return renderAutomaticPlan("The roster has changed. Build this plan again before applying it.");
+  }
+  const validation = OperationsUtils.validateAutoAssignments(latestRows, latestStaffDirectory,
+    proposed.map((slot) => ({ ...slot, row: liveRows.get(OperationsUtils.rowKey(slot.row)) })), getPlannerOptions());
+  if (!validation.valid) return renderAutomaticPlan(`Cannot apply this plan: ${plannerViolationText(validation)}.`);
 
   // Enforce single-day view for timeline grid display
   if (rosterDate.value && rosterEndDate.value !== rosterDate.value) {
@@ -4995,7 +5457,7 @@ function animateRosterTileMovements(renderCallback) {
 }
 
 function buildAutoAdjustPlan() {
-  if (rosterStateMode !== "edited") setRosterStateMode("edited");
+  useRosterStateForPlanning();
 
   // Enforce single-day view for timeline grid adjustment
   if (rosterDate.value && rosterEndDate.value !== rosterDate.value) {
@@ -5009,7 +5471,7 @@ function buildAutoAdjustPlan() {
   if (autoPlannerCard && autoPlannerCard.classList.contains("collapsed")) {
     autoPlannerCard.classList.remove("collapsed");
     if (autoPlannerToggle) {
-      autoPlannerToggle.textContent = "Hide planner";
+      autoPlannerToggle.textContent = "Hide settings";
       autoPlannerToggle.setAttribute("aria-expanded", "true");
     }
     localStorage.setItem("gsrmAutoPlannerCollapsed", "false");
@@ -5039,6 +5501,7 @@ function buildAutoAdjustPlan() {
 
 function renderAutoAdjustPlan() {
   if (!currentAutoAdjustPlan) return;
+  updatePlannerActionState();
   const { reassignments, resolvedViolationsCount, conflictType, minBreakMinutes } = currentAutoAdjustPlan;
   const conflictLabel = conflictType === "overlaps_only" 
     ? "Overlaps Only" 
@@ -5091,6 +5554,7 @@ function renderAutoAdjustPlan() {
   document.getElementById("applyAutoAdjustBtn")?.addEventListener("click", applyAutoAdjustToRoster);
   document.getElementById("clearAutoAdjustBtn")?.addEventListener("click", () => {
     currentAutoAdjustPlan = null;
+    updatePlannerActionState();
     autoPlannerResult.textContent = "Adjustments dismissed.";
   });
 }
@@ -5108,6 +5572,7 @@ function applyAutoAdjustToRoster() {
 
   const count = currentAutoAdjustPlan.reassignments.length;
   currentAutoAdjustPlan = null;
+  updatePlannerActionState();
 
   setRosterStateMode("edited");
   setRosterViewMode("staff", false);
@@ -5124,6 +5589,7 @@ function applyAutoAdjustToRoster() {
 
 function renderAutomaticPlan(errorText = "") {
   if (!currentAutoPlan) return;
+  updatePlannerActionState();
   const people = getPlannerPeople().filter((person) => selectedPlannerStaff.has(person.key));
   const assignedSlots = currentAutoPlan.slots.filter((slot) => slot.personKey);
   const assignedCount = assignedSlots.length;
@@ -5235,7 +5701,7 @@ if (localStorage.getItem("gsrmAutoPlannerCollapsed") !== "false") {
   const autoPlanner = autoPlannerToggle.closest(".auto-planner");
   if (autoPlanner && !autoPlanner.classList.contains("collapsed")) {
     autoPlanner.classList.add("collapsed");
-    autoPlannerToggle.textContent = "Show planner";
+    autoPlannerToggle.textContent = "Show settings";
     autoPlannerToggle.setAttribute("aria-expanded", "false");
   }
 }
@@ -5348,7 +5814,6 @@ function showCandidatesForDuty(duty) {
     const candName = identity.name;
 
     if (matchStaffMember(candStr, initials)) return;
-
     const shifts = latestRows.filter(row => {
       return row.staff && row.staff.some(s => parseStaffIdentity(s)?.key === identity.key);
     });
@@ -5722,7 +6187,14 @@ function openGapPlanner(row) {
   gapActionNotes.value = action.notes;
   renderGapValidationState(action);
   gapPlannerTitle.textContent = `${row.date} · ${row.flight} · ${row.sla}`;
-  const assigned = (row.staff || []).map((label) => parseStaffIdentity(label)?.name || label).join(", ") || "None";
+  const assigned = (row.staff || []).map((label) => {
+    const detail = (row.staff_details || []).find((d) => isSameStaff(d.name, label));
+    const base = parseStaffIdentity(label)?.name || label;
+    if (detail && detail.is_shorter) {
+      return `${base} (${detail.start_utc}–${detail.release_utc}, ${detail.duration})`;
+    }
+    return base;
+  }).join(", ") || "None";
   const personalFit = getPersonalGapFit(row);
   const personalSummary = personalFit.identity
     ? `<div class="personal-opportunity-summary ${personalFit.state}"><span>Fit for ${escapeHtml(personalFit.identity.name)}</span><strong>${personalFit.state === "eligible" ? `Conflict-free · Match ${escapeHtml(personalFit.candidate.score)}/10` : personalFit.state === "assigned" ? "Already assigned to this duty" : "Not recommended with the current scanned duties"}</strong></div>`
@@ -8169,9 +8641,21 @@ async function initBackendSync() {
     }
 
     if (histRes.status === "fulfilled" && histRes.value) {
-      const remoteHistory = Array.isArray(histRes.value.history) ? histRes.value.history : (Array.isArray(histRes.value) ? histRes.value : null);
+      const remoteHistory = Array.isArray(histRes.value?.history) ? histRes.value.history : (Array.isArray(histRes.value) ? histRes.value : []);
+      const localHistory = getScanHistory();
+
+      // Sync local history up to backend if missing on backend
+      for (const item of localHistory) {
+        if (item && item.id && !remoteHistory.some((r) => r.id === item.id)) {
+          fetch("/api/history", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ snapshot: item }),
+          }).catch(() => {});
+        }
+      }
+
       if (Array.isArray(remoteHistory) && remoteHistory.length > 0) {
-        const localHistory = getScanHistory();
         const historyMap = new Map();
         for (const item of localHistory) {
           if (item && item.id) historyMap.set(item.id, item);
@@ -8194,6 +8678,7 @@ async function initBackendSync() {
       }
     }
     syncMasterStaffDirectory();
+    if (typeof fetchMonthlyRosters === "function") fetchMonthlyRosters();
   } catch (err) {
     console.warn("Backend sync initialization warning:", err);
   }
@@ -8232,6 +8717,12 @@ function restoreSnapshot(snapshot) {
   applySnapshotConfig(snapshot);
   latestRows = snapshot.rows;
   originalRows = JSON.parse(JSON.stringify(snapshot.rows));
+  scanSourceMeta = {
+    state: "restored",
+    at: snapshot.createdAt,
+    detail: `${(snapshot.scannedDates || []).length} saved date${(snapshot.scannedDates || []).length === 1 ? "" : "s"} · no AVBIS request`,
+  };
+  setRosterStateMode("original");
   latestScannedDates = snapshot.scannedDates || [];
   latestStaffDirectory = snapshot.staffDirectory || [];
   if (snapshot.actions) localStorage.setItem(ACTIONS_KEY, JSON.stringify({ ...getGapActions(), ...snapshot.actions }));
@@ -8312,6 +8803,494 @@ function renderHistory() {
   dateCount.textContent = String((history[0].scannedDates || []).length);
   updateExportButtonsState();
   opsCsvBtn.disabled = !latestRows.some((row) => Number(row.missing || 0) > 0);
+  renderMonthlyRostersCards("historyMonthlyRostersGrid");
+}
+
+function updateMergeModeUI() {
+  const mode = document.querySelector('input[name="mergeModeOption"]:checked')?.value || "snapshots";
+  const snapBox = document.getElementById("mergeSnapshotsSelection");
+  const rangeBox = document.getElementById("mergeRangeSelection");
+  if (snapBox && rangeBox) {
+    if (mode === "snapshots") {
+      snapBox.style.opacity = "1";
+      snapBox.style.pointerEvents = "auto";
+      rangeBox.classList.add("is-disabled");
+    } else {
+      snapBox.style.opacity = "0.4";
+      snapBox.style.pointerEvents = "none";
+      rangeBox.classList.remove("is-disabled");
+    }
+  }
+}
+
+// ==========================================================================
+// Monthly Master Rosters & Merge Scans Management
+// ==========================================================================
+
+let savedMonthlyRosters = [];
+let activeMonthlyModalTab = "rosters";
+
+async function fetchMonthlyRosters() {
+  try {
+    const res = await fetch("/api/roster/months");
+    if (!res.ok) return;
+    const data = await res.json();
+    savedMonthlyRosters = Array.isArray(data.months) ? data.months : [];
+    updateMonthlyRostersUI();
+  } catch (err) {
+    console.warn("Could not fetch monthly rosters:", err);
+  }
+}
+
+function updateMonthlyRostersUI() {
+  // Update header badge
+  const headerBadge = document.getElementById("monthlyRosterHeaderBadge");
+  if (headerBadge) {
+    if (savedMonthlyRosters.length > 0) {
+      const latest = savedMonthlyRosters[0];
+      headerBadge.textContent = `${latest.monthKey}: ${latest.scannedDaysCount}/${latest.totalDays}d`;
+      headerBadge.hidden = false;
+    } else {
+      headerBadge.hidden = true;
+    }
+  }
+
+  // Update quick load select in roster toolbar
+  const monthSelect = document.getElementById("rosterMonthSelect");
+  if (monthSelect) {
+    const prevVal = monthSelect.value;
+    monthSelect.innerHTML = '<option value="">Load Monthly Master...</option>' +
+      savedMonthlyRosters.map((m) => {
+        const pct = m.coveragePercent || 0;
+        return `<option value="${escapeHtml(m.monthKey)}">${escapeHtml(m.monthKey)} (${m.scannedDaysCount}/${m.totalDays}d · ${pct}%)</option>`;
+      }).join("");
+    if (prevVal && savedMonthlyRosters.some((m) => m.monthKey === prevVal)) {
+      monthSelect.value = prevVal;
+    }
+  }
+
+  // Render cards in history layout
+  renderMonthlyRostersCards("historyMonthlyRostersGrid");
+  // Render cards in modal
+  renderMonthlyRostersCards("monthlyModalGrid");
+  // Update changelog month filter & list
+  renderMonthlyChangelog();
+}
+
+function renderMonthlyRostersCards(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  if (savedMonthlyRosters.length === 0) {
+    container.innerHTML = '<div class="empty-monthly-rosters">No monthly rosters saved yet. Run a scan to automatically create and update monthly master rosters.</div>';
+    return;
+  }
+
+  container.innerHTML = savedMonthlyRosters.map((m) => {
+    const isComplete = m.scannedDaysCount >= m.totalDays;
+    const statusClass = isComplete ? "complete" : "partial";
+    const statusText = isComplete ? "100% Complete" : `${m.coveragePercent}% Scanned`;
+    const updatedStr = m.updatedAt ? new Date(m.updatedAt).toLocaleString() : "Unknown";
+
+    return `
+      <div class="monthly-roster-card" data-month-key="${escapeHtml(m.monthKey)}">
+        <div class="monthly-card-head">
+          <h4 class="monthly-card-title">${escapeHtml(m.monthKey)}</h4>
+          <span class="monthly-card-status-pill ${statusClass}">${escapeHtml(statusText)}</span>
+        </div>
+        <div class="monthly-card-progress-wrap">
+          <div class="monthly-card-progress-labels">
+            <span>Coverage</span>
+            <span>${m.scannedDaysCount} of ${m.totalDays} days</span>
+          </div>
+          <div class="monthly-card-progress-bar">
+            <div class="monthly-card-progress-fill ${isComplete ? "" : "partial"}" style="width: ${m.coveragePercent || 0}%"></div>
+          </div>
+        </div>
+        <div class="monthly-card-metrics">
+          <div class="monthly-card-metric">
+            <strong>${m.flightsCount || 0}</strong>
+            <span>Flights</span>
+          </div>
+          <div class="monthly-card-metric">
+            <strong>${m.gapsCount || 0}</strong>
+            <span>Gaps</span>
+          </div>
+          <div class="monthly-card-metric">
+            <strong>${m.staffCount || (m.staffDirectory || []).length || 0}</strong>
+            <span>Staff</span>
+          </div>
+        </div>
+        <div class="monthly-card-meta">
+          <span>Updated: ${escapeHtml(updatedStr)}</span>
+        </div>
+        <div class="monthly-card-actions">
+          <button type="button" class="primary-btn" data-action="load-month">Load</button>
+          ${!isComplete ? `<button type="button" class="secondary-btn" data-action="scan-missing" title="Scan remaining missing dates">Scan Missing</button>` : ""}
+          <button type="button" class="secondary-btn" data-action="view-changes" title="View scan change history">Changes</button>
+          <button type="button" class="secondary-btn" data-action="export-month" title="Export monthly master JSON">Export</button>
+          <button type="button" class="secondary-btn danger-btn" data-action="delete-month" title="Delete this saved month">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  for (const card of container.querySelectorAll(".monthly-roster-card")) {
+    const monthKey = card.dataset.monthKey;
+    card.querySelector('[data-action="load-month"]')?.addEventListener("click", () => loadMonthlyRoster(monthKey));
+    card.querySelector('[data-action="scan-missing"]')?.addEventListener("click", () => scanMissingMonthDates(monthKey));
+    card.querySelector('[data-action="view-changes"]')?.addEventListener("click", () => {
+      openMonthlyRostersModal("changelog");
+      const sel = document.getElementById("changelogMonthFilter");
+      if (sel) {
+        sel.value = monthKey;
+        renderMonthlyChangelog(monthKey);
+      }
+    });
+    card.querySelector('[data-action="export-month"]')?.addEventListener("click", () => exportMonthlyRoster(monthKey));
+    card.querySelector('[data-action="delete-month"]')?.addEventListener("click", () => deleteSavedMonthlyRoster(monthKey));
+  }
+}
+
+async function loadMonthlyRoster(monthKey) {
+  if (!monthKey) return;
+  try {
+    setMessage(`Loading ${monthKey} Monthly Master Roster...`);
+    const res = await fetch(`/api/roster/month?month=${encodeURIComponent(monthKey)}`);
+    if (!res.ok) throw new Error(`Could not load monthly roster for ${monthKey}`);
+    const data = await res.json();
+
+    latestRows = data.rows || [];
+    originalRows = JSON.parse(JSON.stringify(data.rows || []));
+    latestScannedDates = data.scannedDates || [];
+    latestStaffDirectory = data.staffDirectory || [];
+
+    scanSourceMeta = {
+      state: "loaded",
+      at: new Date(data.updatedAt || Date.now()),
+      detail: `Monthly Master ${monthKey} (${data.scannedDaysCount}/${data.totalDays} days · ${data.flightsCount} flights · no AVBIS request)`,
+    };
+    setRosterStateMode("original");
+
+    if (latestScannedDates.length > 0) {
+      const sorted = [...latestScannedDates].sort();
+      rosterDate.value = sorted[0];
+      rosterEndDate.value = sorted[sorted.length - 1];
+    }
+
+    flightCount.textContent = String(data.flightsCount || 0);
+    dateCount.textContent = String(latestScannedDates.length);
+
+    syncMasterStaffDirectory(data.staffDirectory, data.rows, data.scannedDates);
+    updateStaffOptions();
+    updateResultsSlaFilter();
+    updateRosterFilters();
+    applyFilters();
+
+    closeMonthlyRostersModal();
+    if (activeTab === "gaps" || activeTab === "roster") {
+      applyFilters();
+    } else {
+      switchTab("roster");
+    }
+
+    showToast(`Loaded ${monthKey} Master Roster (${data.scannedDaysCount}/${data.totalDays} days · ${data.flightsCount} flights · ${data.gapsCount} gaps).`, { kind: "success", duration: 5000 });
+    setMessage(`Loaded ${monthKey} Monthly Master Roster. No AVBIS request was made.`, "success");
+  } catch (err) {
+    showToast(err.message || String(err), { kind: "warn" });
+    setMessage(`Error loading monthly roster: ${err.message || String(err)}`, "warn");
+  }
+}
+
+async function scanMissingMonthDates(monthKey) {
+  if (!monthKey) return;
+  try {
+    const res = await fetch(`/api/roster/month?month=${encodeURIComponent(monthKey)}`);
+    if (!res.ok) throw new Error(`Could not inspect month ${monthKey}`);
+    const data = await res.json();
+    const summary = OperationsUtils.summarizeMonthRoster(data.rows, data.scannedDates, monthKey);
+
+    if (summary.missingDates.length === 0) {
+      showToast(`${monthKey} is already 100% scanned! (${summary.daysInMonth}/${summary.daysInMonth} days)`, { kind: "info" });
+      return;
+    }
+
+    const firstMissing = summary.missingDates[0];
+    const lastMissing = summary.missingDates[summary.missingDates.length - 1];
+
+    scanStartDate.value = firstMissing;
+    scanEndDate.value = lastMissing;
+    for (const input of scanDayInputs) input.checked = true;
+
+    scanPeriodMode.value = "custom";
+    scanMonthField.hidden = true;
+    renderHolidayPreview();
+
+    setSetupCollapsed(false);
+    closeMonthlyRostersModal();
+
+    showToast(`Set scan range to missing dates: ${firstMissing} → ${lastMissing} (${summary.missingDates.length} days missing). Click 'Scan' to run.`, { kind: "info", duration: 7000 });
+    setMessage(`Ready to scan ${summary.missingDates.length} missing date(s) for ${monthKey}.`);
+  } catch (err) {
+    showToast(err.message || String(err), { kind: "warn" });
+  }
+}
+
+async function deleteSavedMonthlyRoster(monthKey) {
+  if (!monthKey) return;
+  if (!confirm(`Are you sure you want to delete the saved monthly master roster for ${monthKey}?`)) return;
+  try {
+    const res = await fetch(`/api/roster/month?month=${encodeURIComponent(monthKey)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`Could not delete month ${monthKey}`);
+    await fetchMonthlyRosters();
+    showToast(`Deleted monthly roster ${monthKey}.`, { kind: "info" });
+  } catch (err) {
+    showToast(err.message || String(err), { kind: "warn" });
+  }
+}
+
+async function exportMonthlyRoster(monthKey) {
+  if (!monthKey) return;
+  try {
+    const res = await fetch(`/api/roster/month?month=${encodeURIComponent(monthKey)}`);
+    if (!res.ok) throw new Error(`Could not fetch month ${monthKey}`);
+    const data = await res.json();
+    downloadBlob(`gsrm-monthly-roster-${monthKey}.json`, JSON.stringify(data, null, 2), "application/json;charset=utf-8");
+    showToast(`Exported monthly master roster for ${monthKey}.`, { kind: "success" });
+  } catch (err) {
+    showToast(err.message || String(err), { kind: "warn" });
+  }
+}
+
+function renderMonthlyChangelog(filterMonth = "all") {
+  const container = document.getElementById("monthlyChangelogTimeline");
+  const monthFilterSelect = document.getElementById("changelogMonthFilter");
+  if (!container) return;
+
+  if (monthFilterSelect) {
+    const currentVal = monthFilterSelect.value;
+    monthFilterSelect.innerHTML = '<option value="all">All Months</option>' +
+      savedMonthlyRosters.map((m) => `<option value="${escapeHtml(m.monthKey)}">${escapeHtml(m.monthKey)}</option>`).join("");
+    if (currentVal && (currentVal === "all" || savedMonthlyRosters.some((m) => m.monthKey === currentVal))) {
+      monthFilterSelect.value = currentVal;
+    }
+  }
+
+  const allChanges = [];
+  for (const m of savedMonthlyRosters) {
+    if (filterMonth !== "all" && m.monthKey !== filterMonth) continue;
+    for (const ch of m.changes || []) {
+      allChanges.push({ ...ch, monthKey: m.monthKey });
+    }
+  }
+
+  allChanges.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+  if (allChanges.length === 0) {
+    container.innerHTML = '<div class="empty-changelog">No changes recorded yet. Scans automatically track additions, modifications, and resolved gaps.</div>';
+    return;
+  }
+
+  container.innerHTML = allChanges.map((ch) => {
+    const dateStr = ch.timestamp ? new Date(ch.timestamp).toLocaleString() : "";
+    const hasChanges = ch.hasChanges !== false;
+    const chips = [];
+    if (ch.addedFlightsCount) chips.push(`<span class="changelog-chip added">+${ch.addedFlightsCount} flight(s)</span>`);
+    if (ch.removedFlightsCount) chips.push(`<span class="changelog-chip removed">-${ch.removedFlightsCount} flight(s)</span>`);
+    if (ch.newGapsCount) chips.push(`<span class="changelog-chip new-gap">${ch.newGapsCount} new gap(s)</span>`);
+    if (ch.resolvedGapsCount) chips.push(`<span class="changelog-chip resolved-gap">${ch.resolvedGapsCount} gap(s) resolved</span>`);
+    if (ch.staffReassignmentsCount) chips.push(`<span class="changelog-chip staff">${ch.staffReassignmentsCount} staff changed</span>`);
+
+    return `
+      <div class="changelog-item ${hasChanges ? "" : "has-no-changes"}">
+        <div class="changelog-item-head">
+          <strong>${escapeHtml(ch.monthKey)} Scan Update</strong>
+          <span>${escapeHtml(dateStr)}</span>
+        </div>
+        <div class="changelog-summary-text">${escapeHtml(ch.summary || "Scan updated")}</div>
+        ${chips.length ? `<div class="changelog-chips-row">${chips.join("")}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+}
+
+function renderMergeSnapshotsList() {
+  const list = document.getElementById("mergeSnapshotsList");
+  if (!list) return;
+  const history = getScanHistory();
+  if (history.length === 0) {
+    list.innerHTML = '<span class="muted">No scan snapshots saved in history yet.</span>';
+    return;
+  }
+  list.innerHTML = history.map((snap) => {
+    const dateStr = new Date(snap.createdAt).toLocaleDateString();
+    return `
+      <label class="merge-snapshot-item">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" name="mergeSnapshotCheckbox" value="${escapeHtml(snap.id)}">
+          <strong>${escapeHtml(snap.startDate)} → ${escapeHtml(snap.endDate)}</strong>
+        </div>
+        <span>${snap.flights || 0} flights · ${snap.gaps?.length || 0} gaps · ${dateStr}</span>
+      </label>
+    `;
+  }).join("");
+}
+
+async function executeMergeScans() {
+  const mergeMode = document.querySelector('input[name="mergeModeOption"]:checked')?.value || "snapshots";
+  const hintEl = document.getElementById("mergeResultHint");
+
+  try {
+    if (hintEl) hintEl.textContent = "Merging scans...";
+
+    let bodyPayload = {};
+    const localHistory = getScanHistory();
+    let localSelectedScans = [];
+
+    if (mergeMode === "snapshots") {
+      const selectedIds = Array.from(document.querySelectorAll('input[name="mergeSnapshotCheckbox"]:checked')).map((el) => el.value);
+      if (selectedIds.length === 0) {
+        showToast("Please select at least one scan snapshot to merge.", { kind: "warn" });
+        if (hintEl) hintEl.textContent = "";
+        return;
+      }
+      localSelectedScans = localHistory.filter((item) => selectedIds.includes(item.id));
+      bodyPayload = { scanIds: selectedIds, scans: localSelectedScans };
+    } else {
+      const start = document.getElementById("mergeRangeStartDate")?.value;
+      const end = document.getElementById("mergeRangeEndDate")?.value;
+      if (!start || !end) {
+        showToast("Please select both From Date and To Date for range merge.", { kind: "warn" });
+        if (hintEl) hintEl.textContent = "";
+        return;
+      }
+      bodyPayload = { startDate: start, endDate: end, scans: localHistory };
+    }
+
+    let merged = null;
+    try {
+      const res = await fetch("/api/roster/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bodyPayload),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        merged = json.data;
+      }
+    } catch (netErr) {
+      console.warn("Backend merge request failed, using client-side merge fallback:", netErr);
+    }
+
+    // Client-side fallback if backend returned empty or was unreachable
+    if ((!merged || ((merged.rows?.length || 0) === 0 && (merged.scannedDates?.length || 0) === 0)) && localHistory.length > 0) {
+      if (mergeMode === "snapshots" && localSelectedScans.length > 0) {
+        merged = OperationsUtils.mergeScans(localSelectedScans);
+      } else if (mergeMode === "range" && bodyPayload.startDate && bodyPayload.endDate) {
+        const filteredScans = localHistory.filter((snap) => {
+          const snapStart = snap.startDate || (snap.scannedDates && snap.scannedDates[0]);
+          const snapEnd = snap.endDate || (snap.scannedDates && snap.scannedDates[snap.scannedDates.length - 1]);
+          return snapStart && snapEnd && snapStart <= bodyPayload.endDate && snapEnd >= bodyPayload.startDate;
+        });
+        if (filteredScans.length > 0) {
+          const fullMerged = OperationsUtils.mergeScans(filteredScans);
+          const rangeRows = (fullMerged.rows || []).filter((r) => {
+            const iso = OperationsUtils.normalizeDateToIso(r.date);
+            return iso >= bodyPayload.startDate && iso <= bodyPayload.endDate;
+          });
+          const rangeDates = (fullMerged.scannedDates || []).filter((d) => d >= bodyPayload.startDate && d <= bodyPayload.endDate);
+          merged = {
+            ...fullMerged,
+            rows: rangeRows,
+            scannedDates: rangeDates,
+            flightsCount: new Set(rangeRows.map((r) => `${r.date}|${r.flight || r.flight_id}`)).size,
+            gapsCount: rangeRows.filter((r) => Number(r.missing || 0) > 0).length,
+          };
+        }
+      }
+    }
+
+    if (!merged || !Array.isArray(merged.rows)) throw new Error("Invalid merge response received.");
+
+    latestRows = merged.rows;
+    originalRows = JSON.parse(JSON.stringify(merged.rows));
+    latestScannedDates = merged.scannedDates || [];
+    latestStaffDirectory = merged.staffDirectory || [];
+
+    scanSourceMeta = {
+      state: "loaded",
+      at: new Date(),
+      detail: `Merged Dataset (${latestScannedDates.length} date${latestScannedDates.length === 1 ? "" : "s"} · ${merged.flightsCount || 0} flights)`,
+    };
+    setRosterStateMode("original");
+
+    if (latestScannedDates.length > 0) {
+      rosterDate.value = latestScannedDates[0];
+      rosterEndDate.value = latestScannedDates[latestScannedDates.length - 1];
+    }
+
+    flightCount.textContent = String(merged.flightsCount || 0);
+    dateCount.textContent = String(latestScannedDates.length);
+
+    syncMasterStaffDirectory(merged.staffDirectory, merged.rows, merged.scannedDates);
+    updateStaffOptions();
+    updateResultsSlaFilter();
+    updateRosterFilters();
+    applyFilters();
+
+    closeMonthlyRostersModal();
+    if (activeTab === "gaps" || activeTab === "roster") {
+      applyFilters();
+    } else {
+      switchTab("roster");
+    }
+
+    showToast(`Successfully merged: ${latestScannedDates.length} dates, ${merged.flightsCount || 0} flights, ${merged.gapsCount || 0} gaps loaded.`, { kind: "success", duration: 6000 });
+    setMessage(`Merged scan dataset loaded into workspace.`, "success");
+    if (hintEl) hintEl.textContent = "";
+  } catch (err) {
+    if (hintEl) hintEl.textContent = `Merge failed: ${err.message}`;
+    showToast(err.message || String(err), { kind: "warn" });
+  }
+}
+
+function openMonthlyRostersModal(defaultTab = "rosters") {
+  const modal = document.getElementById("monthlyRosterModal");
+  if (!modal) return;
+  modal.hidden = false;
+  modal.setAttribute("aria-hidden", "false");
+  switchMonthlyModalTab(defaultTab);
+  fetchMonthlyRosters();
+  renderMergeSnapshotsList();
+}
+
+function closeMonthlyRostersModal() {
+  const modal = document.getElementById("monthlyRosterModal");
+  if (!modal) return;
+  modal.hidden = true;
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function switchMonthlyModalTab(tabName) {
+  activeMonthlyModalTab = tabName;
+  const tabRosters = document.getElementById("monthlyModalTabRosters");
+  const tabMerge = document.getElementById("monthlyModalTabMerge");
+  const tabChangelog = document.getElementById("monthlyModalTabChangelog");
+
+  const viewRosters = document.getElementById("monthlyModalRostersView");
+  const viewMerge = document.getElementById("monthlyModalMergeView");
+  const viewChangelog = document.getElementById("monthlyModalChangelogView");
+
+  if (tabRosters) tabRosters.classList.toggle("active", tabName === "rosters");
+  if (tabMerge) tabMerge.classList.toggle("active", tabName === "merge");
+  if (tabChangelog) tabChangelog.classList.toggle("active", tabName === "changelog");
+
+  if (viewRosters) viewRosters.hidden = tabName !== "rosters";
+  if (viewMerge) viewMerge.hidden = tabName !== "merge";
+  if (viewChangelog) viewChangelog.hidden = tabName !== "changelog";
+
+  if (tabName === "merge") renderMergeSnapshotsList();
+  if (tabName === "changelog") renderMonthlyChangelog();
 }
 
 function snapshotDisplayStaffCount(snapshot) {
@@ -8951,12 +9930,6 @@ function navigateToRosterFromCard(card) {
     personModal.hidden = true;
     personModal.setAttribute("aria-hidden", "true");
   }
-  const historyModal = document.getElementById("historyCompareModal");
-  if (historyModal) {
-    historyModal.hidden = true;
-    historyModal.setAttribute("aria-hidden", "true");
-  }
-
   // Switch to main Roster tab
   switchTab("roster");
 
@@ -9529,8 +10502,8 @@ function renderPersonChangesContent(filterMode = "all") {
         </div>
         <div>
           ${!tracked
-            ? `<span class="audit-warning-pill" title="Tracking paused for this staff member">⚠️ Tracking Paused</span>`
-            : `<span class="audit-active-pill" title="Tracking active">✓ Tracking Active</span>`}
+            ? `<span class="audit-warning-pill" title="Tracking paused for this staff member" style="display:inline-flex; align-items:center; gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>Tracking Paused</span></span>`
+            : `<span class="audit-active-pill" title="Tracking active" style="display:inline-flex; align-items:center; gap:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg><span>Tracking Active</span></span>`}
         </div>
       </div>
     `;
@@ -9552,7 +10525,7 @@ function renderPersonChangesContent(filterMode = "all") {
 
   // 2. Tracking Warning Banner if Paused
   if (!tracked && !isAll) {
-    html += `<div style="background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:8px 12px; border-radius:8px; font-size:11px; font-weight:600;">ℹ️ Roster change tracking is currently paused for <strong>${escapeHtml(targetName)}</strong>. Check "Track roster changes" above to resume tracking.</div>`;
+    html += `<div style="display:flex; align-items:center; gap:8px; background:#fffbeb; border:1px solid #fde68a; color:#92400e; padding:8px 12px; border-radius:8px; font-size:11px; font-weight:600;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg><span>Roster change tracking is currently paused for <strong>${escapeHtml(targetName)}</strong>. Check "Track roster changes" above to resume tracking.</span></div>`;
   }
 
   // 3. Stat Dashboard Cards Grid
@@ -9696,7 +10669,6 @@ function renderPersonChangesContent(filterMode = "all") {
 
 function attachPersonChangesModalListeners() {
   const closeBtn = document.getElementById("personChangesCloseBtn");
-  const backdrop = document.getElementById("personChangesBackdrop");
   const modal = document.getElementById("personChangesModal");
 
   const closeModal = () => {
@@ -9910,33 +10882,21 @@ function attachAddShiftModalListeners() {
   const closeBtn = document.getElementById("addShiftCloseBtn");
   if (!modal) return;
 
-  if (closeBtn) {
-    closeBtn.addEventListener("click", () => {
-      modal.hidden = true;
-      modal.setAttribute("aria-hidden", "true");
-    });
-  }
+  const closeModal = () => {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  };
+
+  if (closeBtn) closeBtn.addEventListener("click", closeModal);
+  modal.querySelector("[data-close-add-shift]")?.addEventListener("click", closeModal);
 
   modal.addEventListener("click", (e) => {
-    if (e.target === modal) {
-      modal.hidden = true;
-      modal.setAttribute("aria-hidden", "true");
-    }
+    if (e.target === modal) closeModal();
   });
 
-  const exportEditedBtn = document.getElementById("exportEditedRosterBtn");
-  if (exportEditedBtn) {
-    exportEditedBtn.addEventListener("click", () => {
-      downloadRosterCsv("edited");
-    });
-  }
-
-  const exportOriginalBtn = document.getElementById("exportOriginalRosterBtn");
-  if (exportOriginalBtn) {
-    exportOriginalBtn.addEventListener("click", () => {
-      downloadRosterCsv("original");
-    });
-  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !modal.hidden) closeModal();
+  });
 }
 
 let currentSwapperState = {
@@ -10145,11 +11105,11 @@ function updateSwapperValidation() {
       (result.staffA?.violations || []).includes("overlap") ||
       (result.staffB?.violations || []).includes("overlap");
     if (badge) {
-      badge.textContent = isOverlapConflict ? "⚠️ OVERLAP COLLISION" : "Conflict Detected";
+      badge.innerHTML = isOverlapConflict ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px; vertical-align:-1px;" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>OVERLAP COLLISION' : "Conflict Detected";
       badge.className = isOverlapConflict ? "validation-status-pill pill-invalid" : "validation-status-pill pill-invalid";
     }
     if (text) {
-      const msgStr = result.messages.map((m) => m.replace(/overlap/gi, "⚠️ OVERLAP COLLISION")).join(" • ");
+      const msgStr = result.messages.map((m) => m.replace(/overlap/gi, "OVERLAP COLLISION")).join(" • ");
       text.textContent = `Schedule conflict: ${msgStr}`;
     }
     if (confirmBtn) {
@@ -10160,8 +11120,8 @@ function updateSwapperValidation() {
 
   if (metricsBox) {
     metricsBox.hidden = false;
-    const aOverlap = (result.staffA?.violations || []).includes("overlap") ? ` <span class="overlap-badge">⚠️ OVERLAP</span>` : "";
-    const bOverlap = (result.staffB?.violations || []).includes("overlap") ? ` <span class="overlap-badge">⚠️ OVERLAP</span>` : "";
+    const aOverlap = (result.staffA?.violations || []).includes("overlap") ? ` <span class="overlap-badge"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>OVERLAP</span></span>` : "";
+    const bOverlap = (result.staffB?.violations || []).includes("overlap") ? ` <span class="overlap-badge"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>OVERLAP</span></span>` : "";
 
     if (staffAName) staffAName.innerHTML = `${escapeHtml(sourceStaff.name)} (After)${aOverlap}`;
     if (staffAStats) {
@@ -10437,11 +11397,11 @@ function calculateScanGapDiff(previousRows, currentRows) {
 }
 
 function isUserActivelyEditing() {
-  const coveragePlannerModal = document.getElementById("coveragePlannerModal");
-  const availModal = document.getElementById("availabilityModal");
-  const swapperModal = document.getElementById("shiftSwapperModal");
-  const isModalOpen = (el) => el && !el.hidden && el.getAttribute("aria-hidden") !== "true";
-  return isModalOpen(coveragePlannerModal) || isModalOpen(availModal) || isModalOpen(swapperModal);
+  const openModal = document.querySelector(".modal-overlay:not([hidden])");
+  const gapPlannerOpen = gapPlanner && !gapPlanner.hidden;
+  const plannerHasDraft = Boolean(currentAutoPlan || currentAutoAdjustPlan);
+  const plannerFocused = Boolean(document.activeElement?.closest?.(".auto-planner"));
+  return Boolean(openModal || gapPlannerOpen || plannerHasDraft || plannerFocused);
 }
 
 function isWithinActiveHours() {
@@ -10872,17 +11832,24 @@ async function handleSaveScenario() {
   const title = (nameInput?.value || "Untitled Scenario").trim();
   const strategy = strategySelect?.value || "balanced_coverage";
 
-  const windows = typeof OperationsUtils.operationalPeriod === "function" ? OperationsUtils.operationalPeriod(latestRows) : [];
-  const selectedStaffKeys = typeof getPlannerSelectedKeys === "function" ? getPlannerSelectedKeys() : [];
-  const plan = typeof OperationsUtils.buildAutoPlan === "function"
-    ? OperationsUtils.buildAutoPlan(latestRows, latestStaffDirectory, selectedStaffKeys, windows, {
-        strategy,
-        customRules: activeCustomRules,
-        absences: activeAbsences,
-      })
-    : null;
-
-  const assignments = plan?.assignments || [];
+  const roster = getRosterRows();
+  if (!roster) return showToast("Choose a scanned roster period before creating a scenario.", { kind: "warn" });
+  if (!selectedPlannerStaff.size) return showToast("Select eligible staff in the Coverage Planner first.", { kind: "warn" });
+  const plannerOptions = { ...getPlannerOptions(), strategy };
+  const plan = OperationsUtils.buildAutoPlan(latestRows, latestStaffDirectory, [...selectedPlannerStaff], roster.dailyWindows, plannerOptions);
+  const assignments = plan.assignments.map((assignment) => ({
+    rowKey: OperationsUtils.rowKey(assignment.row),
+    row: assignment.row,
+    position: assignment.position,
+    personKey: assignment.person.key,
+    candidateLabel: formatStaffLabel(assignment.person),
+  })).concat(plan.unfilled.map((assignment) => ({
+    rowKey: OperationsUtils.rowKey(assignment.row),
+    row: assignment.row,
+    position: assignment.position,
+    personKey: "",
+    candidateLabel: "",
+  })));
   const metrics = typeof OperationsUtils.evaluateScenarioMetrics === "function"
     ? OperationsUtils.evaluateScenarioMetrics(latestRows, assignments, latestStaffDirectory)
     : {};
@@ -10892,8 +11859,9 @@ async function handleSaveScenario() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title,
+        name: title,
         strategy,
+        options: { selectedStaffKeys: [...selectedPlannerStaff], plannerOptions },
         metrics,
         assignments,
       }),
@@ -10920,7 +11888,7 @@ function renderScenarioComparisonGrid() {
     return `
       <div class="scenario-card ${sc.id === currentScenario?.id ? "active-scenario" : ""}">
         <div class="scenario-card-head">
-          <strong>${escapeHtml(sc.title)}</strong>
+          <strong>${escapeHtml(sc.title || sc.name || "Alternative Plan")}</strong>
           <span class="badge strategy-badge">${escapeHtml(sc.strategy || "balanced")}</span>
         </div>
         <div class="scenario-card-metrics">
@@ -10932,26 +11900,40 @@ function renderScenarioComparisonGrid() {
           <span>Total Duty: <b>${m.totalDutyHours ?? 0}h</b></span>
         </div>
         <div class="scenario-card-actions" style="display:flex; gap:6px; margin-top:6px;">
-          <button type="button" class="primary-btn" onclick="applyScenarioToRoster(${sc.id})" style="flex:1; padding:4px 8px; font-size:11px;">Apply to Roster</button>
-          <button type="button" class="danger-btn" onclick="deleteScenarioById(${sc.id})" style="padding:4px 8px; font-size:11px;">Delete</button>
+          <button type="button" class="primary-btn" data-scenario-action="load" data-scenario-id="${escapeHtml(sc.id)}" style="flex:1; padding:4px 8px; font-size:11px;">Load in Planner</button>
+          <button type="button" class="danger-btn" data-scenario-action="delete" data-scenario-id="${escapeHtml(sc.id)}" style="padding:4px 8px; font-size:11px;">Delete</button>
         </div>
       </div>
     `;
   }).join("");
+  for (const button of grid.querySelectorAll("button[data-scenario-action]")) {
+    button.addEventListener("click", () => {
+      if (button.dataset.scenarioAction === "load") applyScenarioToRoster(button.dataset.scenarioId);
+      else deleteScenarioById(button.dataset.scenarioId);
+    });
+  }
 }
 
 async function applyScenarioToRoster(id) {
   const sc = activeScenarios.find((s) => s.id === id);
   if (!sc) return;
   currentScenario = sc;
-  if (Array.isArray(sc.assignments)) {
-    if (typeof setPlannerAssignments === "function") {
-      setPlannerAssignments(sc.assignments);
-    }
+  const assignmentsBySlot = new Map((sc.assignments || []).map((assignment) => [`${assignment.rowKey}|${assignment.position}`, assignment.personKey]));
+  const slots = (sc.assignments || []).map((assignment) => ({
+    row: latestRows.find((row) => OperationsUtils.rowKey(row) === (assignment.rowKey || OperationsUtils.rowKey(assignment.row || {}))),
+    position: assignment.position || 1,
+    personKey: assignmentsBySlot.get(`${assignment.rowKey}|${assignment.position || 1}`) || assignment.personKey || "",
+  })).filter((slot) => slot.row);
+  if (!slots.length || slots.length !== (sc.assignments || []).length) {
+    return showToast("This scenario does not match the current roster. Generate a new scenario for the scanned dates.", { kind: "warn" });
   }
+  selectedPlannerStaff = new Set([...(sc.options?.selectedStaffKeys || []), ...slots.map((slot) => slot.personKey).filter(Boolean)]);
+  renderPlannerStaffList();
+  currentAutoPlan = { slots, assignments: sc.assignments || [], strategy: sc.strategy, scenarioId: sc.id };
   closeScenarioModal();
-  if (typeof showToast === "function") showToast(`Applied scenario "${sc.title}" to active roster!`, "success");
-  if (typeof applyFilters === "function") applyFilters();
+  openCoveragePlannerWorkspace();
+  renderAutomaticPlan();
+  showToast(`Loaded "${sc.title || sc.name}" for review. Use Add to edited roster when ready.`, { kind: "success" });
 }
 
 async function deleteScenarioById(id) {
@@ -10983,11 +11965,37 @@ async function fetchAbsences() {
   }
 }
 
-function openAbsenceModal() {
+function openAbsenceModal(prefill = null) {
   const modal = document.getElementById("absenceModal");
   if (modal) {
     modal.hidden = false;
     modal.setAttribute("aria-hidden", "false");
+    if (prefill) {
+      const staffInput = document.getElementById("absenceStaffSearch");
+      const categorySelect = document.getElementById("absenceCategorySelect");
+      const startInput = document.getElementById("absenceStartDate");
+      const endInput = document.getElementById("absenceEndDate");
+      const notesInput = document.getElementById("absenceNotes");
+      if (staffInput && (prefill.name || prefill.key)) {
+        staffInput.value = prefill.name ? `${prefill.name} (${prefill.key || prefill.initials || ""})` : prefill.key;
+      }
+      if (categorySelect && prefill.category) {
+        categorySelect.value = prefill.category;
+      }
+      if (startInput && prefill.startDate) {
+        startInput.value = prefill.startDate;
+      }
+      if (endInput && prefill.endDate) {
+        endInput.value = prefill.endDate;
+      }
+      if (notesInput) {
+        if (prefill.notes) {
+          notesInput.value = prefill.notes;
+        } else if (prefill.days) {
+          notesInput.value = `Auto-suggested from unallocated streak of ${prefill.days} days`;
+        }
+      }
+    }
     fetchAbsences();
   }
 }
@@ -11013,6 +12021,9 @@ async function handleSaveAbsence(e) {
   const personKey = identity?.key || personName.toUpperCase();
 
   if (!personKey || !startInput?.value) return;
+  if (endInput.value && endInput.value < startInput.value) {
+    return showToast("The absence end date must be on or after its start date.", { kind: "warn" });
+  }
 
   try {
     const res = await fetch("/api/absences", {
@@ -11021,7 +12032,7 @@ async function handleSaveAbsence(e) {
       body: JSON.stringify({
         person_key: personKey,
         person_name: identity?.name || personName,
-        absence_type: categorySelect?.value || "Vacation",
+        category: categorySelect?.value || "Vacation",
         start_date: startInput.value,
         end_date: endInput.value || startInput.value,
         notes: notesInput?.value || "",
@@ -11031,7 +12042,10 @@ async function handleSaveAbsence(e) {
       if (typeof showToast === "function") showToast(`Logged absence for ${personName}`, "success");
       staffInput.value = "";
       notesInput.value = "";
-      fetchAbsences();
+      const saved = await res.json().catch(() => ({}));
+      await fetchAbsences();
+      const savedAbsence = activeAbsences.find((absence) => absence.id === saved?.data?.id) || saved?.data;
+      if (savedAbsence) renderAbsenceImpact(savedAbsence);
       if (typeof applyFilters === "function") applyFilters();
     }
   } catch (err) {
@@ -11050,12 +12064,43 @@ function renderAbsenceRecordsList() {
   list.innerHTML = activeAbsences.map((abs) => `
     <div class="absence-item">
       <div class="absence-item-info">
-        <strong>${escapeHtml(abs.person_name || abs.person_key)} <span class="absence-tag">${escapeHtml(abs.absence_type)}</span></strong>
+        <strong>${escapeHtml(abs.person_name || abs.person_key)} <span class="absence-tag absence-tag-${String(abs.category || abs.absence_type || 'default').toLowerCase().replace(/[^a-z0-9]+/g, '-')}">${escapeHtml(abs.category || abs.absence_type || "Absence")}</span></strong>
         <span>${abs.start_date} to ${abs.end_date} ${abs.notes ? `(${escapeHtml(abs.notes)})` : ''}</span>
       </div>
-      <button type="button" class="danger-btn" onclick="deleteAbsenceById(${abs.id})" style="padding:3px 8px; font-size:11px;">Delete</button>
+      <div class="absence-item-actions">
+        <button type="button" class="secondary-btn" data-absence-action="impact" data-absence-id="${escapeHtml(abs.id)}">Review impact</button>
+        <button type="button" class="danger-btn" data-absence-action="delete" data-absence-id="${escapeHtml(abs.id)}">Delete</button>
+      </div>
     </div>
   `).join("");
+  for (const button of list.querySelectorAll("button[data-absence-action]")) {
+    button.addEventListener("click", () => {
+      const absence = activeAbsences.find((item) => item.id === button.dataset.absenceId);
+      if (button.dataset.absenceAction === "impact") renderAbsenceImpact(absence);
+      else deleteAbsenceById(button.dataset.absenceId);
+    });
+  }
+}
+
+function renderAbsenceImpact(absence) {
+  const container = document.getElementById("absenceImpactContainer");
+  if (!container || !absence) return;
+  const personKey = String(absence.person_key || "").toUpperCase();
+  const affected = latestRows.filter((row) => (row.staff || []).some((label) => parseStaffIdentity(label)?.key === personKey)
+    && !OperationsUtils.isAvailableForDuty(personKey, row, [], [absence]));
+  if (!affected.length) {
+    container.innerHTML = '<div class="empty-state">No scanned duties are affected by this absence.</div>';
+    return;
+  }
+  container.innerHTML = affected.map((row) => {
+    const candidates = OperationsUtils.rankCandidates(row, latestRows, latestStaffDirectory, { excludedKey: personKey })
+      .filter((person) => OperationsUtils.isAvailableForDuty(person.key, row, plannerAvailabilityRules, activeAbsences))
+      .slice(0, 3);
+    return `<div class="absence-impact-card">
+      <div><strong>${escapeHtml(row.date)} · ${escapeHtml(row.flight)} · ${escapeHtml(row.sla)}</strong><span>${escapeHtml(row.start_utc)}–${escapeHtml(row.release_utc)} UTC</span></div>
+      <div class="absence-impact-candidates">${candidates.length ? candidates.map((person) => `<span>${escapeHtml(person.initials)} — ${escapeHtml(person.name)}</span>`).join("") : '<span class="muted">No conflict-free candidate found in this scan.</span>'}</div>
+    </div>`;
+  }).join("");
 }
 
 async function deleteAbsenceById(id) {
@@ -11101,6 +12146,22 @@ function closeRuleBuilderModal() {
   }
 }
 
+function updateRuleParameterUi() {
+  const type = document.getElementById("ruleTypeSelect")?.value || "MIN_REST_HOURS";
+  const input = document.getElementById("ruleParamValueInput");
+  const label = document.getElementById("ruleParamLabel");
+  if (!input || !label) return;
+  const config = {
+    MIN_REST_HOURS: ["Minimum rest hours", "11", "11"],
+    MAX_DUTIES_PER_DAY: ["Maximum duties per day", "2", "2"],
+    STAFF_SLA_RESTRICTION: ["Prohibited SLA codes", "GATE, CKIN", ""],
+    CONTRACT_HOURS: ["Maximum weekly hours", "20", "20"],
+  }[type];
+  label.textContent = config[0];
+  input.placeholder = config[1];
+  input.value = config[2];
+}
+
 async function handleSaveRule(e) {
   e.preventDefault();
   const titleInput = document.getElementById("ruleTitleInput");
@@ -11112,18 +12173,25 @@ async function handleSaveRule(e) {
   const ruleType = typeSelect?.value || "MIN_REST_HOURS";
   const target = targetSelect?.value || "GLOBAL";
   const val = paramValueInput?.value || "";
+  if (ruleType === "STAFF_SLA_RESTRICTION" ? !val.trim() : !Number.isFinite(Number(val)) || Number(val) <= 0) {
+    return showToast("Enter a positive limit or at least one SLA code.", { kind: "warn" });
+  }
 
   let parameters = {};
   if (ruleType === "MIN_REST_HOURS") parameters = { minRestHours: Number(val) || 11 };
   else if (ruleType === "MAX_DUTIES_PER_DAY") parameters = { maxDuties: Number(val) || 2 };
-  else if (ruleType === "STAFF_SLA_RESTRICTION") parameters = { prohibitedSlas: val.split(",").map((s) => s.trim()).filter(Boolean) };
+  else if (ruleType === "STAFF_SLA_RESTRICTION") parameters = { prohibitedSlas: val.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean) };
+  else if (ruleType === "CONTRACT_HOURS") {
+    const maxWeeklyHours = Number(val) || 20;
+    parameters = { maxWeeklyHours, maxMonthlyHours: maxWeeklyHours * 4 };
+  }
 
   try {
     const res = await fetch("/api/rules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title,
+        name: title,
         rule_type: ruleType,
         target,
         parameters,
@@ -11152,12 +12220,26 @@ function renderActiveRulesList() {
   list.innerHTML = activeCustomRules.map((rule) => `
     <div class="rule-item">
       <div class="rule-item-info">
-        <strong>${escapeHtml(rule.title)} <span class="badge">${escapeHtml(rule.rule_type)}</span></strong>
+        <strong>${escapeHtml(rule.title || rule.name || "Custom Rule")} <span class="badge">${escapeHtml(rule.rule_type)}</span></strong>
         <span>Target: ${escapeHtml(rule.target)} | Params: ${escapeHtml(JSON.stringify(rule.parameters))}</span>
       </div>
-      <button type="button" class="danger-btn" onclick="deleteRuleById(${rule.id})" style="padding:3px 8px; font-size:11px;">Delete</button>
+      <div class="absence-item-actions"><button type="button" class="secondary-btn" data-toggle-rule-id="${escapeHtml(rule.id)}" aria-pressed="${Boolean(rule.enabled)}">${rule.enabled ? "Pause rule" : "Enable rule"}</button>
+      <button type="button" class="danger-btn" data-custom-rule-id="${escapeHtml(rule.id)}" style="padding:3px 8px; font-size:11px;">Delete</button></div>
     </div>
   `).join("");
+  for (const button of list.querySelectorAll("button[data-custom-rule-id]")) button.addEventListener("click", () => deleteRuleById(button.dataset.customRuleId));
+  for (const button of list.querySelectorAll("button[data-toggle-rule-id]")) button.addEventListener("click", async () => {
+    const rule = activeCustomRules.find((item) => item.id === button.dataset.toggleRuleId);
+    if (!rule) return;
+    button.disabled = true;
+    try {
+      const response = await fetch("/api/rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...rule, enabled: !rule.enabled }) });
+      if (!response.ok) throw new Error("Could not update the rule. Please try again.");
+      await fetchCustomRules();
+      showToast(rule.enabled ? "Rule paused." : "Rule enabled.", { kind: "success" });
+    } catch (error) { showToast(error.message, { kind: "error" }); }
+    finally { button.disabled = false; }
+  });
 }
 
 async function deleteRuleById(id) {
@@ -11199,6 +12281,7 @@ function handleDownloadIcs() {
   const staffName = staffInput?.value || "";
   const identity = StaffUtils?.parseStaffIdentity(staffName);
   const staffKey = scope === "individual" ? (identity?.key || staffName) : "";
+  if (scope === "individual" && !staffKey.trim()) return showToast("Select a staff member before exporting.", { kind: "warn" });
 
   const content = typeof OperationsUtils.generateIcsCalendar === "function"
     ? OperationsUtils.generateIcsCalendar(latestRows, {
@@ -11207,12 +12290,14 @@ function handleDownloadIcs() {
         title: titleInput?.value || "GSRM Station Duty Roster",
       })
     : "";
+  if (!content.includes("BEGIN:VEVENT")) return showToast("No assigned duties match this calendar export.", { kind: "warn" });
 
   const blob = new Blob([content], { type: "text/calendar;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = staffKey ? `schedule_${staffKey.toLowerCase()}.ics` : "station_roster.ics";
+  const safeStaffKey = staffKey.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  a.download = staffKey ? `schedule_${safeStaffKey || "staff"}.ics` : "station_roster.ics";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -11243,7 +12328,7 @@ function closeHandoverModal() {
 function updateHandoverPreview() {
   const notesText = document.getElementById("handoverSupervisorNotes")?.value || "";
   const warnings = typeof OperationsUtils.buildWarnings === "function" ? OperationsUtils.buildWarnings(latestRows, latestStaffDirectory) : [];
-  const gapNotes = typeof currentGapNotes !== "undefined" ? currentGapNotes : {};
+  const gapNotes = getGapActions();
 
   const summary = typeof OperationsUtils.generateHandoverSummary === "function"
     ? OperationsUtils.generateHandoverSummary(latestRows, gapNotes, warnings, activeAbsences, notesText)
@@ -11270,11 +12355,11 @@ function updateHandoverPreview() {
         ${summary.customNotes ? `<p style="margin-bottom:10px;"><b>Supervisor Notes:</b><br>${escapeHtml(summary.customNotes)}</p>` : ''}
         ${summary.unresolvedGaps && summary.unresolvedGaps.length ? `
           <h5 style="margin:8px 0 4px; color:#dc2626;">Unresolved Gaps (${summary.unresolvedGaps.length}):</h5>
-          <ul style="margin:0; padding-left:18px; color:#991b1b;">${summary.unresolvedGaps.map(g => `<li>${g.row.date} ${g.row.start_utc}–${g.row.release_utc} | Flight ${g.row.flight} (${g.row.sla})</li>`).join("")}</ul>
+          <ul style="margin:0; padding-left:18px; color:#991b1b;">${summary.unresolvedGaps.map(g => `<li>${escapeHtml(g.row.date)} ${escapeHtml(g.row.start_utc)}–${escapeHtml(g.row.release_utc)} | Flight ${escapeHtml(g.row.flight)} (${escapeHtml(g.row.sla)})</li>`).join("")}</ul>
         ` : '<p style="color:#16a34a; margin:4px 0;"><b>No unresolved gaps.</b></p>'}
         ${summary.activeAbsences && summary.activeAbsences.length ? `
           <h5 style="margin:10px 0 4px; color:#d97706;">Active Staff Absences (${summary.activeAbsences.length}):</h5>
-          <ul style="margin:0; padding-left:18px;">${summary.activeAbsences.map(a => `<li>${escapeHtml(a.person_name || a.person_key)}: ${escapeHtml(a.absence_type)} (${a.start_date} to ${a.end_date})</li>`).join("")}</ul>
+          <ul style="margin:0; padding-left:18px;">${summary.activeAbsences.map(a => `<li>${escapeHtml(a.person_name || a.person_key)}: ${escapeHtml(a.category || a.absence_type || "Absence")} (${escapeHtml(a.start_date)} to ${escapeHtml(a.end_date)})</li>`).join("")}</ul>
         ` : ''}
       </div>
     `;
@@ -11291,6 +12376,8 @@ function handleCopyHandoverSummary() {
 }
 
 function handlePrintHandoverReport() {
+  document.body.classList.add("printing-handover");
+  window.addEventListener("afterprint", () => document.body.classList.remove("printing-handover"), { once: true });
   window.print();
 }
 
@@ -11323,6 +12410,8 @@ function initRosterManagementFeatures() {
   document.getElementById("ruleBuilderModalCloseBtn")?.addEventListener("click", closeRuleBuilderModal);
   document.getElementById("ruleBuilderModalDoneBtn")?.addEventListener("click", closeRuleBuilderModal);
   document.getElementById("ruleBuilderForm")?.addEventListener("submit", handleSaveRule);
+  document.getElementById("ruleTypeSelect")?.addEventListener("change", updateRuleParameterUi);
+  updateRuleParameterUi();
 
   const ruleModalOverlay = document.getElementById("ruleBuilderModal");
   if (ruleModalOverlay) {

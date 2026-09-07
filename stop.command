@@ -12,11 +12,11 @@ echo ""
 # Find and kill the server process
 PID=$(pgrep -f "empty-slots-site/server.js")
 if [ -n "$PID" ]; then
-  echo "🛑 Stopping server process (PID $PID)..."
+  echo "[INFO] Stopping server process (PID $PID)..."
   kill $PID
-  echo "✅ Server stopped successfully."
+  echo "[OK] Server stopped successfully."
 else
-  echo "ℹ️ No running GSRM server process was found."
+  echo "[INFO] No running GSRM server process was found."
 fi
 
 echo "This window will close in 3 seconds..."

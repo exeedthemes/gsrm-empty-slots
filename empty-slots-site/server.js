@@ -26,6 +26,29 @@ const scanProgress = new Map();
 const dateScanCache = new Map();
 const flightSodCache = new Map();
 
+async function launchBrowser(options = {}) {
+  if (process.platform === "win32") {
+    try {
+      // The standalone Windows build does not bundle Playwright's large Chromium
+      // download. Microsoft Edge is present on supported Windows installations.
+      return await chromium.launch({ ...options, channel: "msedge" });
+    } catch (edgeError) {
+      try {
+        return await chromium.launch(options);
+      } catch (chromiumError) {
+        const error = new Error(
+          "Could not start a browser. Install or repair Microsoft Edge, then restart GSRM Empty Slots."
+        );
+        error.cause = chromiumError;
+        error.edgeError = edgeError;
+        throw error;
+      }
+    }
+  }
+
+  return chromium.launch(options);
+}
+
 // In-memory cache for handling airport IDs
 const airportCache = new Map();
 
@@ -140,10 +163,13 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname === "/api/history") {
       const payload = await readJson(req);
+      const snapshot = payload?.snapshot || (payload && payload.id ? payload : null);
       if (Array.isArray(payload)) {
         db.saveScanHistory(payload);
-      } else if (payload && payload.id) {
-        db.saveScanItem(payload);
+      } else if (Array.isArray(payload?.history)) {
+        db.saveScanHistory(payload.history);
+      } else if (snapshot && snapshot.id) {
+        db.saveScanItem(snapshot);
       }
       sendJson(res, 200, { success: true });
       return;
@@ -247,12 +273,85 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // --- Monthly Rosters API Routes ---
+    if (req.method === "GET" && pathname === "/api/roster/months") {
+      const includeRows = urlObj.searchParams.get("includeRows") === "1" || urlObj.searchParams.get("includeRows") === "true";
+      sendJson(res, 200, { months: db.getAllMonthlyRosters(null, includeRows) });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/api/roster/month") {
+      const month = urlObj.searchParams.get("month");
+      if (!month) throw new Error("Month parameter required (e.g. ?month=YYYY-MM)");
+      const roster = db.getMonthlyRoster(month);
+      if (!roster) {
+        sendJson(res, 404, { error: `No saved monthly roster found for ${month}` });
+        return;
+      }
+      sendJson(res, 200, roster);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/roster/month") {
+      const payload = await readJson(req);
+      const saved = db.saveMonthlyRoster(payload);
+      sendJson(res, 200, { success: true, data: saved });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/roster/merge") {
+      const payload = await readJson(req);
+      const OperationsUtils = require("./public/operations-utils");
+
+      if (Array.isArray(payload.scanIds) && payload.scanIds.length > 0) {
+        let selectedScans = [];
+        const history = db.getScanHistory();
+        if (history.length > 0) {
+          selectedScans = history.filter((item) => payload.scanIds.includes(item.id));
+        }
+
+        // If some or all selected scans were missing from DB, enrich from payload.scans
+        if (Array.isArray(payload.scans) && payload.scans.length > 0) {
+          for (const s of payload.scans) {
+            if (payload.scanIds.includes(s.id)) {
+              if (!selectedScans.some((x) => x.id === s.id)) {
+                selectedScans.push(s);
+              }
+              try { db.saveScanItem(s); } catch {}
+            }
+          }
+        }
+
+        const merged = OperationsUtils.mergeScans(selectedScans);
+        sendJson(res, 200, { success: true, data: merged });
+        return;
+      } else if (payload.startDate && payload.endDate) {
+        if (Array.isArray(payload.scans) && payload.scans.length > 0) {
+          for (const s of payload.scans) {
+            try { db.saveScanItem(s); } catch {}
+          }
+        }
+        const merged = db.mergeCustomDateRange(payload.startDate, payload.endDate);
+        sendJson(res, 200, { success: true, data: merged });
+        return;
+      }
+      throw new Error("Invalid merge payload. Provide scanIds or startDate and endDate.");
+    }
+
+    if (req.method === "DELETE" && pathname.startsWith("/api/roster/month")) {
+      const month = urlObj.searchParams.get("month");
+      if (!month) throw new Error("Month parameter required for deletion.");
+      sendJson(res, 200, db.deleteMonthlyRoster(month));
+      return;
+    }
+
     if (pathname.startsWith("/api/")) {
       const knownApiPaths = [
         "/api/connect", "/api/cancel", "/api/extract", "/api/airlines",
         "/api/progress", "/api/session", "/api/notes", "/api/availability",
         "/api/history", "/api/cache/stats", "/api/cache/clear",
-        "/api/absences", "/api/rules", "/api/scenarios", "/api/export/roster-pdf"
+        "/api/absences", "/api/rules", "/api/scenarios", "/api/export/roster-pdf",
+        "/api/roster/months", "/api/roster/month", "/api/roster/merge"
       ];
       const isKnownApi = knownApiPaths.some((p) => pathname === p || pathname.startsWith(p + "?") || pathname.startsWith(p + "/"));
       if (isKnownApi) {
@@ -275,7 +374,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     const body = await fs.readFile(filePath);
-    res.writeHead(200, { "Content-Type": MIME[path.extname(filePath)] || "application/octet-stream" });
+    res.writeHead(200, {
+      "Content-Type": MIME[path.extname(filePath)] || "application/octet-stream",
+      // This is a local app whose HTML, CSS, and JavaScript are updated together.
+      // Revalidate assets so a restart cannot leave the UI using mismatched files.
+      "Cache-Control": "no-cache",
+    });
     res.end(body);
   } catch (error) {
     const status = error.code === "ENOENT" ? 404 : 500;
@@ -285,7 +389,7 @@ const server = http.createServer(async (req, res) => {
 
 if (require.main === module) {
   process.on("uncaughtException", (err) => {
-    console.error("\n❌ FATAL ERROR:", err?.stack || err);
+    console.error("\n[FATAL ERROR]:", err?.stack || err);
     if (process.platform === "win32") {
       console.log("\nPress Enter to exit...");
       try {
@@ -307,10 +411,19 @@ if (require.main === module) {
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
       const url = `http://localhost:${PORT}`;
-      console.log(`\n⚠️ Port ${PORT} is already in use. Opening browser at ${url}...`);
-      openBrowserOnce(url);
+      const checkReq = http.get(url, () => {
+        console.log(`\n[WARN] Port ${PORT} is already in use by an active server. Opening browser at ${url}...`);
+        openBrowserOnce(url);
+      });
+      checkReq.on("error", () => {
+        console.error(`\n[ERROR] Port ${PORT} is occupied by an unresponsive process. Please stop old instances using stop.command.`);
+      });
+      checkReq.setTimeout(2000, () => {
+        checkReq.destroy();
+        console.error(`\n[ERROR] Port ${PORT} is occupied by an unresponsive process. Please stop old instances using stop.command.`);
+      });
     } else {
-      console.error("\n❌ Server Error:", err);
+      console.error("\n[ERROR] Server Error:", err);
     }
   });
 
@@ -452,6 +565,52 @@ async function extractEmptySlots(payload) {
       },
       cancelled,
     };
+
+    if (!cancelled && (completedDates.length > 0 || rows.length > 0)) {
+      try {
+        const scanSnapshot = {
+          id: scanId,
+          createdAt: new Date().toISOString(),
+          startDate: config.startDate,
+          endDate: config.endDate,
+          scannedDates: completedDates,
+          incompleteDates,
+          flights: Number(scannedFlights || 0),
+          staffCount: (staffDirectory || []).length,
+          errors: (errors || []).length,
+          cancelled: Boolean(cancelled),
+          gaps: (rows || []).filter((r) => Number(r.missing || 0) > 0),
+          rows: rows || [],
+          staffDirectory: [...staffDirectory].sort(),
+          airlines: [...airlines].sort(),
+          slas: [...slas].sort(),
+          config,
+        };
+        db.saveScanItem(scanSnapshot);
+      } catch (err) {
+        console.warn(`[${scanId}] Could not save scan snapshot to db:`, err);
+      }
+
+      try {
+        const monthlyUpdates = db.updateMonthlyRosterWithScan(response, config);
+        response.monthlyUpdates = (monthlyUpdates || []).map((u) => ({
+          monthKey: u.monthKey,
+          summary: u.summary,
+          hasChanges: u.hasChanges,
+          diff: u.diff,
+          stats: {
+            totalDays: u.monthRecord?.totalDays,
+            scannedDaysCount: u.monthRecord?.scannedDaysCount,
+            coveragePercent: u.monthRecord?.coveragePercent,
+            flightsCount: u.monthRecord?.flightsCount,
+            gapsCount: u.monthRecord?.gapsCount,
+          },
+        }));
+      } catch (err) {
+        console.warn(`[${scanId}] Could not auto-update monthly roster:`, err);
+      }
+    }
+
     if (cancelled) cancelScanProgress(scanId, response);
     else finishScanProgress(scanId, response);
     return response;
@@ -641,7 +800,7 @@ async function verifyAuthenticatedSession(session) {
 async function createAuthenticatedSession(sessionKey, email, password) {
   await closeAuthSession();
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchBrowser({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -822,6 +981,9 @@ async function extractFlightSodRows(context, flight, avbisDate, periodStart, per
         release_utc: group.release,
         duration: group.duration,
         staff: group.staff,
+        staff_details: group.staff_details || [],
+        has_shorter_assignment: Boolean(group.has_shorter_assignment),
+        shorter_staff_count: Number(group.shorter_staff_count || 0),
       }));
 
     return { rows, errors: [], slas, staffDirectory };
@@ -1355,36 +1517,159 @@ function extractFlightLinks(html) {
 }
 
 function parseSodGroups(html, flightDate) {
-  const rows = extractTableRows(html);
+  const tables = String(html).match(/<table\b[\s\S]*?<\/table>/gi) || [];
   const groups = [];
   let current = null;
 
-  for (const cells of rows) {
-    if (cells[0] === "SLA") continue;
-    const requiredCell = cells.find((cell) => /Required\s*:/i.test(cell));
+  for (const table of tables) {
+    const trRe = /<tr\b[\s\S]*?<\/tr>/gi;
+    let trMatch;
+    while ((trMatch = trRe.exec(table))) {
+      const trHtml = trMatch[0];
+      const cells = [];
+      const embeddedStaff = [];
+      const cellRe = /<(?:td|th)\b[\s\S]*?<\/(?:td|th)>/gi;
+      let cellMatch;
+      while ((cellMatch = cellRe.exec(trHtml))) {
+        const cellHtml = cellMatch[0];
+        let cellText = cleanText(stripTags(cellHtml));
+        if (!cellText) {
+          const inputValMatch = cellHtml.match(/<input\b[^>]*\bvalue\s*=\s*(["'])(.*?)\1/i);
+          if (inputValMatch) cellText = cleanText(decodeHtml(inputValMatch[2]));
+        }
+        cells.push(cellText);
+        embeddedStaff.push(...extractSelectedStaffLabels(cellHtml));
+      }
+      cells.push(...embeddedStaff);
+      if (!cells.length) continue;
 
-    if (requiredCell) {
-      if (current) groups.push(finishGroup(current));
-      current = {
-        sla: cells[0] || "",
-        type: cells[1] || "",
-        movement: (requiredCell.split(/Required\s*:/i)[0] || "").trim(),
-        required: Number((requiredCell.match(/Required\s*:\s*(\d+)/i) || [])[1] || 0),
-        start: stripSla(cells[3] || ""),
-        release: stripSla(cells[4] || ""),
-        duration: (cells[5] || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim(),
-        staff: [],
-        flightDate,
-      };
-    }
+      if (cells[0] === "SLA") continue;
+      const requiredCell = cells.find((cell) => /Required\s*:/i.test(cell));
 
-    if (current) {
-      for (const staffCell of extractStaffLabelsFromCells(cells)) current.staff.push(staffCell);
+      if (requiredCell) {
+        if (current) groups.push(finishGroup(current));
+        current = {
+          sla: cells[0] || "",
+          type: cells[1] || "",
+          movement: (requiredCell.split(/Required\s*:/i)[0] || "").trim(),
+          required: Number((requiredCell.match(/Required\s*:\s*(\d+)/i) || [])[1] || 0),
+          start: stripSla(cells[3] || ""),
+          release: stripSla(cells[4] || ""),
+          duration: (cells[5] || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim(),
+          staff: [],
+          staff_details: [],
+          flightDate,
+        };
+        const staffInRow = extractStaffLabelsFromCells(cells);
+        if (staffInRow.length) {
+          const timing = extractRowTiming(cells, current.start, current.release, current.duration, flightDate);
+          for (const staffName of staffInRow) {
+            current.staff.push(staffName);
+            current.staff_details.push({
+              name: staffName,
+              start_utc: timing.start || current.start,
+              release_utc: timing.release || current.release,
+              duration: timing.duration || current.duration,
+              duration_minutes: timing.durationMinutes,
+              is_shorter: Boolean(timing.isShorter),
+              custom_timing: Boolean(timing.isCustomTiming),
+            });
+          }
+        }
+      } else if (current) {
+        const staffInRow = extractStaffLabelsFromCells(cells);
+        if (staffInRow.length) {
+          const timing = extractRowTiming(cells, current.start, current.release, current.duration, flightDate);
+          for (const staffName of staffInRow) {
+            current.staff.push(staffName);
+            current.staff_details.push({
+              name: staffName,
+              start_utc: timing.start || current.start,
+              release_utc: timing.release || current.release,
+              duration: timing.duration || current.duration,
+              duration_minutes: timing.durationMinutes,
+              is_shorter: Boolean(timing.isShorter),
+              custom_timing: Boolean(timing.isCustomTiming),
+            });
+          }
+        }
+      }
     }
   }
 
   if (current) groups.push(finishGroup(current));
   return groups;
+}
+
+function normalizeTimeWithDate(timeStr, defaultWithDate) {
+  const clean = stripSla(timeStr || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim();
+  if (!clean) return "";
+  if (/^\d{1,2}\s+[A-Za-z]{3}\s+\d{1,2}:\d{2}$/.test(clean)) return clean;
+  if (/^\d{1,2}:\d{2}$/.test(clean)) {
+    const prefixMatch = String(defaultWithDate || "").match(/^(\d{1,2}\s+[A-Za-z]{3})\s+/);
+    if (prefixMatch) return `${prefixMatch[1]} ${clean}`;
+    return clean;
+  }
+  return clean;
+}
+
+function computeDurationMinutes(startText, releaseText, durationText, flightDate) {
+  if (durationText && durationText.includes(":")) {
+    const m = durationText.trim().match(/^(\d+):(\d+)$/);
+    if (m) return Number(m[1]) * 60 + Number(m[2]);
+  }
+  const s = parseSodUtc(startText, flightDate);
+  const r = parseSodUtc(releaseText, flightDate);
+  if (s && r && r > s) return Math.round((r - s) / 60000);
+  return 0;
+}
+
+function extractRowTiming(cells, defaultStart, defaultRelease, defaultDuration, flightDate) {
+  const groupStart = defaultStart || "";
+  const groupRelease = defaultRelease || "";
+  const groupDuration = defaultDuration || "";
+  const groupDurationMinutes = computeDurationMinutes(groupStart, groupRelease, groupDuration, flightDate);
+
+  let rawStart = cells[3] || "";
+  let rawRelease = cells[4] || "";
+  let rawDuration = cells[5] || "";
+
+  const timeCellIndices = [];
+  cells.forEach((cell, idx) => {
+    const text = stripSla(cell || "").trim();
+    if (/^(?:\d{1,2}\s+[A-Za-z]{3}\s+)?\d{1,2}:\d{2}$/.test(text)) timeCellIndices.push(idx);
+  });
+
+  if (timeCellIndices.length >= 2) {
+    rawStart = cells[timeCellIndices[0]];
+    rawRelease = cells[timeCellIndices[1]];
+    if (timeCellIndices.length >= 3) rawDuration = cells[timeCellIndices[2]];
+  }
+
+  const staffStart = normalizeTimeWithDate(rawStart, groupStart) || groupStart;
+  const staffRelease = normalizeTimeWithDate(rawRelease, groupRelease) || groupRelease;
+  const staffDuration = (rawDuration || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim() || groupDuration;
+  const staffDurationMinutes = computeDurationMinutes(staffStart, staffRelease, staffDuration, flightDate);
+
+  const groupStartDate = parseSodUtc(groupStart, flightDate);
+  const groupReleaseDate = parseSodUtc(groupRelease, flightDate);
+  const staffStartDate = parseSodUtc(staffStart, flightDate);
+  const staffReleaseDate = parseSodUtc(staffRelease, flightDate);
+
+  const isLaterStart = groupStartDate && staffStartDate && staffStartDate > groupStartDate;
+  const isEarlierRelease = groupReleaseDate && staffReleaseDate && staffReleaseDate < groupReleaseDate;
+  const isShorterDuration = groupDurationMinutes > 0 && staffDurationMinutes > 0 && staffDurationMinutes < groupDurationMinutes;
+  const isShorter = Boolean(isLaterStart || isEarlierRelease || isShorterDuration);
+  const isCustomTiming = Boolean(isShorter || (staffStart && staffStart !== groupStart) || (staffRelease && staffRelease !== groupRelease));
+
+  return {
+    start: staffStart,
+    release: staffRelease,
+    duration: staffDuration,
+    durationMinutes: staffDurationMinutes || groupDurationMinutes,
+    isShorter,
+    isCustomTiming,
+  };
 }
 
 function extractStaffDirectory(html) {
@@ -1401,9 +1686,33 @@ function extractStaffDirectory(html) {
 function finishGroup(group) {
   const staff = [...new Set(group.staff)];
   const assigned = staff.length;
+  const staffDetailsMap = new Map();
+  for (const detail of (group.staff_details || [])) {
+    if (detail && detail.name && !staffDetailsMap.has(detail.name)) {
+      staffDetailsMap.set(detail.name, detail);
+    }
+  }
+  const staff_details = staff.map((name) => {
+    if (staffDetailsMap.has(name)) return staffDetailsMap.get(name);
+    return {
+      name,
+      start_utc: group.start,
+      release_utc: group.release,
+      duration: group.duration,
+      duration_minutes: computeDurationMinutes(group.start, group.release, group.duration, group.flightDate),
+      is_shorter: false,
+      custom_timing: false,
+    };
+  });
+  const has_shorter_assignment = staff_details.some((d) => d.is_shorter);
+  const shorter_staff_count = staff_details.filter((d) => d.is_shorter).length;
+
   return {
     ...group,
     staff,
+    staff_details,
+    has_shorter_assignment,
+    shorter_staff_count,
     assigned,
     missing: Math.max(0, group.required - assigned),
     startDate: parseSodUtc(group.start, group.flightDate),
@@ -1423,8 +1732,14 @@ function extractTableRows(html) {
       const cellRe = /<(?:td|th)\b[\s\S]*?<\/(?:td|th)>/gi;
       let cellMatch;
       while ((cellMatch = cellRe.exec(trMatch[0]))) {
-        cells.push(cleanText(stripTags(cellMatch[0])));
-        embeddedStaff.push(...extractSelectedStaffLabels(cellMatch[0]));
+        const cellHtml = cellMatch[0];
+        let cellText = cleanText(stripTags(cellHtml));
+        if (!cellText) {
+          const inputValMatch = cellHtml.match(/<input\b[^>]*\bvalue\s*=\s*(["'])(.*?)\1/i);
+          if (inputValMatch) cellText = cleanText(decodeHtml(inputValMatch[2]));
+        }
+        cells.push(cellText);
+        embeddedStaff.push(...extractSelectedStaffLabels(cellHtml));
       }
       cells.push(...embeddedStaff);
       if (cells.length) rows.push(cells);
@@ -1619,7 +1934,7 @@ async function createRosterSectionPdf(payload = {}) {
 
   const css = await fs.readFile(path.join(PUBLIC_DIR, "styles.css"), "utf8");
   const html = buildRosterPdfHtml({ title: payload.title, subtitle: payload.subtitle, rosterHtml, css });
-  const pdfBrowser = await chromium.launch({ headless: true });
+  const pdfBrowser = await launchBrowser({ headless: true });
   try {
     const page = await pdfBrowser.newPage({ viewport: { width: 1600, height: 900 } });
     await page.setContent(html, { waitUntil: "load" });

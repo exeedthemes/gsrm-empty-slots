@@ -655,6 +655,44 @@ test("evaluateScenarioMetrics calculates coverage rate, uncovered hours, and con
   assert.equal(metrics.totalDutyHours, 3.0);
 });
 
+test("automatic planner excludes absent staff and enforces custom rest and duty-count rules", () => {
+  const gap = { ...baseDuty, date: "18-Aug-2026", flight_id: "gap", flight: "LH200", start_utc: "08:00", release_utc: "10:00", staff: [], assigned: 0, missing: 1 };
+  const rows = [
+    { ...baseDuty, date: "17-Aug-2026", flight_id: "late", flight: "LH100", start_utc: "20:00", release_utc: "23:00", staff: ["AAA - Alice Agent"], assigned: 1, missing: 0 },
+    gap,
+  ];
+  const windows = [{ isoDate: "2026-08-18", start: new Date("2026-08-18T00:00:00Z"), end: new Date("2026-08-19T00:00:00Z") }];
+  const directory = ["AAA - Alice Agent"];
+
+  const absentPlan = OperationsUtils.buildAutoPlan(rows, directory, ["ALICE AGENT"], windows, {
+    absences: [{ person_key: "ALICE AGENT", start_date: "2026-08-18", end_date: "2026-08-18" }],
+  });
+  assert.equal(absentPlan.assignments.length, 0);
+
+  const restPlan = OperationsUtils.buildAutoPlan(rows, directory, ["ALICE AGENT"], windows, {
+    customRules: [{ enabled: true, rule_type: "MIN_REST_HOURS", target: "GLOBAL", parameters: { minRestHours: 11 } }],
+  });
+  assert.equal(restPlan.assignments.length, 0);
+
+  const sameDayRows = [
+    { ...baseDuty, date: "18-Aug-2026", flight_id: "early", flight: "LH101", start_utc: "05:00", release_utc: "07:00", staff: ["AAA - Alice Agent"], assigned: 1, missing: 0 },
+    gap,
+  ];
+  const dutyLimitPlan = OperationsUtils.buildAutoPlan(sameDayRows, directory, ["ALICE AGENT"], windows, {
+    bufferMinutes: 0,
+    customRules: [{ enabled: true, rule_type: "MAX_DUTIES_PER_DAY", target: "GLOBAL", parameters: { maxDuties: 1 } }],
+  });
+  assert.equal(dutyLimitPlan.assignments.length, 0);
+});
+
+test("scenario metrics accept automatic-planner assignment objects", () => {
+  const row = { ...baseDuty, flight_id: "scenario-gap", required: 1, assigned: 0, missing: 1, staff: [] };
+  const assignments = [{ row, position: 1, person: { initials: "AAA", name: "Alice Agent", key: "ALICE AGENT" } }];
+  const metrics = OperationsUtils.evaluateScenarioMetrics([row], assignments, ["AAA - Alice Agent"]);
+  assert.equal(metrics.coverageRatePercent, 100);
+  assert.equal(metrics.unfilledPositions, 0);
+});
+
 test("generateIcsCalendar produces valid iCalendar content", () => {
   const rows = [
     { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", staff: ["AAA - Alice Agent"] },
@@ -684,7 +722,194 @@ test("generateHandoverSummary aggregates gaps, absences, and custom notes", () =
   assert.equal(summary.customNotes, "Test supervisor note");
 });
 
+test("mergeRosterRows replaces updated dates and preserves untouched dates", () => {
+  const existing = [
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 0, missing: 1, staff: [] },
+    { date: "19-Aug-2026", flight: "LH200", sla: "CKIN", start_utc: "09:00", release_utc: "13:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+  ];
+  const updatedScan = [
+    // 18-Aug rescanned with Alice assigned to LH100
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    // New flight on 20-Aug
+    { date: "20-Aug-2026", flight: "LH300", sla: "LOFO", start_utc: "10:00", release_utc: "14:00", required: 1, assigned: 0, missing: 1, staff: [] },
+  ];
 
+  const merged = OperationsUtils.mergeRosterRows(existing, updatedScan, ["2026-08-18", "2026-08-20"]);
+  assert.equal(merged.length, 3);
+  
+  // 18-Aug is updated
+  const aug18 = merged.find((r) => r.date === "18-Aug-2026");
+  assert.equal(aug18.missing, 0);
+  assert.deepEqual(aug18.staff, ["AAA - Alice Agent"]);
 
+  // 19-Aug is preserved
+  const aug19 = merged.find((r) => r.date === "19-Aug-2026");
+  assert.ok(aug19);
+  assert.equal(aug19.flight, "LH200");
 
+  // 20-Aug is added
+  const aug20 = merged.find((r) => r.date === "20-Aug-2026");
+  assert.ok(aug20);
+  assert.equal(aug20.flight, "LH300");
+});
+
+test("detectRosterChanges identifies added/removed flights, staff changes, and resolved/new gaps", () => {
+  const oldRows = [
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 0, missing: 1, staff: [] },
+    { date: "18-Aug-2026", flight: "LH150", sla: "CKIN", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    { date: "18-Aug-2026", flight: "LH999", sla: "LOFO", start_utc: "14:00", release_utc: "18:00", required: 1, assigned: 1, missing: 0, staff: ["BBB - Bob Worker"] },
+  ];
+  const newRows = [
+    // LH100 gap resolved by assigning Alice
+    { date: "18-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+    // LH150 staff reassigned from Alice to Bob, and became a gap
+    { date: "18-Aug-2026", flight: "LH150", sla: "CKIN", start_utc: "08:00", release_utc: "12:00", required: 2, assigned: 1, missing: 1, staff: ["BBB - Bob Worker"] },
+    // LH999 removed
+    // LH200 newly added flight
+    { date: "18-Aug-2026", flight: "LH200", sla: "GATE", start_utc: "10:00", release_utc: "14:00", required: 1, assigned: 0, missing: 1, staff: [] },
+  ];
+
+  const diff = OperationsUtils.detectRosterChanges(oldRows, newRows, ["2026-08-18"]);
+  assert.equal(diff.hasChanges, true);
+  assert.equal(diff.addedFlights.length, 1);
+  assert.equal(diff.removedFlights.length, 1);
+  assert.equal(diff.resolvedGaps.length, 1); // LH100
+  assert.equal(diff.newGaps.length, 2); // LH150 missing + LH200
+  assert.equal(diff.staffReassignments.length, 2); // LH100 assigned + LH150 swapped
+  assert.ok(diff.summary.includes("flight"));
+});
+
+test("mergeScans combines multiple scan snapshots into a unified master roster dataset", () => {
+  const scan1 = {
+    id: "scan1",
+    createdAt: "2026-08-18T10:00:00Z",
+    scannedDates: ["2026-08-01", "2026-08-02"],
+    staffDirectory: ["AAA - Alice Agent"],
+    airlines: ["LH"],
+    slas: ["GATE"],
+    rows: [
+      { date: "01-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["AAA - Alice Agent"] },
+      { date: "02-Aug-2026", flight: "LH101", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 0, missing: 1, staff: [] },
+    ],
+  };
+  const scan2 = {
+    id: "scan2",
+    createdAt: "2026-08-18T11:00:00Z",
+    scannedDates: ["2026-08-02", "2026-08-03"],
+    staffDirectory: ["BBB - Bob Worker"],
+    airlines: ["LH", "BA"],
+    slas: ["GATE", "CKIN"],
+    rows: [
+      // Updates 02-Aug: Bob fills the gap
+      { date: "02-Aug-2026", flight: "LH101", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0, staff: ["BBB - Bob Worker"] },
+      { date: "03-Aug-2026", flight: "BA200", sla: "CKIN", start_utc: "10:00", release_utc: "14:00", required: 1, assigned: 1, missing: 0, staff: ["BBB - Bob Worker"] },
+    ],
+  };
+
+  const merged = OperationsUtils.mergeScans([scan1, scan2]);
+  assert.equal(merged.scannedDates.length, 3);
+  assert.deepEqual(merged.scannedDates, ["2026-08-01", "2026-08-02", "2026-08-03"]);
+  assert.equal(merged.rows.length, 3);
+  assert.equal(merged.gapsCount, 0); // 02-Aug gap was resolved by scan2
+  assert.deepEqual(merged.airlines, ["BA", "LH"]);
+  assert.deepEqual(merged.staffDirectory, ["AAA - Alice Agent", "BBB - Bob Worker"]);
+});
+
+test("summarizeMonthRoster calculates days scanned, coverage percent, and missing dates", () => {
+  const rows = [
+    { date: "01-Aug-2026", flight: "LH100", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 1, missing: 0 },
+    { date: "02-Aug-2026", flight: "LH101", sla: "GATE", start_utc: "08:00", release_utc: "12:00", required: 1, assigned: 0, missing: 1 },
+  ];
+  const summary = OperationsUtils.summarizeMonthRoster(rows, ["2026-08-01", "2026-08-02"], "2026-08");
+
+  assert.equal(summary.monthKey, "2026-08");
+  assert.equal(summary.daysInMonth, 31);
+  assert.equal(summary.scannedDaysCount, 2);
+  assert.equal(summary.coveragePercent, Math.round((2 / 31) * 100)); // 6%
+  assert.equal(summary.missingDates.length, 29);
+  assert.equal(summary.flightsCount, 2);
+  assert.equal(summary.gapsCount, 1);
+  assert.equal(summary.isComplete, false);
+});
+
+test("detectStaffVacations identifies staff with unallocated streaks of full week or configurable days", () => {
+  const dates = [
+    "2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04",
+    "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08",
+    "2026-08-09", "2026-08-10"
+  ];
+
+  // Alice has no duties for all 10 days
+  const aliceAssignments = [];
+  const aliceResult = OperationsUtils.detectStaffVacations(aliceAssignments, dates, 7);
+  assert.equal(aliceResult.isGuessedVacation, true);
+  assert.equal(aliceResult.maxConsecutiveFreeDays, 10);
+  assert.equal(aliceResult.longestSpan.startDate, "2026-08-01");
+  assert.equal(aliceResult.longestSpan.endDate, "2026-08-10");
+
+  // Bob has duty on 2026-08-04, splitting into 3 days free and 6 days free (neither >= 7)
+  const bobAssignments = [{ date: "04-Aug-2026", flight: "LH100" }];
+  const bobResult7 = OperationsUtils.detectStaffVacations(bobAssignments, dates, 7);
+  assert.equal(bobResult7.isGuessedVacation, false);
+  assert.equal(bobResult7.maxConsecutiveFreeDays, 6);
+
+  // But with configurable threshold = 5 days, Bob has 6 consecutive free days (05-Aug to 10-Aug) -> guessed vacation!
+  const bobResult5 = OperationsUtils.detectStaffVacations(bobAssignments, dates, 5);
+  assert.equal(bobResult5.isGuessedVacation, true);
+  assert.equal(bobResult5.vacationSpans.length, 1);
+  assert.equal(bobResult5.vacationSpans[0].startDate, "2026-08-05");
+  assert.equal(bobResult5.vacationSpans[0].endDate, "2026-08-10");
+});
+
+test("calculates exact workload hours and avoids false overlaps for staff assigned shorter periods", () => {
+  const rowShorter = {
+    date: "18-Aug-2026",
+    flight_id: "vn1",
+    flight: "VN 34",
+    sla: "CKIN",
+    start_utc: "07:35",
+    release_utc: "10:35",
+    duration: "03:00",
+    required: 2,
+    assigned: 2,
+    missing: 0,
+    staff: ["MUC - Alice Full", "MUC - Bob Short"],
+    staff_details: [
+      { name: "MUC - Alice Full", start_utc: "07:35", release_utc: "10:35", duration: "03:00", duration_minutes: 180, is_shorter: false },
+      { name: "MUC - Bob Short", start_utc: "08:35", release_utc: "10:35", duration: "02:00", duration_minutes: 120, is_shorter: true },
+    ],
+    has_shorter_assignment: true,
+  };
+
+  const rowMorning = {
+    date: "18-Aug-2026",
+    flight_id: "lh1",
+    flight: "LH 100",
+    sla: "GATE",
+    start_utc: "06:30",
+    release_utc: "08:00",
+    duration: "01:30",
+    required: 1,
+    assigned: 1,
+    missing: 0,
+    staff: ["MUC - Bob Short"],
+  };
+
+  // Check dutyMinutes for individual staff
+  assert.equal(OperationsUtils.dutyMinutes(rowShorter, "ALICE FULL"), 180);
+  assert.equal(OperationsUtils.dutyMinutes(rowShorter, "BOB SHORT"), 120);
+
+  // Check workload hours: Alice = 3.0h, Bob = 2.0h (from VN 34) + 1.5h (from LH 100) = 3.5h
+  const workload = OperationsUtils.buildWorkload([rowShorter, rowMorning], ["MUC - Alice Full", "MUC - Bob Short"]);
+  const aliceWorkload = workload.find((p) => p.name === "Alice Full");
+  const bobWorkload = workload.find((p) => p.name === "Bob Short");
+  assert.equal(aliceWorkload.hours, 3);
+  assert.equal(bobWorkload.hours, 3.5);
+
+  // Check overlap detection:
+  // LH 100 is 06:30–08:00.
+  // VN 34 group is 07:35–10:35, BUT Bob is assigned 08:35–10:35!
+  // So Bob is NOT overlapping between 08:00 and 08:35!
+  assert.equal(OperationsUtils.hasOverlappingShifts([rowMorning, rowShorter], "BOB SHORT"), false);
+});
 

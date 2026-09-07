@@ -1,6 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const { DatabaseSync } = require("node:sqlite");
+const OperationsUtils = require("./public/operations-utils");
 
 function initDatabase(dbPath) {
   const isMemory = dbPath === ":memory:";
@@ -75,6 +76,21 @@ function initDatabase(dbPath) {
       assignments_json TEXT,
       metrics_json TEXT,
       created_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS monthly_rosters (
+      month_key TEXT PRIMARY KEY,
+      updated_at INTEGER,
+      scanned_dates_json TEXT,
+      total_days INTEGER,
+      scanned_days_count INTEGER,
+      flights_count INTEGER,
+      gaps_count INTEGER,
+      staff_count INTEGER,
+      staff_directory_json TEXT,
+      rows_json TEXT,
+      changes_json TEXT,
+      meta_json TEXT
     );
   `);
 
@@ -253,7 +269,7 @@ function getCacheStats(customDb) {
 function getAllAbsences(customDb) {
   const db = customDb || getDb();
   const stmt = db.prepare("SELECT * FROM staff_absences ORDER BY start_date ASC, created_at DESC");
-  return stmt.all() || [];
+  return (stmt.all() || []).map((row) => ({ ...row, absence_type: row.category }));
 }
 
 function saveAbsence(absenceObj, customDb) {
@@ -276,7 +292,7 @@ function saveAbsence(absenceObj, customDb) {
     id,
     absenceObj.person_key || "",
     absenceObj.person_name || "",
-    absenceObj.category || "vacation",
+    absenceObj.category || absenceObj.absence_type || "Vacation",
     absenceObj.start_date || "",
     absenceObj.end_date || absenceObj.start_date || "",
     absenceObj.start_time || "00:00",
@@ -284,7 +300,8 @@ function saveAbsence(absenceObj, customDb) {
     absenceObj.notes || "",
     absenceObj.created_at || Date.now()
   );
-  return { id, ...absenceObj };
+  const category = absenceObj.category || absenceObj.absence_type || "Vacation";
+  return { id, ...absenceObj, category, absence_type: category };
 }
 
 function deleteAbsence(id, customDb) {
@@ -301,6 +318,7 @@ function getAllCustomRules(customDb) {
   const rows = stmt.all() || [];
   return rows.map((r) => ({
     ...r,
+    title: r.name,
     enabled: Boolean(r.enabled),
     parameters: r.parameters_json ? JSON.parse(r.parameters_json) : {},
   }));
@@ -323,13 +341,14 @@ function saveCustomRule(ruleObj, customDb) {
   stmt.run(
     id,
     ruleObj.rule_type || "MIN_REST_HOURS",
-    ruleObj.name || "Custom Rule",
+    ruleObj.name || ruleObj.title || "Custom Rule",
     ruleObj.target || "GLOBAL",
     paramsJson,
     ruleObj.enabled === false ? 0 : 1,
     ruleObj.created_at || Date.now()
   );
-  return { id, ...ruleObj };
+  const name = ruleObj.name || ruleObj.title || "Custom Rule";
+  return { id, ...ruleObj, name, title: name };
 }
 
 function deleteCustomRule(id, customDb) {
@@ -346,6 +365,7 @@ function getAllScenarios(customDb) {
   const rows = stmt.all() || [];
   return rows.map((r) => ({
     ...r,
+    title: r.name,
     options: r.options_json ? JSON.parse(r.options_json) : {},
     assignments: r.assignments_json ? JSON.parse(r.assignments_json) : [],
     metrics: r.metrics_json ? JSON.parse(r.metrics_json) : {},
@@ -367,14 +387,15 @@ function saveScenario(scenarioObj, customDb) {
   `);
   stmt.run(
     id,
-    scenarioObj.name || "Alternative Plan",
+    scenarioObj.name || scenarioObj.title || "Alternative Plan",
     scenarioObj.strategy || "min_overtime",
     JSON.stringify(scenarioObj.options || {}),
     JSON.stringify(scenarioObj.assignments || []),
     JSON.stringify(scenarioObj.metrics || {}),
     scenarioObj.created_at || Date.now()
   );
-  return { id, ...scenarioObj };
+  const name = scenarioObj.name || scenarioObj.title || "Alternative Plan";
+  return { id, ...scenarioObj, name, title: name };
 }
 
 function deleteScenario(id, customDb) {
@@ -382,6 +403,306 @@ function deleteScenario(id, customDb) {
   const stmt = db.prepare("DELETE FROM scenarios WHERE id = ?");
   stmt.run(id);
   return { success: true, id };
+}
+
+// --- Monthly Rosters CRUD & Merging ---
+function getAllMonthlyRosters(customDb, includeRows = false) {
+  const db = customDb || getDb();
+  const stmt = db.prepare("SELECT * FROM monthly_rosters ORDER BY month_key DESC");
+  const rows = stmt.all() || [];
+  return rows.map((r) => {
+    let scannedDates = [];
+    let staffDirectory = [];
+    let changes = [];
+    let meta = {};
+    let rosterRows = [];
+    try { scannedDates = JSON.parse(r.scanned_dates_json || "[]"); } catch {}
+    try { staffDirectory = JSON.parse(r.staff_directory_json || "[]"); } catch {}
+    try { changes = JSON.parse(r.changes_json || "[]"); } catch {}
+    try { meta = JSON.parse(r.meta_json || "{}"); } catch {}
+    if (includeRows) {
+      try { rosterRows = JSON.parse(r.rows_json || "[]"); } catch {}
+    }
+    return {
+      monthKey: r.month_key,
+      updatedAt: r.updated_at,
+      scannedDates,
+      totalDays: r.total_days,
+      scannedDaysCount: r.scanned_days_count,
+      coveragePercent: r.total_days > 0 ? Math.round((r.scanned_days_count / r.total_days) * 100) : 0,
+      flightsCount: r.flights_count,
+      gapsCount: r.gaps_count,
+      staffCount: r.staff_count,
+      staffDirectory,
+      changes,
+      meta,
+      ...(includeRows ? { rows: rosterRows } : {}),
+    };
+  });
+}
+
+function getMonthlyRoster(monthKey, customDb) {
+  if (!monthKey) return null;
+  const db = customDb || getDb();
+  const stmt = db.prepare("SELECT * FROM monthly_rosters WHERE month_key = ?");
+  const row = stmt.get(monthKey);
+  if (!row) return null;
+  let scannedDates = [];
+  let staffDirectory = [];
+  let changes = [];
+  let meta = {};
+  let rosterRows = [];
+  try { scannedDates = JSON.parse(row.scanned_dates_json || "[]"); } catch {}
+  try { staffDirectory = JSON.parse(row.staff_directory_json || "[]"); } catch {}
+  try { changes = JSON.parse(row.changes_json || "[]"); } catch {}
+  try { meta = JSON.parse(row.meta_json || "{}"); } catch {}
+  try { rosterRows = JSON.parse(row.rows_json || "[]"); } catch {}
+  return {
+    monthKey: row.month_key,
+    updatedAt: row.updated_at,
+    scannedDates,
+    totalDays: row.total_days,
+    scannedDaysCount: row.scanned_days_count,
+    coveragePercent: row.total_days > 0 ? Math.round((row.scanned_days_count / row.total_days) * 100) : 0,
+    flightsCount: row.flights_count,
+    gapsCount: row.gaps_count,
+    staffCount: row.staff_count,
+    staffDirectory,
+    rows: rosterRows,
+    changes,
+    meta,
+  };
+}
+
+function saveMonthlyRoster(monthRecord, customDb) {
+  if (!monthRecord || !monthRecord.monthKey) return null;
+  const db = customDb || getDb();
+  const monthKey = monthRecord.monthKey;
+  const updatedAt = monthRecord.updatedAt || Date.now();
+  const scannedDates = monthRecord.scannedDates || [];
+  const rows = monthRecord.rows || [];
+  const staffDirectory = monthRecord.staffDirectory || [];
+  const changes = monthRecord.changes || [];
+  const meta = monthRecord.meta || {};
+
+  const summary = OperationsUtils.summarizeMonthRoster(rows, scannedDates, monthKey);
+
+  const stmt = db.prepare(`
+    INSERT INTO monthly_rosters (
+      month_key, updated_at, scanned_dates_json, total_days,
+      scanned_days_count, flights_count, gaps_count, staff_count,
+      staff_directory_json, rows_json, changes_json, meta_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(month_key) DO UPDATE SET
+      updated_at = excluded.updated_at,
+      scanned_dates_json = excluded.scanned_dates_json,
+      total_days = excluded.total_days,
+      scanned_days_count = excluded.scanned_days_count,
+      flights_count = excluded.flights_count,
+      gaps_count = excluded.gaps_count,
+      staff_count = excluded.staff_count,
+      staff_directory_json = excluded.staff_directory_json,
+      rows_json = excluded.rows_json,
+      changes_json = excluded.changes_json,
+      meta_json = excluded.meta_json
+  `);
+
+  stmt.run(
+    monthKey,
+    updatedAt,
+    JSON.stringify(summary.scannedDates || scannedDates),
+    summary.daysInMonth || 30,
+    summary.scannedDaysCount || 0,
+    summary.flightsCount || 0,
+    summary.gapsCount || 0,
+    staffDirectory.length,
+    JSON.stringify(staffDirectory),
+    JSON.stringify(rows),
+    JSON.stringify(changes),
+    JSON.stringify(meta)
+  );
+
+  return getMonthlyRoster(monthKey, db);
+}
+
+function updateMonthlyRosterWithScan(scanResult, payload = {}, customDb) {
+  if (!scanResult) return [];
+  const db = customDb || getDb();
+  const scanRows = scanResult.rows || [];
+  const scanDates = (scanResult.scannedDates || []).map((d) => OperationsUtils.normalizeDateToIso(d)).filter(Boolean);
+
+  const monthKeys = new Set();
+  for (const d of scanDates) {
+    if (d && d.length >= 7) monthKeys.add(d.slice(0, 7));
+  }
+  for (const r of scanRows) {
+    if (r && r.date) {
+      const iso = OperationsUtils.normalizeDateToIso(r.date);
+      if (iso && iso.length >= 7) monthKeys.add(iso.slice(0, 7));
+    }
+  }
+
+  if (monthKeys.size === 0 && payload.startDate) {
+    monthKeys.add(payload.startDate.slice(0, 7));
+  }
+
+  const updatedResults = [];
+
+  for (const monthKey of monthKeys) {
+    const existing = getMonthlyRoster(monthKey, db);
+    const existingRows = existing ? existing.rows : [];
+    const existingScannedDates = existing ? existing.scannedDates : [];
+    const existingChanges = existing ? existing.changes : [];
+    const existingStaff = existing ? existing.staffDirectory : [];
+
+    const monthScanRows = scanRows.filter((r) => {
+      const iso = OperationsUtils.normalizeDateToIso(r.date);
+      return iso && iso.startsWith(monthKey);
+    });
+    const monthScanDates = scanDates.filter((d) => d.startsWith(monthKey));
+
+    const diff = OperationsUtils.detectRosterChanges(existingRows, monthScanRows, monthScanDates);
+    const mergedRows = OperationsUtils.mergeRosterRows(existingRows, monthScanRows, monthScanDates);
+    const unionScannedDates = [...new Set([...existingScannedDates, ...monthScanDates])].sort();
+    const mergedStaff = [...new Set([...existingStaff, ...(scanResult.staffDirectory || [])])].sort();
+
+    const changeEntry = {
+      timestamp: Date.now(),
+      scanId: payload.scanId || `scan_${Date.now()}`,
+      summary: diff.summary,
+      hasChanges: diff.hasChanges,
+      scannedDates: monthScanDates,
+      addedFlightsCount: diff.addedFlights.length,
+      removedFlightsCount: diff.removedFlights.length,
+      changedDutiesCount: diff.changedDuties.length,
+      newGapsCount: diff.newGaps.length,
+      resolvedGapsCount: diff.resolvedGaps.length,
+      staffReassignmentsCount: diff.staffReassignments.length,
+    };
+
+    const newChanges = [changeEntry, ...existingChanges].slice(0, 30);
+
+    const savedRecord = saveMonthlyRoster({
+      monthKey,
+      updatedAt: Date.now(),
+      scannedDates: unionScannedDates,
+      rows: mergedRows,
+      staffDirectory: mergedStaff,
+      changes: newChanges,
+      meta: {
+        lastScanId: payload.scanId || "",
+        lastScanType: payload.isAutoScan ? "auto" : "manual",
+        airlines: [...new Set([...(existing?.meta?.airlines || []), ...(scanResult.airlines || [])])].sort(),
+        slas: [...new Set([...(existing?.meta?.slas || []), ...(scanResult.slas || [])])].sort(),
+      },
+    }, db);
+
+    updatedResults.push({
+      monthKey,
+      summary: diff.summary,
+      hasChanges: diff.hasChanges,
+      diff,
+      monthRecord: savedRecord,
+    });
+  }
+
+  return updatedResults;
+}
+
+function deleteMonthlyRoster(monthKey, customDb) {
+  if (!monthKey) return { success: false };
+  const db = customDb || getDb();
+  const stmt = db.prepare("DELETE FROM monthly_rosters WHERE month_key = ?");
+  stmt.run(monthKey);
+  return { success: true, monthKey };
+}
+
+function mergeCustomDateRange(startDate, endDate, customDb) {
+  const db = customDb || getDb();
+  const allMonths = getAllMonthlyRosters(db, true);
+  const scanHistory = getScanHistory(db);
+
+  let mergedRows = [];
+  const allDates = new Set();
+  const staffSet = new Set();
+  const airlineSet = new Set();
+  const slaSet = new Set();
+
+  // 1. Gather rows from saved monthly rosters
+  for (const m of allMonths) {
+    const monthRows = (m.rows || []).filter((r) => {
+      const iso = OperationsUtils.normalizeDateToIso(r.date);
+      return iso >= startDate && iso <= endDate;
+    });
+    const monthDates = (m.scannedDates || []).filter((d) => {
+      const iso = OperationsUtils.normalizeDateToIso(d);
+      return iso >= startDate && iso <= endDate;
+    });
+    if (monthRows.length > 0 || monthDates.length > 0) {
+      mergedRows = OperationsUtils.mergeRosterRows(mergedRows, monthRows, monthDates);
+    }
+  }
+
+  // 2. Also gather and merge rows from scan history snapshots
+  const sortedScans = [...scanHistory].sort((a, b) => {
+    const timeA = new Date(a.createdAt || a.timestamp || 0).getTime();
+    const timeB = new Date(b.createdAt || b.timestamp || 0).getTime();
+    return timeA - timeB;
+  });
+
+  for (const scan of sortedScans) {
+    const scanDates = (scan.scannedDates || []).filter((d) => {
+      const iso = OperationsUtils.normalizeDateToIso(d);
+      return iso >= startDate && iso <= endDate;
+    });
+    const scanRows = (scan.rows || []).filter((r) => {
+      const iso = OperationsUtils.normalizeDateToIso(r.date);
+      return iso >= startDate && iso <= endDate;
+    });
+    if (scanRows.length > 0 || scanDates.length > 0) {
+      mergedRows = OperationsUtils.mergeRosterRows(mergedRows, scanRows, scanDates);
+    }
+  }
+
+  for (const r of mergedRows) {
+    const iso = OperationsUtils.normalizeDateToIso(r.date);
+    if (iso) allDates.add(iso);
+    if (r.airline) airlineSet.add(r.airline);
+    if (r.sla) slaSet.add(r.sla);
+    if (Array.isArray(r.staff)) {
+      for (const s of r.staff) staffSet.add(s);
+    }
+  }
+
+  for (const m of allMonths) {
+    for (const d of m.scannedDates || []) {
+      const iso = OperationsUtils.normalizeDateToIso(d);
+      if (iso >= startDate && iso <= endDate) allDates.add(iso);
+    }
+  }
+  for (const s of sortedScans) {
+    for (const d of s.scannedDates || []) {
+      const iso = OperationsUtils.normalizeDateToIso(d);
+      if (iso >= startDate && iso <= endDate) allDates.add(iso);
+    }
+  }
+
+  const sortedDates = [...allDates].sort();
+  const uniqueFlights = new Set(mergedRows.map((r) => `${r.date}|${r.flight || r.flight_id}`));
+  const gaps = mergedRows.filter((r) => Number(r.missing || 0) > 0);
+
+  return {
+    startDate,
+    endDate,
+    rows: mergedRows,
+    scannedDates: sortedDates,
+    staffDirectory: [...staffSet].sort(),
+    airlines: [...airlineSet].sort(),
+    slas: [...slaSet].sort(),
+    flightsCount: uniqueFlights.size,
+    gapsCount: gaps.length,
+  };
 }
 
 module.exports = {
@@ -410,5 +731,12 @@ module.exports = {
   getAllScenarios,
   saveScenario,
   deleteScenario,
+  getAllMonthlyRosters,
+  getMonthlyRoster,
+  saveMonthlyRoster,
+  updateMonthlyRosterWithScan,
+  deleteMonthlyRoster,
+  mergeCustomDateRange,
   CACHE_TTL_MS,
 };
+

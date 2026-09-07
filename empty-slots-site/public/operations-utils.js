@@ -33,7 +33,56 @@
     return Boolean(flightA && flightB && flightA === flightB && dateA && dateB && dateA === dateB);
   }
 
-  function dutyMinutes(row) {
+  function getPersonDutyTime(row, personKey = null) {
+    if (!row) return { start: null, end: null, start_utc: "", release_utc: "", duration: "", is_shorter: false };
+    if (personKey && Array.isArray(row.staff_details)) {
+      const pKey = (StaffUtils?.parseStaffIdentity(personKey)?.key || String(personKey)).toUpperCase();
+      const detail = row.staff_details.find((d) => {
+        const dKey = (StaffUtils?.parseStaffIdentity(d.name || d.staff)?.key || String(d.name || d.staff || "")).toUpperCase();
+        return dKey === pKey;
+      });
+      if (detail && (detail.start_utc || detail.release_utc)) {
+        const start = parseDutyTime(row.date, detail.start_utc || row.start_utc);
+        const end = parseDutyTime(row.date, detail.release_utc || row.release_utc);
+        if (start && end) {
+          return {
+            start,
+            end,
+            start_utc: detail.start_utc || row.start_utc,
+            release_utc: detail.release_utc || row.release_utc,
+            duration: detail.duration || row.duration,
+            is_shorter: Boolean(detail.is_shorter),
+          };
+        }
+      }
+    }
+    const start = parseDutyTime(row.date, row.start_utc);
+    const end = parseDutyTime(row.date, row.release_utc);
+    return {
+      start,
+      end,
+      start_utc: row.start_utc,
+      release_utc: row.release_utc,
+      duration: row.duration,
+      is_shorter: false,
+    };
+  }
+
+  function dutyMinutes(row, personKey = null) {
+    if (!row) return 0;
+    if (personKey && Array.isArray(row.staff_details)) {
+      const pKey = (StaffUtils?.parseStaffIdentity(personKey)?.key || String(personKey)).toUpperCase();
+      const detail = row.staff_details.find((d) => {
+        const dKey = (StaffUtils?.parseStaffIdentity(d.name || d.staff)?.key || String(d.name || d.staff || "")).toUpperCase();
+        return dKey === pKey;
+      });
+      if (detail) {
+        if (typeof detail.duration_minutes === "number" && detail.duration_minutes > 0) return detail.duration_minutes;
+        const dStart = parseDutyTime(row.date, detail.start_utc || row.start_utc);
+        const dEnd = parseDutyTime(row.date, detail.release_utc || row.release_utc);
+        if (dStart && dEnd && dEnd > dStart) return Math.round((dEnd - dStart) / 60000);
+      }
+    }
     const start = parseDutyTime(row.date, row.start_utc);
     const end = parseDutyTime(row.date, row.release_utc);
     return start && end && end > start ? Math.round((end - start) / 60000) : 0;
@@ -66,7 +115,10 @@
     const candidates = [];
     for (const person of buildPeople(rows, staffDirectory)) {
       if (person.key === excludedKey) continue;
-      const timed = person.duties.map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) })).filter((item) => item.start && item.end);
+      const timed = person.duties.map((row) => {
+        const time = getPersonDutyTime(row, person.key);
+        return { row, start: time.start, end: time.end };
+      }).filter((item) => item.start && item.end);
       if (timed.some((item) => item.start < dutyEnd && item.end > dutyStart)) continue;
       const sameDay = timed.filter((item) => item.row.date === duty.date);
       let closest = null;
@@ -209,7 +261,10 @@
       }
     }
     for (const person of buildPeople(rows, staffDirectory)) {
-      const duties = person.duties.map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) })).filter((item) => item.start && item.end).sort((a, b) => a.start - b.start);
+      const duties = person.duties.map((row) => {
+        const time = getPersonDutyTime(row, person.key);
+        return { row, start: time.start, end: time.end };
+      }).filter((item) => item.start && item.end).sort((a, b) => a.start - b.start);
       for (let index = 1; index < duties.length; index += 1) {
         const previous = duties[index - 1];
         const current = duties[index];
@@ -233,12 +288,13 @@
   function buildWorkload(rows, staffDirectory) {
     return buildPeople(rows, staffDirectory).map((person) => {
       const uniqueDuties = person.duties;
-      const minutes = uniqueDuties.reduce((sum, row) => sum + dutyMinutes(row), 0);
+      const minutes = uniqueDuties.reduce((sum, row) => sum + dutyMinutes(row, person.key), 0);
       const slas = [...new Set(uniqueDuties.map((row) => row.sla).filter(Boolean))].sort();
       const byDate = new Map();
       for (const row of uniqueDuties) {
-        const start = parseDutyTime(row.date, row.start_utc);
-        const end = parseDutyTime(row.date, row.release_utc);
+        const time = getPersonDutyTime(row, person.key);
+        const start = time.start;
+        const end = time.end;
         if (!start || !end) continue;
         if (!byDate.has(row.date)) byDate.set(row.date, []);
         byDate.get(row.date).push({ start, end });
@@ -532,6 +588,14 @@
     return { contract: "PT", weeklyHours: 20, monthlyHours: 80 };
   }
 
+  function ruleAppliesToPerson(rule, options = {}) {
+    if (!rule?.enabled) return false;
+    const target = String(rule.target || "GLOBAL").toUpperCase();
+    const personKey = String(options.personKey || "").toUpperCase();
+    const contract = String(options.staffContract || options.contract || "").toUpperCase();
+    return target === "GLOBAL" || target === personKey || (contract && target === contract);
+  }
+
   function inspectDaySchedule(duties, options = {}) {
     const maxDutyMinutes = Number(options.maxDutyHours ?? 8) * 60;
     const maxSpanMinutes = Number(options.maxSpanHours ?? 10) * 60;
@@ -539,15 +603,16 @@
     const breakAfterMinutes = Number(options.breakAfterHours ?? 6) * 60;
     const breakMinutes = Number(options.breakMinutes ?? 30);
     const customRules = Array.isArray(options.customRules) ? options.customRules : [];
-    
-    // Evaluate active custom rules for Max Duties per Day
-    let maxDutiesAllowed = Number(options.maxDutiesPerDay || 0);
-    const maxDutyRule = customRules.find((r) => r.enabled && r.rule_type === "MAX_DUTIES_PER_DAY");
-    if (maxDutyRule && maxDutyRule.parameters?.maxDuties) {
-      maxDutiesAllowed = Number(maxDutyRule.parameters.maxDuties);
-    }
-
-    const timed = (duties || []).map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) }))
+    const maxDutyRule = customRules.find((rule) => rule.rule_type === "MAX_DUTIES_PER_DAY" && ruleAppliesToPerson(rule, options));
+    const maxDutiesAllowed = Number(maxDutyRule?.parameters?.maxDuties || options.maxDutiesPerDay || 0);
+    const prohibitedSlas = new Set(customRules
+      .filter((rule) => rule.rule_type === "STAFF_SLA_RESTRICTION" && ruleAppliesToPerson(rule, options))
+      .flatMap((rule) => rule.parameters?.prohibitedSlas || [])
+      .map((sla) => String(sla).trim().toUpperCase()));
+    const timed = (duties || []).map((row) => {
+      const time = options.personKey ? getPersonDutyTime(row, options.personKey) : { start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) };
+      return { row, start: time.start, end: time.end };
+    })
       .filter((item) => item.start && item.end && item.end > item.start)
       .sort((a, b) => a.start - b.start);
     const totalMinutes = timed.reduce((sum, item) => sum + Math.round((item.end - item.start) / 60000), 0);
@@ -574,15 +639,7 @@
     if (spanMinutes > maxSpanMinutes) violations.push("span");
     if (breakAfterMinutes > 0 && (longestContinuousMinutes > breakAfterMinutes || (totalMinutes > breakAfterMinutes && timed.length === 1))) violations.push("break");
     if (maxDutiesAllowed > 0 && timed.length > maxDutiesAllowed) violations.push("maxDuties");
-
-    // Check SLA Restriction Rules from customRules
-    for (const item of timed) {
-      const slaRule = customRules.find((r) => r.enabled && r.rule_type === "STAFF_SLA_RESTRICTION" && (r.target === "GLOBAL" || r.target === options.personKey));
-      if (slaRule && Array.isArray(slaRule.parameters?.prohibitedSlas) && slaRule.parameters.prohibitedSlas.includes(item.row.sla)) {
-        violations.push("slaRestriction");
-        break;
-      }
-    }
+    if (timed.some((item) => prohibitedSlas.has(String(item.row.sla || "").trim().toUpperCase()))) violations.push("slaRestriction");
 
     return { valid: violations.length === 0, violations: [...new Set(violations)], dutyCount: timed.length, totalMinutes, spanMinutes, shortestBufferMinutes, longestContinuousMinutes };
   }
@@ -666,13 +723,31 @@
       if (!months.has(monthKey)) months.set(monthKey, { key: monthKey, minutes: 0 });
       months.get(monthKey).minutes += minutes;
     }
-    const maxWeeklyMinutes = Number(options.maxWeeklyHours || 0) * 60;
-    const maxMonthlyMinutes = Number(options.maxMonthlyHours || 0) * 60;
+    const customRules = Array.isArray(options.customRules) ? options.customRules : [];
+    const contractRule = customRules.find((rule) => rule.rule_type === "CONTRACT_HOURS" && ruleAppliesToPerson(rule, options));
+    const restRule = customRules.find((rule) => rule.rule_type === "MIN_REST_HOURS" && ruleAppliesToPerson(rule, options));
+    const maxWeeklyMinutes = Number(contractRule?.parameters?.maxWeeklyHours || options.maxWeeklyHours || 0) * 60;
+    const maxMonthlyMinutes = Number(contractRule?.parameters?.maxMonthlyHours || options.maxMonthlyHours || 0) * 60;
     const maxDays = Number(options.maxWorkingDaysPerWeek || 7);
     const violations = [];
     if (maxWeeklyMinutes && [...weeks.values()].some((week) => week.minutes > maxWeeklyMinutes)) violations.push("weeklyHours");
     if ([...weeks.values()].some((week) => week.dates.size > maxDays)) violations.push("weeklyDays");
     if (maxMonthlyMinutes && [...months.values()].some((month) => month.minutes > maxMonthlyMinutes)) violations.push("monthlyHours");
+    const minRestMinutes = Number(restRule?.parameters?.minRestHours || 0) * 60;
+    if (minRestMinutes > 0) {
+      const timed = (duties || []).map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) }))
+        .filter((item) => item.start && item.end)
+        .sort((a, b) => a.start - b.start);
+      for (let index = 1; index < timed.length; index += 1) {
+        const previous = timed[index - 1];
+        const current = timed[index];
+        if (previous.row.date === current.row.date) continue;
+        if (Math.round((current.start - previous.end) / 60000) < minRestMinutes) {
+          violations.push("rest");
+          break;
+        }
+      }
+    }
     return { valid: violations.length === 0, violations, weeks: [...weeks.values()].map((week) => ({ ...week, dates: [...week.dates] })), months: [...months.values()] };
   }
 
@@ -700,23 +775,29 @@
         const eligible = [];
         for (const person of people) {
           if (assignedKeys.has(person.key)) continue;
-          if (!isAvailableForDuty(person.key, row, options.availabilityRules)) continue;
+          if (!isAvailableForDuty(person.key, row, options.availabilityRules, options.absences)) continue;
           const sameDay = (schedules.get(person.key) || []).filter((duty) => duty.date === row.date);
-          const inspection = inspectDaySchedule([...sameDay, row], options);
-          if (!inspection.valid) continue;
-
-          // Enforce per-person contract limits (MJ: 10h/wk, 40h/mo; PT: 20/80; FT: 40/160).
           const contractInfo = getContractHoursLimit(person.key, staffContracts);
           const personOptions = {
             ...options,
+            personKey: person.key,
+            staffContract: contractInfo.contract,
             maxWeeklyHours: Number(options.maxWeeklyHours) > 0 ? Math.min(Number(options.maxWeeklyHours), contractInfo.weeklyHours) : contractInfo.weeklyHours,
             maxMonthlyHours: Number(options.maxMonthlyHours) > 0 ? Math.min(Number(options.maxMonthlyHours), contractInfo.monthlyHours) : contractInfo.monthlyHours,
           };
+          const inspection = inspectDaySchedule([...sameDay, row], personOptions);
+          if (!inspection.valid) continue;
+
+          // Enforce per-person contract limits (MJ: 10h/wk, 40h/mo; PT: 20/80; FT: 40/160).
           const periodInspection = inspectPeriodWorkload([...(schedules.get(person.key) || []), row], personOptions);
           if (!periodInspection.valid) continue;
 
           const experience = person.duties.filter((duty) => duty.sla === row.sla).length;
-          let score = (experience * 1000) - inspection.totalMinutes - (inspection.dutyCount * 10);
+          const scheduledMinutes = (schedules.get(person.key) || []).reduce((sum, duty) => sum + dutyMinutes(duty), 0);
+          let score;
+          if (options.strategy === "max_fairness") score = -(scheduledMinutes * 100) + (experience * 10);
+          else if (options.strategy === "min_overtime") score = -(scheduledMinutes * 10) - inspection.totalMinutes + (experience * 100);
+          else score = (experience * 1000) - inspection.totalMinutes - (inspection.dutyCount * 10);
 
           // Morning vs Evening shift comfort: avoid double shifts and mixing morning/evening on the same day
           if (sameDay.length > 0) {
@@ -836,7 +917,7 @@
         violations.push({ assignment, codes: ["staff"] });
         continue;
       }
-      if (!isAvailableForDuty(person.key, assignment.row, options.availabilityRules)) {
+      if (!isAvailableForDuty(person.key, assignment.row, options.availabilityRules, options.absences)) {
         violations.push({ assignment, person, codes: ["availability"] });
         continue;
       }
@@ -852,10 +933,12 @@
     const summaries = [];
     for (const [personKey, schedule] of schedules) {
       const person = people.get(personKey);
+      const contractInfo = getContractHoursLimit(personKey, options.staffContracts || {});
+      const personOptions = { ...options, personKey, staffContract: contractInfo.contract };
       const dates = [...new Set(schedule.map((row) => row.date))];
-      const days = dates.map((date) => ({ date, ...inspectDaySchedule(schedule.filter((row) => row.date === date), options) }));
+      const days = dates.map((date) => ({ date, ...inspectDaySchedule(schedule.filter((row) => row.date === date), personOptions) }));
       for (const day of days.filter((item) => !item.valid)) violations.push({ person, date: day.date, codes: day.violations });
-      const period = inspectPeriodWorkload(schedule, options);
+      const period = inspectPeriodWorkload(schedule, personOptions);
       if (!period.valid) violations.push({ person, codes: period.violations });
       summaries.push({ person, days });
     }
@@ -1084,8 +1167,8 @@
 
         if (!wasInPrev && !wasInCurr) continue;
 
-        const prevH = wasInPrev ? (entry.prevRow ? (dutyMinutes(entry.prevRow) / 60) : entry.durationHours) : 0;
-        const currH = wasInCurr ? (entry.currRow ? (dutyMinutes(entry.currRow) / 60) : entry.durationHours) : 0;
+        const prevH = wasInPrev ? (entry.prevRow ? (dutyMinutes(entry.prevRow, targetKey) / 60) : entry.durationHours) : 0;
+        const currH = wasInCurr ? (entry.currRow ? (dutyMinutes(entry.currRow, targetKey) / 60) : entry.durationHours) : 0;
 
         if (wasInPrev) {
           prevTotalHours += prevH;
@@ -1169,118 +1252,6 @@ return {
     };
   }
 
-  function inspectDaySchedule(duties, options = {}) {
-    const maxDutyMinutes = Number(options.maxDutyHours ?? 8) * 60;
-    const maxSpanMinutes = Number(options.maxSpanHours ?? 10) * 60;
-    const bufferMinutes = Number(options.bufferMinutes ?? 30);
-    const breakAfterMinutes = Number(options.breakAfterHours ?? 6) * 60;
-    const breakMinutes = Number(options.breakMinutes ?? 30);
-    const timed = (duties || []).map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) }))
-      .filter((item) => item.start && item.end && item.end > item.start)
-      .sort((a, b) => a.start - b.start);
-    const totalMinutes = timed.reduce((sum, item) => sum + Math.round((item.end - item.start) / 60000), 0);
-    const spanMinutes = timed.length ? Math.round((timed.at(-1).end - timed[0].start) / 60000) : 0;
-    let shortestBufferMinutes = null;
-    let longestContinuousMinutes = 0;
-    let blockStart = timed[0]?.start || null;
-    const violations = [];
-
-    for (let i = 0; i < timed.length; i += 1) {
-      for (let j = i + 1; j < timed.length; j += 1) {
-        const prev = timed[i];
-        const curr = timed[j];
-        const isSameFlight = isSameFlightDuty(prev.row, curr.row);
-        const gap = Math.round((curr.start - prev.end) / 60000);
-        if (gap < 0 && !isSameFlight) {
-          violations.push("overlap");
-        }
-      }
-    }
-
-    for (let index = 1; index < timed.length; index += 1) {
-      const prev = timed[index - 1];
-      const curr = timed[index];
-      const isSameFlight = isSameFlightDuty(prev.row, curr.row);
-      const gap = Math.round((curr.start - prev.end) / 60000);
-      shortestBufferMinutes = shortestBufferMinutes == null ? gap : Math.min(shortestBufferMinutes, gap);
-      if (gap >= 0 && gap < bufferMinutes && !isSameFlight) violations.push("buffer");
-      if (breakMinutes > 0 && gap >= breakMinutes) {
-        longestContinuousMinutes = Math.max(longestContinuousMinutes, Math.round((prev.end - blockStart) / 60000));
-        blockStart = curr.start;
-      }
-    }
-    if (timed.length) longestContinuousMinutes = Math.max(longestContinuousMinutes, Math.round((timed.at(-1).end - blockStart) / 60000));
-    if (totalMinutes > maxDutyMinutes) violations.push("hours");
-    if (spanMinutes > maxSpanMinutes) violations.push("span");
-    if (breakAfterMinutes > 0 && (longestContinuousMinutes > breakAfterMinutes || (totalMinutes > breakAfterMinutes && timed.length === 1))) violations.push("break");
-    return { valid: violations.length === 0, violations: [...new Set(violations)], dutyCount: timed.length, totalMinutes, spanMinutes, shortestBufferMinutes, longestContinuousMinutes };
-  }
-
-  function isAvailableForDuty(personKey, row, rules = []) {
-    const pKey = (StaffUtils?.parseStaffIdentity(personKey)?.key || String(personKey || "")).toUpperCase();
-    const dutyStart = parseDutyTime(row.date, row.start_utc);
-    const dutyEnd = parseDutyTime(row.date, row.release_utc);
-    if (!dutyStart || !dutyEnd) return false;
-    const isoDate = dutyStart.toISOString().slice(0, 10);
-    const weekday = String(dutyStart.getUTCDay());
-    const matches = (rules || []).filter((rule) => {
-      const rKey = (StaffUtils?.parseStaffIdentity(rule.personKey)?.key || String(rule.personKey || "")).toUpperCase();
-      return rKey === pKey
-        && (!rule.startDate || isoDate >= rule.startDate)
-        && (!rule.endDate || isoDate <= rule.endDate)
-        && (!rule.dates?.length || rule.dates.includes(isoDate))
-        && (!rule.weekdays?.length || rule.weekdays.includes(weekday));
-    });
-    if (!matches.length) return true;
-    const rule = matches.at(-1);
-    if (rule.shift === "unavailable" || rule.shift === "vacation" || rule.shift === "off") return false;
-    if (rule.shift === "full") return true;
-    const ranges = { morning: ["04:00", "12:00"], evening: ["12:00", "23:59"] };
-    const [from, to] = ranges[rule.shift] || [rule.from || "00:00", rule.to || "23:59"];
-    const windowStart = new Date(`${isoDate}T${from}:00Z`);
-    let windowEnd = new Date(`${isoDate}T${to}:00Z`);
-    if (windowEnd <= windowStart) windowEnd = new Date(windowEnd.getTime() + 86400000);
-    return dutyStart >= windowStart && dutyEnd <= windowEnd;
-  }
-
-  function isoWeekKey(date) {
-    const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-    day.setUTCDate(day.getUTCDate() + 4 - (day.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(day.getUTCFullYear(), 0, 1));
-    const week = Math.ceil((((day - yearStart) / 86400000) + 1) / 7);
-    return `${day.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-  }
-
-  function inspectPeriodWorkload(duties, options = {}) {
-    const weeks = new Map();
-    const months = new Map();
-    const seen = new Set();
-    for (const row of duties || []) {
-      const key = rowKey(row);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const start = parseDutyTime(row.date, row.start_utc);
-      if (!start) continue;
-      const minutes = dutyMinutes(row);
-      const date = start.toISOString().slice(0, 10);
-      const weekKey = isoWeekKey(start);
-      const monthKey = date.slice(0, 7);
-      if (!weeks.has(weekKey)) weeks.set(weekKey, { key: weekKey, minutes: 0, dates: new Set() });
-      weeks.get(weekKey).minutes += minutes;
-      weeks.get(weekKey).dates.add(date);
-      if (!months.has(monthKey)) months.set(monthKey, { key: monthKey, minutes: 0 });
-      months.get(monthKey).minutes += minutes;
-    }
-    const maxWeeklyMinutes = Number(options.maxWeeklyHours || 0) * 60;
-    const maxMonthlyMinutes = Number(options.maxMonthlyHours || 0) * 60;
-    const maxDays = Number(options.maxWorkingDaysPerWeek || 7);
-    const violations = [];
-    if (maxWeeklyMinutes && [...weeks.values()].some((week) => week.minutes > maxWeeklyMinutes)) violations.push("weeklyHours");
-    if ([...weeks.values()].some((week) => week.dates.size > maxDays)) violations.push("weeklyDays");
-    if (maxMonthlyMinutes && [...months.values()].some((month) => month.minutes > maxMonthlyMinutes)) violations.push("monthlyHours");
-    return { valid: violations.length === 0, violations, weeks: [...weeks.values()].map((week) => ({ ...week, dates: [...week.dates] })), months: [...months.values()] };
-  }
-
   function autoAdjustRoster(rows, staffDirectory, options = {}) {
     const minBreakMinutes = Number(options.minBreakMinutes ?? options.bufferMinutes ?? 30);
     const conflictType = options.resolveConflictType || "both"; // 'both', 'overlaps_only', 'breaks_only'
@@ -1352,7 +1323,7 @@ return {
         // Pass A: Check for availability or vacation violations (duty assigned on unavailable weekday or during vacation)
         for (const dutyToMove of duties) {
           if (maxMovements > 0 && reassignments.length >= maxMovements) break;
-          if (!isAvailableForDuty(person.key, dutyToMove, options.availabilityRules)) {
+          if (!isAvailableForDuty(person.key, dutyToMove, options.availabilityRules, options.absences)) {
             const currentStaffLabels = dutyToMove.staff || [];
             const identityToMove = currentStaffLabels.find((s) => StaffUtils?.parseStaffIdentity(s)?.key === person.key);
             if (!identityToMove) continue;
@@ -1365,7 +1336,7 @@ return {
               if (bAssignedKeys.has(candidatePerson.key)) continue;
 
               if (Array.isArray(options.allowedSlas) && options.allowedSlas.length && !options.allowedSlas.includes(dutyToMove.sla)) continue;
-              if (!isAvailableForDuty(candidatePerson.key, dutyToMove, options.availabilityRules)) continue;
+              if (!isAvailableForDuty(candidatePerson.key, dutyToMove, options.availabilityRules, options.absences)) continue;
 
               const bDuties = schedules.get(candidatePerson.key) || [];
               const bSameDay = bDuties.filter((d) => d.date === dutyToMove.date);
@@ -1463,7 +1434,7 @@ return {
                 if (bAssignedKeys.has(candidatePerson.key)) continue;
 
                 if (Array.isArray(options.allowedSlas) && options.allowedSlas.length && !options.allowedSlas.includes(dutyToMove.sla)) continue;
-                if (!isAvailableForDuty(candidatePerson.key, dutyToMove, options.availabilityRules)) continue;
+                if (!isAvailableForDuty(candidatePerson.key, dutyToMove, options.availabilityRules, options.absences)) continue;
 
                 const bDuties = schedules.get(candidatePerson.key) || [];
                 const bSameDay = bDuties.filter((d) => d.date === dutyToMove.date);
@@ -1694,9 +1665,11 @@ return {
   function evaluateScenarioMetrics(rows, planAssignments = [], staffDirectory = []) {
     const assignmentsByRow = new Map();
     for (const assignment of planAssignments || []) {
-      if (!assignment?.rowKey || !assignment?.candidateLabel) continue;
-      if (!assignmentsByRow.has(assignment.rowKey)) assignmentsByRow.set(assignment.rowKey, []);
-      assignmentsByRow.get(assignment.rowKey).push(assignment);
+      const assignmentRowKey = assignment?.rowKey || (assignment?.row ? rowKey(assignment.row) : "");
+      const candidateLabel = assignment?.candidateLabel || assignment?.person?.label || [assignment?.person?.initials, assignment?.person?.name].filter(Boolean).join(" - ");
+      if (!assignmentRowKey || !candidateLabel) continue;
+      if (!assignmentsByRow.has(assignmentRowKey)) assignmentsByRow.set(assignmentRowKey, []);
+      assignmentsByRow.get(assignmentRowKey).push({ ...assignment, rowKey: assignmentRowKey, candidateLabel });
     }
 
     const simulatedRows = (rows || []).map((row) => {
@@ -1767,6 +1740,11 @@ return {
   }
 
   function generateIcsCalendar(rows, options = {}) {
+    const escapeIcsText = (value) => String(value || "")
+      .replace(/\\/g, "\\\\")
+      .replace(/\r?\n/g, "\\n")
+      .replace(/,/g, "\\,")
+      .replace(/;/g, "\\;");
     const staffKey = (options.staffKey || "").toUpperCase();
     const calendarTitle = options.title || (staffKey ? `GSRM Schedule - ${options.staffName || staffKey}` : "GSRM Station Roster");
     const filteredRows = (rows || []).filter((row) => {
@@ -1801,8 +1779,8 @@ return {
         `DTSTAMP:${nowStr}`,
         `DTSTART:${formatIcsTime(startDt)}`,
         `DTEND:${formatIcsTime(releaseDt)}`,
-        `SUMMARY:${summary}`,
-        `DESCRIPTION:${description}`,
+        `SUMMARY:${escapeIcsText(summary)}`,
+        `DESCRIPTION:${escapeIcsText(description).replace(/\\\\n/g, "\\n")}`,
         "LOCATION:Station Airport Ramp / Terminal",
         "STATUS:CONFIRMED",
         "END:VEVENT"
@@ -1815,7 +1793,7 @@ return {
       "PRODID:-//GSRM Roster Management//Shift Export 1.0//EN",
       "CALSCALE:GREGORIAN",
       "METHOD:PUBLISH",
-      `X-WR-CALNAME:${calendarTitle}`,
+      `X-WR-CALNAME:${escapeIcsText(calendarTitle)}`,
       ...events,
       "END:VCALENDAR"
     ].join("\r\n");
@@ -1823,7 +1801,8 @@ return {
 
   function generateHandoverSummary(rows, gapNotes = {}, warnings = [], absences = [], customNotes = "") {
     const totalRows = (rows || []).length;
-    let missingRows = 0;
+    let totalRequiredPositions = 0;
+    let totalMissingPositions = 0;
     const unresolvedGaps = [];
     const pendingConfirmations = [];
 
@@ -1832,9 +1811,12 @@ return {
       const rKey = rowKey(row);
       const note = gapNotes[rKey] || gapNotes[row.gap_id];
       const status = note?.status || "Open";
+      const assigned = Number(row.assigned || (row.staff || []).length || 0);
+      const required = Math.max(Number(row.required || 0), assigned + missing);
+      totalRequiredPositions += required;
+      totalMissingPositions += missing;
 
       if (missing > 0) {
-        missingRows += 1;
         if (status === "Contacted" || status === "Pending") {
           pendingConfirmations.push({ row, note });
         } else if (status !== "Covered") {
@@ -1844,12 +1826,21 @@ return {
     }
 
     const highRiskWarnings = (warnings || []).filter((w) => w.severity === "high" || w.type === "Overlap");
-    const activeAbsences = Array.isArray(absences) ? absences : [];
-    const coverageRatePercent = totalRows ? Math.round(((totalRows - missingRows) / totalRows) * 100) : 100;
+    const scannedDates = [...new Set((rows || []).map((row) => parseDutyTime(row.date, row.start_utc)?.toISOString().slice(0, 10)).filter(Boolean))];
+    const activeAbsences = (Array.isArray(absences) ? absences : []).filter((absence) => {
+      const startDate = absence.start_date || "";
+      const endDate = absence.end_date || startDate;
+      return scannedDates.some((date) => date >= startDate && date <= endDate);
+    });
+    const coverageRatePercent = totalRequiredPositions
+      ? Math.round(((totalRequiredPositions - totalMissingPositions) / totalRequiredPositions) * 100)
+      : 100;
 
     return {
       generatedAt: new Date().toISOString(),
       totalDuties: totalRows,
+      totalRequiredPositions,
+      totalMissingPositions,
       coverageRatePercent,
       unresolvedGapsCount: unresolvedGaps.length,
       pendingConfirmationsCount: pendingConfirmations.length,
@@ -1863,10 +1854,395 @@ return {
     };
   }
 
-  function hasOverlappingShifts(duties) {
-    const insp = inspectDaySchedule(duties);
+  function hasOverlappingShifts(duties, personKey = null) {
+    const insp = inspectDaySchedule(duties, { personKey });
     return (insp.violations || []).includes("overlap");
   }
 
-  return { parseDutyTime, rowKey, dutyMinutes, isSameFlightDuty, buildPeople, rankCandidates, getDutyGapCandidates: rankCandidates, simulateCoverage, airlineCode, getAirlineLogoUrl, getAirlineLogoImg, operationalPeriod, buildAirlineRoster, buildFlightSchedule, inspectDaySchedule, inspectPeriodWorkload, isAvailableForDuty, getContractHoursLimit, buildAutoPlan, calculateStaffRequirements, autoAdjustRoster, validateShiftSwap, validateAutoAssignments, buildWarnings, buildWorkload, summarizeDutyHours, buildAnalytics, compareSnapshots, comparePersonRosters, hasOverlappingShifts, evaluateScenarioMetrics, generateIcsCalendar, generateHandoverSummary };
+  function normalizeDateToIso(dateText) {
+    if (!dateText) return "";
+    const str = String(dateText).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    const match = str.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+    if (!match) return "";
+    const day = match[1].padStart(2, "0");
+    const mIdx = MONTHS.findIndex((m) => m.toLowerCase() === match[2].toLowerCase());
+    if (mIdx < 0) return "";
+    const month = String(mIdx + 1).padStart(2, "0");
+    return `${match[3]}-${month}-${day}`;
+  }
+
+  function normalizeDateToAvbis(dateText) {
+    if (!dateText) return "";
+    const str = String(dateText).trim();
+    if (/^\d{1,2}-[A-Za-z]{3}-\d{4}$/.test(str)) return str;
+    const match = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return "";
+    const mIdx = Number(match[2]) - 1;
+    if (mIdx < 0 || mIdx > 11) return "";
+    const day = String(Number(match[3]));
+    return `${day}-${MONTHS[mIdx]}-${match[1]}`;
+  }
+
+  function mergeRosterRows(existingRows = [], newRows = [], scannedDates = []) {
+    const updatedDateSet = new Set();
+    const addDate = (d) => {
+      const iso = normalizeDateToIso(d);
+      const avbis = normalizeDateToAvbis(d);
+      if (iso) updatedDateSet.add(iso);
+      if (avbis) updatedDateSet.add(avbis);
+      if (d) updatedDateSet.add(String(d).trim());
+    };
+
+    if (Array.isArray(scannedDates) && scannedDates.length > 0) {
+      for (const d of scannedDates) addDate(d);
+    } else {
+      for (const r of newRows || []) {
+        if (r && r.date) addDate(r.date);
+      }
+    }
+
+    const preserved = (existingRows || []).filter((row) => {
+      if (!row || !row.date) return false;
+      return !updatedDateSet.has(row.date) && !updatedDateSet.has(normalizeDateToIso(row.date));
+    });
+
+    const combined = [...preserved, ...(newRows || [])];
+    return combined.sort((a, b) => {
+      const timeA = parseDutyTime(a.date, a.start_utc)?.getTime() || 0;
+      const timeB = parseDutyTime(b.date, b.start_utc)?.getTime() || 0;
+      return timeA - timeB || String(a.flight || "").localeCompare(String(b.flight || ""));
+    });
+  }
+
+  function detectRosterChanges(oldRows = [], newRows = [], scannedDates = []) {
+    const isTargetDate = (dateStr) => {
+      if (!Array.isArray(scannedDates) || scannedDates.length === 0) return true;
+      const iso = normalizeDateToIso(dateStr);
+      const avbis = normalizeDateToAvbis(dateStr);
+      return scannedDates.some((d) => d === dateStr || d === iso || d === avbis || normalizeDateToIso(d) === iso);
+    };
+
+    const targetOld = (oldRows || []).filter((r) => r && isTargetDate(r.date));
+    const targetNew = (newRows || []).filter((r) => r && isTargetDate(r.date));
+
+    const oldKeyMap = new Map(targetOld.map((r) => [rowKey(r), r]));
+    const newKeyMap = new Map(targetNew.map((r) => [rowKey(r), r]));
+
+    const oldFlights = new Set(targetOld.map((r) => `${r.date}|${r.flight || r.flight_id}`));
+    const newFlights = new Set(targetNew.map((r) => `${r.date}|${r.flight || r.flight_id}`));
+
+    const addedFlights = [];
+    const removedFlights = [];
+    for (const f of newFlights) {
+      if (!oldFlights.has(f)) addedFlights.push(f);
+    }
+    for (const f of oldFlights) {
+      if (!newFlights.has(f)) removedFlights.push(f);
+    }
+
+    const staffKey = (row) => [...new Set(row?.staff || [])].map(String).sort().join("|");
+    const changedDuties = [];
+    const newGaps = [];
+    const resolvedGaps = [];
+    const staffReassignments = [];
+
+    for (const [key, newRow] of newKeyMap.entries()) {
+      const oldRow = oldKeyMap.get(key);
+      if (!oldRow) {
+        if (Number(newRow.missing || 0) > 0) newGaps.push(newRow);
+        continue;
+      }
+      const oldMissing = Number(oldRow.missing || 0);
+      const newMissing = Number(newRow.missing || 0);
+      const oldStaff = staffKey(oldRow);
+      const newStaff = staffKey(newRow);
+
+      if (oldMissing === 0 && newMissing > 0) {
+        newGaps.push(newRow);
+      } else if (oldMissing > 0 && newMissing === 0) {
+        resolvedGaps.push(newRow);
+      }
+
+      if (oldStaff !== newStaff) {
+        staffReassignments.push({
+          row: newRow,
+          previousStaff: oldRow.staff || [],
+          currentStaff: newRow.staff || [],
+        });
+      }
+
+      if (oldMissing !== newMissing || oldRow.required !== newRow.required || oldStaff !== newStaff) {
+        changedDuties.push({ key, oldRow, newRow });
+      }
+    }
+
+    for (const [key, oldRow] of oldKeyMap.entries()) {
+      if (!newKeyMap.has(key)) {
+        if (Number(oldRow.missing || 0) > 0) {
+          resolvedGaps.push(oldRow);
+        }
+      }
+    }
+
+    const hasChanges = addedFlights.length > 0 || removedFlights.length > 0 || changedDuties.length > 0 || newGaps.length > 0 || resolvedGaps.length > 0 || staffReassignments.length > 0;
+
+    const parts = [];
+    if (addedFlights.length > 0) parts.push(`+${addedFlights.length} flight(s)`);
+    if (removedFlights.length > 0) parts.push(`-${removedFlights.length} flight(s)`);
+    if (newGaps.length > 0) parts.push(`${newGaps.length} new gap(s)`);
+    if (resolvedGaps.length > 0) parts.push(`${resolvedGaps.length} gap(s) resolved`);
+    if (staffReassignments.length > 0) parts.push(`${staffReassignments.length} staff reassignment(s)`);
+
+    const summary = parts.length > 0 ? parts.join(" · ") : "No changes detected (roster identical)";
+
+    return {
+      hasChanges,
+      summary,
+      addedFlights,
+      removedFlights,
+      changedDuties,
+      newGaps,
+      resolvedGaps,
+      staffReassignments,
+      timestamp: Date.now(),
+    };
+  }
+
+  function mergeScans(scans = [], options = {}) {
+    if (!Array.isArray(scans) || scans.length === 0) {
+      return {
+        rows: [],
+        scannedDates: [],
+        staffDirectory: [],
+        airlines: [],
+        slas: [],
+        flightsCount: 0,
+        gapsCount: 0,
+        dateRange: { startDate: "", endDate: "" },
+      };
+    }
+
+    const sortedScans = [...scans].sort((a, b) => {
+      const timeA = new Date(a.createdAt || a.timestamp || 0).getTime();
+      const timeB = new Date(b.createdAt || b.timestamp || 0).getTime();
+      return timeA - timeB;
+    });
+
+    let mergedRows = [];
+    const allDates = new Set();
+    const allStaff = new Set();
+    const allAirlines = new Set();
+    const allSlas = new Set();
+
+    for (const scan of sortedScans) {
+      const scanRows = scan.rows || [];
+      const scanDates = scan.scannedDates || (scan.config ? [scan.config.startDate, scan.config.endDate].filter(Boolean) : []);
+      mergedRows = mergeRosterRows(mergedRows, scanRows, scanDates);
+
+      for (const d of scan.scannedDates || []) {
+        const iso = normalizeDateToIso(d);
+        if (iso) allDates.add(iso);
+      }
+      for (const r of scanRows) {
+        if (r.date) {
+          const iso = normalizeDateToIso(r.date);
+          if (iso) allDates.add(iso);
+        }
+        if (r.airline) allAirlines.add(r.airline);
+        if (r.sla) allSlas.add(r.sla);
+        if (Array.isArray(r.staff)) {
+          for (const s of r.staff) allStaff.add(s);
+        }
+      }
+      for (const s of scan.staffDirectory || []) allStaff.add(s);
+      for (const a of scan.airlines || []) allAirlines.add(a);
+      for (const sla of scan.slas || []) allSlas.add(sla);
+    }
+
+    const sortedDates = [...allDates].sort();
+    const uniqueFlights = new Set(mergedRows.map((r) => `${r.date}|${r.flight || r.flight_id}`));
+    const gapsCount = mergedRows.filter((r) => Number(r.missing || 0) > 0).length;
+
+    return {
+      rows: mergedRows,
+      scannedDates: sortedDates,
+      staffDirectory: [...allStaff].sort(),
+      airlines: [...allAirlines].sort(),
+      slas: [...allSlas].sort(),
+      flightsCount: uniqueFlights.size,
+      gapsCount,
+      dateRange: {
+        startDate: sortedDates[0] || "",
+        endDate: sortedDates[sortedDates.length - 1] || "",
+      },
+    };
+  }
+
+  function summarizeMonthRoster(rows = [], scannedDates = [], monthKey = "") {
+    let key = monthKey;
+    if (!key) {
+      const firstDate = (scannedDates && scannedDates[0]) || (rows && rows[0] && rows[0].date);
+      const iso = normalizeDateToIso(firstDate);
+      if (iso) key = iso.slice(0, 7);
+    }
+    if (!key || !/^\d{4}-\d{2}$/.test(key)) {
+      key = new Date().toISOString().slice(0, 7);
+    }
+
+    const [yearStr, monthStr] = key.split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const lastDayNum = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const daysInMonth = lastDayNum;
+
+    const allMonthIsoDates = [];
+    for (let day = 1; day <= daysInMonth; day++) {
+      allMonthIsoDates.push(`${key}-${String(day).padStart(2, "0")}`);
+    }
+
+    const scannedIsoSet = new Set();
+    for (const d of scannedDates || []) {
+      const iso = normalizeDateToIso(d);
+      if (iso && iso.startsWith(key)) scannedIsoSet.add(iso);
+    }
+    for (const r of rows || []) {
+      if (r && r.date) {
+        const iso = normalizeDateToIso(r.date);
+        if (iso && iso.startsWith(key)) scannedIsoSet.add(iso);
+      }
+    }
+
+    const missingDates = allMonthIsoDates.filter((d) => !scannedIsoSet.has(d));
+    const scannedDatesInMonth = allMonthIsoDates.filter((d) => scannedIsoSet.has(d));
+    const coveragePercent = Math.round((scannedDatesInMonth.length / daysInMonth) * 100);
+
+    const monthRows = (rows || []).filter((r) => {
+      const iso = normalizeDateToIso(r.date);
+      return iso && iso.startsWith(key);
+    });
+
+    const uniqueFlights = new Set(monthRows.map((r) => `${r.date}|${r.flight || r.flight_id}`));
+    const gaps = monthRows.filter((r) => Number(r.missing || 0) > 0);
+
+    return {
+      monthKey: key,
+      daysInMonth,
+      scannedDaysCount: scannedDatesInMonth.length,
+      coveragePercent,
+      missingDates,
+      scannedDates: scannedDatesInMonth,
+      flightsCount: uniqueFlights.size,
+      gapsCount: gaps.length,
+      rowsCount: monthRows.length,
+      isComplete: missingDates.length === 0,
+    };
+  }
+
+  function detectStaffVacations(personOrAssignments, scannedDates = [], thresholdDays = 7) {
+    const threshold = Math.max(1, Number(thresholdDays) || 7);
+    const dates = Array.isArray(scannedDates)
+      ? scannedDates.map((d) => (typeof d === "string" ? d : d?.isoDate || d?.date)).filter(Boolean)
+      : [];
+    
+    // Sort dates chronologically
+    const sortedDates = [...new Set(dates)].sort();
+
+    const assignments = Array.isArray(personOrAssignments)
+      ? personOrAssignments
+      : (personOrAssignments?.assignments || personOrAssignments?.overlapping || personOrAssignments?.byDay?.flat() || []);
+
+    const assignedDateSet = new Set();
+    for (const a of assignments) {
+      if (!a) continue;
+      const iso = normalizeDateToIso(a.date);
+      if (iso) assignedDateSet.add(iso);
+    }
+
+    const freeSpans = [];
+    let currentSpan = null;
+
+    for (let i = 0; i < sortedDates.length; i++) {
+      const d = sortedDates[i];
+      const hasDuty = assignedDateSet.has(d);
+
+      if (!hasDuty) {
+        if (!currentSpan) {
+          currentSpan = { startDate: d, endDate: d, days: 1, dates: [d] };
+        } else {
+          currentSpan.endDate = d;
+          currentSpan.days += 1;
+          currentSpan.dates.push(d);
+        }
+      } else {
+        if (currentSpan) {
+          freeSpans.push(currentSpan);
+          currentSpan = null;
+        }
+      }
+    }
+    if (currentSpan) {
+      freeSpans.push(currentSpan);
+    }
+
+    const vacationSpans = freeSpans.filter((span) => span.days >= threshold);
+    const longestSpan = freeSpans.reduce((max, span) => (!max || span.days > max.days ? span : max), null);
+    const maxConsecutiveFreeDays = longestSpan ? longestSpan.days : 0;
+    const isGuessedVacation = vacationSpans.length > 0;
+
+    return {
+      isGuessedVacation,
+      thresholdDays: threshold,
+      maxConsecutiveFreeDays,
+      longestSpan,
+      vacationSpans,
+      freeSpans,
+      totalScannedDays: sortedDates.length,
+      allocatedDaysCount: assignedDateSet.size,
+    };
+  }
+
+  return {
+    parseDutyTime,
+    getPersonDutyTime,
+    rowKey,
+    dutyMinutes,
+    isSameFlightDuty,
+    buildPeople,
+    rankCandidates,
+    getDutyGapCandidates: rankCandidates,
+    simulateCoverage,
+    airlineCode,
+    getAirlineLogoUrl,
+    getAirlineLogoImg,
+    operationalPeriod,
+    buildAirlineRoster,
+    buildFlightSchedule,
+    inspectDaySchedule,
+    inspectPeriodWorkload,
+    isAvailableForDuty,
+    getContractHoursLimit,
+    buildAutoPlan,
+    calculateStaffRequirements,
+    autoAdjustRoster,
+    validateShiftSwap,
+    validateAutoAssignments,
+    buildWarnings,
+    buildWorkload,
+    summarizeDutyHours,
+    buildAnalytics,
+    compareSnapshots,
+    comparePersonRosters,
+    hasOverlappingShifts,
+    evaluateScenarioMetrics,
+    generateIcsCalendar,
+    generateHandoverSummary,
+    normalizeDateToIso,
+    normalizeDateToAvbis,
+    mergeRosterRows,
+    detectRosterChanges,
+    mergeScans,
+    summarizeMonthRoster,
+    detectStaffVacations,
+  };
 });
