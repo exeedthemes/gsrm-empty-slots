@@ -303,6 +303,8 @@ const server = http.createServer(async (req, res) => {
       const payload = await readJson(req);
       const OperationsUtils = require("./public/operations-utils");
 
+      let merged = null;
+
       if (Array.isArray(payload.scanIds) && payload.scanIds.length > 0) {
         let selectedScans = [];
         const history = db.getScanHistory();
@@ -322,20 +324,77 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        const merged = OperationsUtils.mergeScans(selectedScans);
-        sendJson(res, 200, { success: true, data: merged });
-        return;
+        merged = OperationsUtils.mergeScans(selectedScans);
       } else if (payload.startDate && payload.endDate) {
         if (Array.isArray(payload.scans) && payload.scans.length > 0) {
           for (const s of payload.scans) {
             try { db.saveScanItem(s); } catch {}
           }
         }
-        const merged = db.mergeCustomDateRange(payload.startDate, payload.endDate);
-        sendJson(res, 200, { success: true, data: merged });
-        return;
+        merged = db.mergeCustomDateRange(payload.startDate, payload.endDate);
       }
-      throw new Error("Invalid merge payload. Provide scanIds or startDate and endDate.");
+
+      if (!merged) {
+        throw new Error("Invalid merge payload. Provide scanIds or startDate and endDate.");
+      }
+
+      let savedRecord = null;
+      let savedMonthKey = "";
+
+      if (payload.saveAsMaster !== false && ((merged.rows && merged.rows.length > 0) || (merged.scannedDates && merged.scannedDates.length > 0) || payload.customName)) {
+        const customTitle = (payload.customName || "").trim();
+        if (customTitle) {
+          savedMonthKey = customTitle;
+        } else if (merged.scannedDates && merged.scannedDates.length > 0) {
+          const firstMonth = merged.scannedDates[0].slice(0, 7);
+          const lastMonth = merged.scannedDates[merged.scannedDates.length - 1].slice(0, 7);
+          savedMonthKey = firstMonth === lastMonth ? firstMonth : `${merged.scannedDates[0]}_to_${merged.scannedDates[merged.scannedDates.length - 1]}`;
+        } else if (payload.startDate && payload.endDate) {
+          const firstMonth = payload.startDate.slice(0, 7);
+          const lastMonth = payload.endDate.slice(0, 7);
+          savedMonthKey = firstMonth === lastMonth ? firstMonth : `${payload.startDate}_to_${payload.endDate}`;
+        } else {
+          savedMonthKey = `Merge_${new Date().toISOString().slice(0, 10)}`;
+        }
+
+        const isCustom = Boolean(customTitle || savedMonthKey.includes("_to_") || !/^\d{4}-\d{2}$/.test(savedMonthKey));
+
+        savedRecord = db.saveMonthlyRoster({
+          monthKey: savedMonthKey,
+          updatedAt: Date.now(),
+          scannedDates: merged.scannedDates || [],
+          rows: merged.rows || [],
+          staffDirectory: merged.staffDirectory || [],
+          changes: [
+            {
+              timestamp: Date.now(),
+              scanId: `merge_${Date.now()}`,
+              summary: customTitle
+                ? `Custom Master "${customTitle}" saved from merge (${merged.flightsCount || 0} flights)`
+                : `Merged dataset created (${merged.scannedDates?.length || 0} days, ${merged.flightsCount || 0} flights)`,
+              hasChanges: true,
+              scannedDates: merged.scannedDates || [],
+              addedFlightsCount: merged.flightsCount || 0,
+              removedFlightsCount: 0,
+              changedDutiesCount: 0,
+              newGapsCount: merged.gapsCount || 0,
+              resolvedGapsCount: 0,
+              staffReassignmentsCount: 0,
+            }
+          ],
+          meta: {
+            customName: customTitle,
+            isCustomMerge: isCustom,
+            airlines: merged.airlines || [],
+            slas: merged.slas || [],
+            startDate: merged.startDate || (merged.scannedDates && merged.scannedDates[0]) || "",
+            endDate: merged.endDate || (merged.scannedDates && merged.scannedDates[merged.scannedDates.length - 1]) || "",
+          }
+        });
+      }
+
+      sendJson(res, 200, { success: true, data: merged, savedMonthKey, savedRecord });
+      return;
     }
 
     if (req.method === "DELETE" && pathname.startsWith("/api/roster/month")) {

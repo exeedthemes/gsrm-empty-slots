@@ -530,21 +530,21 @@ function updateMonthlyRosterWithScan(scanResult, payload = {}, customDb) {
   if (!scanResult) return [];
   const db = customDb || getDb();
   const scanRows = scanResult.rows || [];
+  const rawDates = [
+    ...(scanResult.scannedDates || []),
+    ...(scanRows.map((r) => r && r.date)),
+    payload.startDate,
+    payload.endDate,
+  ].filter(Boolean);
+
   const scanDates = (scanResult.scannedDates || []).map((d) => OperationsUtils.normalizeDateToIso(d)).filter(Boolean);
 
   const monthKeys = new Set();
-  for (const d of scanDates) {
-    if (d && d.length >= 7) monthKeys.add(d.slice(0, 7));
-  }
-  for (const r of scanRows) {
-    if (r && r.date) {
-      const iso = OperationsUtils.normalizeDateToIso(r.date);
-      if (iso && iso.length >= 7) monthKeys.add(iso.slice(0, 7));
+  for (const d of rawDates) {
+    const iso = OperationsUtils.normalizeDateToIso(d);
+    if (iso && iso.length >= 7) {
+      monthKeys.add(iso.slice(0, 7));
     }
-  }
-
-  if (monthKeys.size === 0 && payload.startDate) {
-    monthKeys.add(payload.startDate.slice(0, 7));
   }
 
   const updatedResults = [];

@@ -33,3 +33,11 @@ Then open `http://localhost:4173`.
 - Large date ranges can be slow because AVBIS rate-limits SOD endpoint requests.
 - Use the multi-select airline dropdown and smaller date ranges when possible.
 - When public holidays are enabled, German and Bavarian public holidays are added automatically for the selected years. Extra holiday dates can still be entered manually.
+
+## Desktop workflow and checks
+
+Scan controls are grouped in the header; workspace navigation and saved-roster tools sit below them. Roster display options and roster tools have separate rows. Dialogs use compact headers, scrolling content, Escape to close, and keyboard focus restoration. Automatic scanning settings use two columns on desktop.
+
+Selecting **Scan** reveals missing setup fields. Invalid date ranges are rejected before scanning, and a failed scan restores the previously loaded data, local roster edits, and gap filters. Failed cancellation requests can be retried. Undo notifications follow the order of changes, so an older notification cannot undo a newer operation.
+
+Run `npm run check` for syntax and unit checks. Run `npm run test:ui` for desktop browser regressions (requires Playwright Chromium). UI checks use an isolated fixture server and do not connect to AVBIS or modify saved app data.

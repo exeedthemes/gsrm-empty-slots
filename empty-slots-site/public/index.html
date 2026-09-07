@@ -21,7 +21,7 @@
               <strong>Not connected to AVBIS</strong>
             </div>
           </div>
-          <div class="title-actions">
+          <div class="title-actions" role="group" aria-label="Scan controls">
             <div id="autoScanHeaderWidget" class="auto-scan-header-widget">
               <button type="button" id="autoScanToggleBtn" class="auto-scan-toggle-btn auto-scan-off" title="Toggle background auto-scanning on or off">
                 <span id="autoScanHeaderDot" class="pulse-dot"></span>
@@ -34,12 +34,6 @@
                 </svg>
               </button>
             </div>
-            <button id="monthlyRostersHeaderBtn" class="secondary-btn monthly-rosters-header-btn" type="button" title="View saved monthly master rosters and merged scans">
-              <svg class="btn-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-              <span>Monthly Rosters</span>
-              <span id="monthlyRosterHeaderBadge" class="header-month-badge" hidden></span>
-            </button>
-            <button id="coveragePlannerBtn" class="secondary-btn" type="button" title="Open the automatic roster planner">Open roster planner</button>
             <button id="setupToggleBtn" class="secondary-btn" type="button" aria-expanded="false" aria-controls="scanForm">Edit setup</button>
             <div class="scan-split-action">
               <button id="runBtn" class="primary-btn" type="button" title="Reuse cached dates and scan only missing data">Scan</button>
@@ -57,13 +51,23 @@
           </div>
         </div>
 
+        <div class="workspace-navigation">
         <nav class="tab-switcher" aria-label="Workspace views">
-          <button type="button" id="tabGaps" class="active">Empty Slots</button>
+          <button type="button" id="tabGaps" class="active" aria-current="page">Empty Slots</button>
           <button type="button" id="tabReplacements">Replacements</button>
           <button type="button" id="tabRoster">Roster</button>
           <button type="button" id="tabInsights">Insights</button>
           <button type="button" id="tabHistory">History</button>
         </nav>
+          <div class="workspace-tools" role="group" aria-label="Planning and saved rosters">
+            <button id="monthlyRostersHeaderBtn" class="secondary-btn monthly-rosters-header-btn" type="button" title="View saved monthly master rosters and merged scans">
+              <svg class="btn-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              <span>Monthly Rosters</span>
+              <span id="monthlyRosterHeaderBadge" class="header-month-badge" hidden></span>
+            </button>
+            <button id="coveragePlannerBtn" class="secondary-btn" type="button" title="Open the automatic roster planner">Coverage planner</button>
+          </div>
+        </div>
 
         <div id="setupSummary" class="setup-summary" aria-live="polite" hidden></div>
 
@@ -672,6 +676,8 @@
             <div id="autoPlannerResult" class="auto-planner-result" aria-live="polite">Select eligible staff, adjust the rules, then create a plan.</div>
           </section>
           <div class="roster-view-toolbar">
+            <div class="roster-toolbar-group roster-display-group" role="group" aria-label="Roster display">
+              <span class="toolbar-group-label">View</span>
             <div class="roster-state-toggle-group" id="rosterStateToggleGroup" title="Choose which local roster state to view">
               <button id="stateBtnEdited" type="button" class="state-toggle-btn" data-state-mode="edited">Edited roster</button>
               <button id="stateBtnOriginal" type="button" class="state-toggle-btn active" data-state-mode="original">Original scan</button>
@@ -682,6 +688,9 @@
               <button id="rosterAirlineViewBtn" type="button" aria-pressed="false">Flight schedule</button>
             </div>
             <button id="rosterDayTimelineBtn" type="button" class="day-timeline-btn" aria-pressed="false" title="Show each staff member's duties on an hourly timeline for the selected start date">Day timeline</button>
+            </div>
+            <div class="roster-toolbar-group roster-tools-group" role="group" aria-label="Roster tools">
+              <span class="toolbar-group-label">Tools</span>
             <button id="trackPersonChangesBtn" type="button" class="audit-trigger-btn" title="Open Person Roster Audit & Change History">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -709,6 +718,7 @@
               <select id="rosterMonthSelect" class="roster-month-select" title="Instantly load an accumulated monthly master roster">
                 <option value="">Load Monthly Master...</option>
               </select>
+            </div>
             </div>
             <div class="sla-chip-filter-bar roster-toolbar-sla-chips" id="rosterSlaChipFilterBar">
               <span class="chip-bar-label">SLA:</span>
@@ -989,8 +999,8 @@
           <div class="modal-header">
             <div>
               <span class="modal-badge">Master Roster Hub</span>
-              <h2 id="monthlyRosterModalTitle">Monthly Master Rosters &amp; Merged Scans</h2>
-              <p class="modal-subtitle">View, load, and merge accumulated monthly rosters with live change detection</p>
+              <h2 id="monthlyRosterModalTitle">Monthly rosters</h2>
+              <p class="modal-subtitle">Load a saved month, merge scans, or review changes.</p>
             </div>
             <button type="button" id="monthlyRosterModalClose" class="modal-close-btn" aria-label="Close modal">&times;</button>
           </div>
@@ -1013,16 +1023,17 @@
             <div id="monthlyModalMergeView" class="modal-tab-content" hidden>
               <div class="merge-tool-card">
                 <div class="merge-tool-header">
-                  <h4>Merge Multiple Scans or Custom Time Range</h4>
-                  <p>Combine multiple partial scans into a cohesive master roster dataset.</p>
+                  <h4>Build a combined roster</h4>
+                  <p>Combine saved scans or choose a date range. The newest scan takes priority for overlapping dates.</p>
                 </div>
                 <div class="merge-tool-forms">
                   <div class="merge-option-group">
                     <label class="merge-radio-label">
                       <input type="radio" name="mergeModeOption" value="snapshots" checked id="mergeModeSnapshots">
-                      <strong>Merge specific scan snapshots from history</strong>
+                      <strong>Choose saved scans</strong>
                     </label>
                     <div id="mergeSnapshotsSelection" class="merge-selection-box">
+                      <div class="merge-selection-toolbar"><span id="mergeSelectionCount" aria-live="polite">0 selected</span><button type="button" id="mergeSelectAllBtn" class="secondary-btn">Select all</button><button type="button" id="mergeClearBtn" class="secondary-btn">Clear</button></div>
                       <div id="mergeSnapshotsList" class="merge-snapshots-list">
                         <span class="muted">No scan snapshots available to merge.</span>
                       </div>
@@ -1032,12 +1043,23 @@
                   <div class="merge-option-group">
                     <label class="merge-radio-label">
                       <input type="radio" name="mergeModeOption" value="range" id="mergeModeRange">
-                      <strong>Merge by date range across all saved monthly data</strong>
+                      <strong>Choose a date range</strong>
                     </label>
-                    <div id="mergeRangeSelection" class="merge-range-grid is-disabled">
+                    <div id="mergeRangeSelection" class="merge-range-grid" hidden>
                       <label><span>From Date</span><input type="date" id="mergeRangeStartDate"></label>
                       <label><span>To Date</span><input type="date" id="mergeRangeEndDate"></label>
                     </div>
+                  </div>
+
+                  <div class="merge-name-group">
+                    <label for="mergeCustomName" class="merge-name-label">
+                      <span>Custom Roster Name (Optional)</span>
+                      <input type="text" id="mergeCustomName" class="merge-name-input" placeholder="e.g. September 2026 Master, Peak Summer 2026, Q3 Audit">
+                    </label>
+                    <label class="merge-save-checkbox-label">
+                      <input type="checkbox" id="mergeSaveAsMaster" checked>
+                      <span>Save as Master Roster in Monthly Rosters list</span>
+                    </label>
                   </div>
 
                   <div class="merge-actions-row">
@@ -1147,8 +1169,8 @@
           <div class="modal-header audit-modal-header">
             <div class="audit-modal-title-group">
               <span class="modal-badge audit-badge-tag">Roster Audit &amp; Tracking</span>
-              <h3 id="personChangesTitle" class="audit-modal-title">Person Roster Audit &amp; Change History</h3>
-              <p id="personChangesSubtitle" class="audit-modal-sub">Track original vs. current roster edits, shift swaps, and timing changes across scanned dates</p>
+              <h3 id="personChangesTitle" class="audit-modal-title">Roster changes</h3>
+              <p id="personChangesSubtitle" class="audit-modal-sub">Review assignments, swaps, and time changes by staff member.</p>
             </div>
             <button type="button" id="personChangesCloseBtn" class="modal-close-btn" aria-label="Close modal">&times;</button>
           </div>
@@ -1195,14 +1217,14 @@
 
       <!-- Unassigned Shifts Drag & Drop Modal -->
       <div id="unassignedShiftsModal" class="modal-overlay unassigned-modal-overlay" hidden aria-hidden="true">
-        <div class="modal-card unassigned-shifts-card" role="dialog" aria-modal="true" aria-labelledby="unassignedShiftsTitle">
+        <div class="modal-card unassigned-shifts-card" role="region" aria-labelledby="unassignedShiftsTitle">
           <div class="modal-header unassigned-modal-header">
             <div class="unassigned-modal-title-group">
               <span class="modal-badge unassigned-badge-tag">Drag &amp; Drop Allocation</span>
-              <h3 id="unassignedShiftsTitle" class="unassigned-modal-title">Unassigned Shifts &amp; Coverage Gaps</h3>
+              <h3 id="unassignedShiftsTitle" class="unassigned-modal-title">Unassigned shifts</h3>
               <p id="unassignedShiftsSubtitle" class="unassigned-modal-sub">Drag any unassigned duty card onto a staff member in the roster table to allocate it.</p>
             </div>
-            <button type="button" id="unassignedShiftsCloseBtn" class="modal-close-btn" aria-label="Close unassigned shifts modal">&times;</button>
+            <button type="button" id="unassignedShiftsCloseBtn" class="modal-close-btn" aria-label="Close unassigned shifts panel">&times;</button>
           </div>
           <div class="unassigned-shifts-body">
             <div class="unassigned-controls-panel">
@@ -1420,7 +1442,7 @@
                     </div>
                   </div>
 
-                  <div class="pdf-option-checks" aria-label="Included PDF details">
+                  <div class="pdf-option-checks" id="pdfCustomizerColGroup" aria-label="Included PDF details">
                     <span class="pdf-option-checks-label">Included details</span>
                     <div class="customizer-checkboxes">
                       <label class="customizer-chip-check"><input type="checkbox" id="pdfColStaffName" checked><span>Staff Name</span></label>
@@ -1433,6 +1455,42 @@
                   </div>
 
                   <div class="customizer-inputs-grid" style="margin-top: 10px;">
+                    <label class="customizer-field" id="pdfOrientationField">
+                      <span>Orientation</span>
+                      <select id="pdfOrientationSelect" class="bulk-select">
+                        <option value="landscape" selected>Landscape (Default)</option>
+                        <option value="portrait">Portrait</option>
+                      </select>
+                    </label>
+
+                    <label class="customizer-field" id="pdfAirlineFilterField">
+                      <span>Airline Filter</span>
+                      <select id="pdfAirlineFilterSelect" class="bulk-select">
+                        <option value="ALL">All Airlines</option>
+                      </select>
+                    </label>
+
+                    <div class="customizer-field" id="pdfSlaFilterField" style="position: relative;">
+                      <span>SLA Filter</span>
+                      <div class="multi-select-wrapper pdf-sla-dropdown-wrap" id="pdfSlaDropdownWrap">
+                        <button type="button" class="multi-select-btn pdf-sla-btn" id="pdfSlaBtn" aria-expanded="false" aria-haspopup="true">
+                          <span id="pdfSlaBtnText">All SLAs</span>
+                          <svg class="chevron-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="multi-select-menu pdf-sla-menu" id="pdfSlaMenu" hidden>
+                          <div class="multi-select-header">
+                            <span>Filter SLAs</span>
+                            <div class="multi-select-actions">
+                              <button type="button" class="link-btn" id="pdfSlaActiveBtn" hidden>Use view</button>
+                              <button type="button" class="link-btn" id="pdfSlaAllBtn">All</button>
+                              <button type="button" class="link-btn" id="pdfSlaNoneBtn">None</button>
+                            </div>
+                          </div>
+                          <div class="multi-select-list" id="pdfSlaCheckboxes"></div>
+                        </div>
+                      </div>
+                    </div>
+
                     <label class="customizer-field">
                       <span>Table Density</span>
                       <select id="pdfDensitySelect" class="bulk-select">
@@ -1440,7 +1498,8 @@
                         <option value="compact">Compact (More Rows/Page)</option>
                       </select>
                     </label>
-                    <label class="customizer-field" style="grid-column: span 1;">
+
+                    <label class="customizer-field" style="grid-column: span 2;">
                       <span>Custom Header Notes (Optional)</span>
                       <input type="text" id="pdfCustomHeaderInput" placeholder="e.g. MUC OPS Desk Sign-Off" class="search-input customizer-notes-input" style="height: 30px; font-size: 11px;">
                     </label>
@@ -1559,8 +1618,8 @@
       <div class="modal-card auto-scan-modal-card">
         <div class="modal-header">
           <div class="modal-title-group">
-            <h2 id="autoScanModalTitle">Automatic Roster Scanning</h2>
-            <p class="modal-subtitle">Automatically monitor AVBIS for newly posted SOD empty slots at regular intervals</p>
+            <h2 id="autoScanModalTitle">Automatic scanning</h2>
+            <p class="modal-subtitle">Choose when to scan and how to notify you about new gaps.</p>
           </div>
           <button type="button" id="autoScanModalCloseBtn" class="close-btn" aria-label="Close dialog">×</button>
         </div>
@@ -1568,7 +1627,7 @@
           <div class="auto-scan-status-banner">
             <div class="banner-left">
               <div>
-                <strong>Auto-Scan Engine</strong>
+                <strong>Automatic scan status</strong>
                 <div id="autoScanNextCountdown" class="banner-subtext">Timer stopped</div>
               </div>
             </div>
@@ -1578,13 +1637,15 @@
           </div>
 
           <div class="auto-scan-config-grid">
+            <section class="auto-scan-settings-section" aria-label="Scan schedule">
+              <h3 class="config-section-title">Schedule</h3>
             <div class="config-row main-enable-row">
               <div class="config-label">
                 <strong>Enable Background Auto-Scanning</strong>
-                <span>Periodically fetches live data from AVBIS in the background</span>
+                <span>Runs while this app stays open. Save to apply your changes.</span>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="autoScanMainToggle">
+                <input type="checkbox" id="autoScanMainToggle" aria-label="Enable background scanning">
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -1595,7 +1656,7 @@
                 <span>How frequently the background scan runs</span>
               </div>
               <div class="config-input-wrap">
-                <select id="autoScanIntervalSelect" class="form-select">
+                <select id="autoScanIntervalSelect" aria-label="Scan interval" class="form-select">
                   <option value="60">Every 1 hour</option>
                   <option value="120">Every 2 hours</option>
                   <option value="360" selected>Every 6 hours</option>
@@ -1604,7 +1665,7 @@
                   <option value="custom">Custom interval...</option>
                 </select>
                 <div id="autoScanCustomIntervalWrap" class="custom-interval-input" hidden>
-                  <input type="number" id="autoScanCustomMinutes" min="1" max="1440" value="360" placeholder="Min">
+                  <input type="number" id="autoScanCustomMinutes" aria-label="Custom interval in minutes" min="1" max="1440" value="360" placeholder="Min">
                   <span>minutes</span>
                 </div>
               </div>
@@ -1615,7 +1676,7 @@
                 <strong>Target Date Range</strong>
                 <span>Scope of dates to monitor during background runs</span>
               </div>
-              <select id="autoScanRangeModeSelect" class="form-select">
+              <select id="autoScanRangeModeSelect" aria-label="Target date range" class="form-select">
                 <option value="active" selected>Selected Date Range (from Main Form)</option>
                 <option value="today">Today Only</option>
                 <option value="3days">Next 3 Days</option>
@@ -1630,12 +1691,14 @@
                 <span>Bypass local cache to query fresh data directly from AVBIS</span>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="autoScanBypassCacheToggle" checked>
+                <input type="checkbox" id="autoScanBypassCacheToggle" aria-label="Bypass cache" checked>
                 <span class="toggle-slider"></span>
               </label>
             </div>
 
-            <div class="config-section-title">Notifications & Alerts</div>
+            </section>
+            <section class="auto-scan-settings-section" aria-label="Notifications and planning">
+            <h3 class="config-section-title">Notifications &amp; alerts</h3>
 
             <div class="config-row">
               <div class="config-label">
@@ -1643,7 +1706,7 @@
                 <span>Display browser notification when new empty slots are found</span>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="autoScanNotifyNewGapsToggle" checked>
+                <input type="checkbox" id="autoScanNotifyNewGapsToggle" aria-label="Desktop notifications" checked>
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -1654,12 +1717,12 @@
                 <span>Play a subtle chime audio cue when new gaps open</span>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="autoScanPlaySoundToggle" checked>
+                <input type="checkbox" id="autoScanPlaySoundToggle" aria-label="Sound alert" checked>
                 <span class="toggle-slider"></span>
               </label>
             </div>
 
-            <div class="config-section-title">Smart Safeguards</div>
+            <h3 class="config-section-title">While planning</h3>
 
             <div class="config-row">
               <div class="config-label">
@@ -1667,7 +1730,7 @@
                 <span>Automatically pause background scans while editing coverage or shifts</span>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="autoScanPauseEditingToggle" checked>
+                <input type="checkbox" id="autoScanPauseEditingToggle" aria-label="Pause while planning" checked>
                 <span class="toggle-slider"></span>
               </label>
             </div>
@@ -1678,24 +1741,25 @@
                 <span>Limit background scanning to specified UTC hours</span>
               </div>
               <label class="toggle-switch">
-                <input type="checkbox" id="autoScanActiveHoursToggle">
+                <input type="checkbox" id="autoScanActiveHoursToggle" aria-label="Use active operating hours">
                 <span class="toggle-slider"></span>
               </label>
             </div>
 
             <div id="autoScanHoursRow" class="config-subrow" hidden>
               <span>Active from</span>
-              <input type="number" id="autoScanStartHour" min="0" max="23" value="6" class="hour-input">
+              <input type="number" id="autoScanStartHour" aria-label="Start hour in UTC" min="0" max="23" value="6" class="hour-input">
               <span>:00 to</span>
-              <input type="number" id="autoScanEndHour" min="0" max="23" value="22" class="hour-input">
+              <input type="number" id="autoScanEndHour" aria-label="End hour in UTC" min="0" max="23" value="22" class="hour-input">
               <span>:00 UTC</span>
             </div>
+            </section>
           </div>
         </div>
         <div class="modal-footer auto-scan-modal-footer">
           <span id="autoScanLastRunText" class="auto-scan-last-run">No auto-scan executed yet</span>
           <div class="modal-footer-actions">
-            <button type="button" id="autoScanRunNowBtn" class="secondary-btn">Scan Now</button>
+            <button type="button" id="autoScanRunNowBtn" class="secondary-btn">Run saved settings now</button>
             <button type="button" id="autoScanModalCancelBtn" class="secondary-btn">Cancel</button>
             <button type="button" id="autoScanModalSaveBtn" class="primary-btn">Save & Apply</button>
           </div>

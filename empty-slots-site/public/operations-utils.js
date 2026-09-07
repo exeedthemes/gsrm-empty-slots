@@ -2086,8 +2086,34 @@ return {
       const iso = normalizeDateToIso(firstDate);
       if (iso) key = iso.slice(0, 7);
     }
-    if (!key || !/^\d{4}-\d{2}$/.test(key)) {
+    if (!key) {
       key = new Date().toISOString().slice(0, 7);
+    }
+
+    const isStandardMonth = /^\d{4}-\d{2}$/.test(key);
+
+    if (!isStandardMonth) {
+      const allIsoDates = [...new Set([
+        ...(scannedDates || []).map(normalizeDateToIso),
+        ...(rows || []).map((r) => normalizeDateToIso(r?.date))
+      ])].filter(Boolean).sort();
+
+      const uniqueFlights = new Set((rows || []).map((r) => `${r.date}|${r.flight || r.flight_id}`));
+      const gaps = (rows || []).filter((r) => Number(r.missing || 0) > 0);
+      const totalDays = allIsoDates.length || 1;
+
+      return {
+        monthKey: key,
+        daysInMonth: totalDays,
+        scannedDaysCount: allIsoDates.length,
+        coveragePercent: 100,
+        missingDates: [],
+        scannedDates: allIsoDates,
+        flightsCount: uniqueFlights.size,
+        gapsCount: gaps.length,
+        rowsCount: (rows || []).length,
+        isComplete: true,
+      };
     }
 
     const [yearStr, monthStr] = key.split("-");

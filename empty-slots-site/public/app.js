@@ -162,6 +162,7 @@ let selectedRosterSlas = [];
 let currentSortCol = "date";
 let currentSortDir = "asc";
 let progressTimer = null;
+let progressPollingGeneration = 0;
 let activeTab = "gaps";
 let selectedReplacementDuty = null;
 let selectedGap = null;
@@ -277,8 +278,8 @@ if (replaceAllShiftsBtn) {
   replaceAllShiftsBtn.addEventListener("click", () => executeBulkReplacement());
 }
 
-runBtn.addEventListener("click", () => runScan(false));
-refreshScanBtn.addEventListener("click", () => runScan(true));
+runBtn.addEventListener("click", () => runScan(false).catch(() => {}));
+refreshScanBtn.addEventListener("click", () => runScan(true).catch(() => {}));
 connectBtn.addEventListener("click", connectToAvbis);
 cancelScanBtn.addEventListener("click", cancelActiveScan);
 setupToggleBtn.addEventListener("click", () => setSetupCollapsed(!form.hidden));
@@ -507,7 +508,7 @@ if (unassignedShiftsFooterCloseBtn) {
   unassignedShiftsFooterCloseBtn.addEventListener("click", closeUnassignedShiftsModal);
 }
 if (unassignedSearchInput) {
-  unassignedSearchInput.addEventListener("input", renderUnassignedShiftsList);
+  unassignedSearchInput.addEventListener("input", debounceInput(renderUnassignedShiftsList));
 }
 if (unassignedSlaSelect) {
   unassignedSlaSelect.addEventListener("change", renderUnassignedShiftsList);
@@ -529,7 +530,7 @@ rosterSla.addEventListener("change", () => {
   renderRosterSlaChips(slas);
   applyFilters();
 });
-rosterStaffSearch.addEventListener("input", applyFilters);
+rosterStaffSearch.addEventListener("input", debounceInput(applyFilters));
 rosterPeriodMode.addEventListener("change", applyRosterPeriodMode);
 rosterMonth.addEventListener("input", applyRosterPeriodMode);
 rosterDate.addEventListener("change", () => {
@@ -596,7 +597,7 @@ document.getElementById("rosterCollapseAll").addEventListener("click", () => set
 if (flightScheduleAirlineFilter) flightScheduleAirlineFilter.addEventListener("change", renderRoster);
 if (flightScheduleCoverageFilter) flightScheduleCoverageFilter.addEventListener("change", renderRoster);
 if (flightScheduleDirectionFilter) flightScheduleDirectionFilter.addEventListener("change", renderRoster);
-if (flightScheduleSearch) flightScheduleSearch.addEventListener("input", renderRoster);
+if (flightScheduleSearch) flightScheduleSearch.addEventListener("input", debounceInput(renderRoster));
 document.addEventListener("click", (event) => {
   const selectedAction = event.target.closest(".planner-action-menu-panel button");
   if (selectedAction) selectedAction.closest("details")?.removeAttribute("open");
@@ -635,7 +636,7 @@ document.getElementById("autoDetectContractsBtn")?.addEventListener("click", () 
   const count = autoDetectStaffContracts({ forceAll: true });
   showToast(`Auto-detected contract status for staff (${count} contract(s) updated)`, { kind: "info", duration: 4000 });
 });
-autoPlannerStaffSearch.addEventListener("input", renderPlannerStaffList);
+autoPlannerStaffSearch.addEventListener("input", debounceInput(renderPlannerStaffList));
 for (const id of plannerOptionIds) document.getElementById(id).addEventListener("change", savePlannerOptions);
 availabilityPeriod.addEventListener("change", updateAvailabilityFields);
 availabilityShift.addEventListener("change", updateAvailabilityFields);
@@ -866,8 +867,11 @@ function applyRosterPeriodMode() {
 }
 
 function switchTab(tab) {
-  if (activeTab === tab) return;
   activeTab = tab;
+  for (const button of document.querySelectorAll(".tab-switcher button")) {
+    if (button.id === `tab${tab[0].toUpperCase()}${tab.slice(1)}`) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
   if (tab !== "gaps") closeGapPlanner();
   if (tab !== "gaps" && document.querySelector(".table-panel")?.classList.contains("results-fullscreen")) toggleResultsFullscreen(false);
   if (tab !== "roster" && rosterLayout.classList.contains("fullscreen")) toggleRosterFullscreen(false);
@@ -1043,7 +1047,7 @@ const accountDutyTitle = document.getElementById("accountDutyTitle");
 const accountDutyChips = document.getElementById("accountDutyChips");
 const accountDutyRosterBtn = document.getElementById("accountDutyRosterBtn");
 
-resultsSearch.addEventListener("input", applyFilters);
+resultsSearch.addEventListener("input", debounceInput(applyFilters));
 resultsDateFilter.addEventListener("input", applyFilters);
 resultsSlaFilter.addEventListener("change", applyFilters);
 resultsDirectionFilter.addEventListener("change", applyFilters);
@@ -1220,18 +1224,48 @@ async function cancelActiveScan() {
     progressText.textContent = "Cancellation requested. Completed dates will be preserved.";
   } catch (error) {
     setMessage(error.message || String(error), "warn");
+    cancelScanBtn.disabled = false;
+    cancelScanBtn.textContent = "Cancel scan";
   }
 }
 
 async function runScan(forceRefresh = false, options = {}) {
   const isAutoScan = Boolean(options.isAutoScan);
-  if (!isAutoScan && !form.reportValidity()) return;
+  if (activeScanId) {
+    if (!isAutoScan) setMessage("A scan is already running. Wait for it to finish or cancel it first.", "warn");
+    return;
+  }
+  if (!isAutoScan && !form.checkValidity()) {
+    setSetupCollapsed(false);
+    form.reportValidity();
+    return;
+  }
   const payload = readForm();
 
   if (options.dateRangeOverride?.startDate && options.dateRangeOverride?.endDate) {
     payload.startDate = options.dateRangeOverride.startDate;
     payload.endDate = options.dateRangeOverride.endDate;
   }
+
+  if (!payload.startDate || !payload.endDate || payload.startDate > payload.endDate) {
+    if (!isAutoScan) {
+      setSetupCollapsed(false);
+      scanEndDate.focus();
+    }
+    setMessage("Choose an end date on or after the start date.", "warn");
+    return;
+  }
+  const previousScan = {
+    rows: latestRows, originalRows, dates: latestScannedDates,
+    staff: latestStaffDirectory, source: scanSourceMeta,
+    flights: flightCount.textContent, dateCount: dateCount.textContent,
+    rosterStart: rosterDate.value, rosterEnd: rosterEndDate.value,
+    rosterStateMode,
+    selectedSlas: [...selectedResultsSlas],
+    filters: [resultsSearch, resultsDateFilter, resultsSlaFilter, resultsDirectionFilter,
+      resultsMissingFilter, resultsStartTimeFilter, resultsEndTimeFilter, resultsLocalTimeToggle]
+      .map((control) => ({ control, value: control.value, checked: control.checked })),
+  };
 
   const force = forceRefresh || Boolean(document.getElementById("forceRefreshToggle")?.checked);
   payload.forceRefresh = force;
@@ -1304,8 +1338,8 @@ async function runScan(forceRefresh = false, options = {}) {
           showToast(`${u.monthKey} Roster Updated: ${u.summary}`, { kind: "info", duration: 7000 });
         }
       }
-      if (typeof fetchMonthlyRosters === "function") fetchMonthlyRosters();
     }
+    if (typeof fetchMonthlyRosters === "function") fetchMonthlyRosters();
     connectedEmail = payload.email;
     updateConnectionState(true);
     updateStaffOptions();
@@ -1338,20 +1372,30 @@ async function runScan(forceRefresh = false, options = {}) {
     console.log("Empty SOD slot JSON:", result);
     return result;
   } catch (error) {
-    latestRows = [];
-    originalRows = [];
-    latestScannedDates = [];
-    latestStaffDirectory = [];
-    scanSourceMeta = { state: "error", detail: error.message || String(error) };
+    latestRows = previousScan.rows;
+    originalRows = previousScan.originalRows;
+    latestScannedDates = previousScan.dates;
+    latestStaffDirectory = previousScan.staff;
+    rosterDate.value = previousScan.rosterStart;
+    rosterEndDate.value = previousScan.rosterEnd;
+    rosterStateMode = previousScan.rosterStateMode;
+    scanSourceMeta = previousScan.dates.length
+      ? previousScan.source
+      : { state: "error", detail: error.message || String(error) };
     updateScanPlanStatus();
     updateStaffOptions();
     updateResultsSlaFilter();
     updateRosterFilters();
+    selectedResultsSlas = previousScan.selectedSlas;
+    for (const { control, value, checked } of previousScan.filters) {
+      control.value = value;
+      control.checked = checked;
+    }
     applyFilters();
-    flightCount.textContent = "0";
-    dateCount.textContent = "0";
+    flightCount.textContent = previousScan.flights;
+    dateCount.textContent = previousScan.dateCount;
     if (!isAutoScan) setSetupCollapsed(false);
-    setMessage(error.message || String(error), "error");
+    setMessage(`${error.message || String(error)}${previousScan.dates.length ? " Previous scan and local roster edits were preserved." : ""}`, "error");
     showToast(`Scan Failed: ${error.message || String(error)}`, { kind: "error", duration: 7000 });
     sendDesktopNotification("GSRM Scan Failed", error.message || String(error));
     throw error;
@@ -1407,8 +1451,6 @@ async function refreshAirlines() {
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
 
     populateAirlines(result.airlines || [], payload.airlines);
-    flightCount.textContent = result.scannedFlights || 0;
-    dateCount.textContent = (result.scannedDates || []).length;
     setMessage(`Loaded ${(result.airlines || []).length} airline filter option(s).`);
   } catch (error) {
     setMessage(error.message || String(error), "error");
@@ -1473,13 +1515,20 @@ function populateSlas(slas, selected = []) {
 function renderRows(rows) {
   resultsBody.innerHTML = "";
 
+  const useLocal = resultsLocalTimeToggle.checked;
+  const startHeader = document.getElementById("thStart");
+  const releaseHeader = document.getElementById("thRelease");
+  if (startHeader) startHeader.textContent = useLocal ? "Start Local" : "Start UTC";
+  if (releaseHeader) releaseHeader.textContent = useLocal ? "Release Local" : "Release UTC";
+
+
   if (!rows.length) {
     const tr = document.createElement("tr");
     const activeFilters = getActiveResultFilterCount();
     const hasScanRows = latestRows.length > 0;
     const title = !hasScanRows ? "Run a scan to find coverage gaps" : activeFilters ? "No gaps match these filters" : "No coverage gaps found";
     const hint = !hasScanRows
-      ? "Connect to AVBIS, confirm the scan period, then select Run."
+      ? "Connect to AVBIS, confirm the scan period, then select Scan."
       : activeFilters
         ? "Reset or adjust the filters to see more results."
         : "Every scanned position is currently covered for this period.";
@@ -1487,12 +1536,6 @@ function renderRows(rows) {
     resultsBody.appendChild(tr);
     return;
   }
-
-  const useLocal = resultsLocalTimeToggle.checked;
-  const startHeader = document.getElementById("thStart");
-  const releaseHeader = document.getElementById("thRelease");
-  if (startHeader) startHeader.textContent = useLocal ? "Start Local" : "Start UTC";
-  if (releaseHeader) releaseHeader.textContent = useLocal ? "Release Local" : "Release UTC";
 
   // Sort rows based on currentSortCol & currentSortDir
   const sortedRows = [...rows].sort((a, b) => {
@@ -1538,6 +1581,7 @@ function renderRows(rows) {
     return String(a.start_utc || "").localeCompare(String(b.start_utc || ""));
   });
 
+  const fragment = document.createDocumentFragment();
   let lastDateStr = null;
   let lastFlightNum = null;
   for (const row of sortedRows) {
@@ -1632,8 +1676,9 @@ function renderRows(rows) {
         </button>
       </td>
     `;
-    resultsBody.appendChild(tr);
+    fragment.appendChild(tr);
   }
+  resultsBody.appendChild(fragment);
 
   initResultsTableDelegation();
 }
@@ -1757,9 +1802,8 @@ function showToast(messageText, options = {}) {
 
   if (actionText && onAction) {
     card.querySelector(".toast-action-btn")?.addEventListener("click", () => {
-      removeToast();
       try {
-        onAction();
+        if (onAction() !== false) removeToast();
       } catch (err) {
         console.error("Toast action failed:", err);
       }
@@ -1774,7 +1818,8 @@ function showToast(messageText, options = {}) {
 }
 
 function pushUndoAction(label, undoFn) {
-  undoActionStack.push({ label, undoFn, timestamp: Date.now() });
+  const action = { label, undoFn, timestamp: Date.now() };
+  undoActionStack.push(action);
   if (undoActionStack.length > 20) undoActionStack.shift();
 
   showToast(label, {
@@ -1782,6 +1827,10 @@ function pushUndoAction(label, undoFn) {
     duration: 6000,
     actionText: "Undo",
     onAction: () => {
+      if (undoActionStack.at(-1) !== action) {
+        showToast("Undo the most recent change first.", { kind: "info", duration: 3500 });
+        return false;
+      }
       const popped = undoActionStack.pop();
       if (popped && typeof popped.undoFn === "function") {
         popped.undoFn();
@@ -1827,20 +1876,27 @@ function resetProgress(scanId) {
 
 function startProgressPolling(scanId) {
   stopProgressPolling();
-  progressTimer = setInterval(() => pollProgress(scanId), 1000);
-  pollProgress(scanId);
+  const generation = progressPollingGeneration;
+  const tick = async () => {
+    const progress = await pollProgress(scanId, generation);
+    if (generation === progressPollingGeneration && !progress?.done) {
+      progressTimer = setTimeout(tick, 1000);
+    }
+  };
+  tick();
 }
 
 function stopProgressPolling() {
-  if (progressTimer) clearInterval(progressTimer);
+  progressPollingGeneration += 1;
+  if (progressTimer) clearTimeout(progressTimer);
   progressTimer = null;
 }
 
-async function pollProgress(scanId) {
+async function pollProgress(scanId, generation = progressPollingGeneration) {
   try {
     const response = await fetch(`/api/progress?scanId=${encodeURIComponent(scanId)}`, { cache: "no-store" });
     const progress = await response.json();
-    if (!progress.found) return null;
+    if (generation !== progressPollingGeneration || !progress.found) return null;
     renderProgress(progress);
     if (progress.done) stopProgressPolling();
     return progress;
@@ -1989,8 +2045,9 @@ function csvCell(value) {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+let germanyTimeFormatter;
 function getGermanyTimeParts(dateObj) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
+  const formatter = germanyTimeFormatter ||= new Intl.DateTimeFormat("en-US", {
     timeZone: "Europe/Berlin",
     year: "numeric",
     month: "numeric",
@@ -2293,6 +2350,15 @@ function openAccountOwnerRoster() {
   setRosterViewMode("staff", false);
   useRosterStateForPlanning();
   switchTab("roster");
+}
+
+// Wait for a pause in typing before rebuilding large tables.
+function debounceInput(callback, delay = 150) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => callback(...args), delay);
+  };
 }
 
 function applyFilters() {
@@ -3879,7 +3945,7 @@ function renderUnassignedShiftsList() {
   }
 
   if (!items.length) {
-    listEl.innerHTML = '<div class="empty-state" style="grid-column: 1 / -1; padding: 28px; text-align: center; color: var(--muted); background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px;">No unassigned shifts match the current filters. All duties are covered!</div>';
+    listEl.innerHTML = '<div class="empty-state" style="grid-column: 1 / -1; padding: 28px; text-align: center; color: var(--muted); background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px;">No unassigned shifts match the current filters. Try another date scope or clear your filters.</div>';
     return;
   }
 
@@ -6309,22 +6375,29 @@ function exportPdf(targetTab) {
 }
 
 function getActiveSelectedSlas() {
-  if (activeTab === "roster") {
+  const currentTab = pdfExportTargetTab || activeTab;
+  if (currentTab === "roster") {
     if (typeof selectedRosterSlas !== "undefined" && selectedRosterSlas.length > 0) return selectedRosterSlas;
     const rosterSlaVal = document.getElementById("rosterSla")?.value;
-    if (rosterSlaVal && rosterSlaVal !== "ALL") return [rosterSlaVal];
-  } else if (activeTab === "gaps") {
+    if (rosterSlaVal && rosterSlaVal !== "ALL" && rosterSlaVal !== "") return [rosterSlaVal];
+  } else if (currentTab === "gaps" || (!["replacements", "roster", "insights", "history"].includes(currentTab))) {
     if (typeof selectedResultsSlas !== "undefined" && selectedResultsSlas.length > 0) return selectedResultsSlas;
     const resultsSlaVal = document.getElementById("resultsSlaFilter")?.value;
-    if (resultsSlaVal && resultsSlaVal !== "ALL") return [resultsSlaVal];
+    if (resultsSlaVal && resultsSlaVal !== "ALL" && resultsSlaVal !== "") return [resultsSlaVal];
   }
-  if (typeof selectedRosterSlas !== "undefined" && selectedRosterSlas.length > 0) return selectedRosterSlas;
   if (typeof selectedResultsSlas !== "undefined" && selectedResultsSlas.length > 0) return selectedResultsSlas;
+  if (typeof selectedRosterSlas !== "undefined" && selectedRosterSlas.length > 0) return selectedRosterSlas;
   return [];
 }
 
 function getPdfSelectedSlas() {
-  if (!availablePdfSlas.length || selectedPdfSlas.length === availablePdfSlas.length) return [];
+  if (!availablePdfSlas.length) return [];
+  if (selectedPdfSlas.length > 0 && selectedPdfSlas.length < availablePdfSlas.length) {
+    return [...selectedPdfSlas];
+  }
+  if (selectedPdfSlas.length === availablePdfSlas.length) {
+    return [];
+  }
   return [...selectedPdfSlas];
 }
 
@@ -6497,7 +6570,8 @@ function updatePdfModalMetaAndPreviews() {
     pdfExportStaffFilter = staffSelect.value || "ALL";
   }
 
-  const isOverlaps = pdfExportTargetTab === "overlaps" || scopeSelect?.value === "OVERLAPS" || (activeTab === "roster" && typeof rosterStatus !== "undefined" && rosterStatus?.value === "overlap" && scopeSelect?.value !== "ALL");
+  const activePdfTab = pdfExportTargetTab || activeTab;
+  const isOverlaps = activePdfTab === "overlaps" || scopeSelect?.value === "OVERLAPS" || (activeTab === "roster" && typeof rosterStatus !== "undefined" && rosterStatus?.value === "overlap" && scopeSelect?.value !== "ALL");
 
   if (pdfMetaType) {
     if (isOverlaps) {
@@ -6510,7 +6584,7 @@ function updatePdfModalMetaAndPreviews() {
         insights: "Coverage & Workload Insights",
         history: "Scan Snapshots History",
       };
-      pdfMetaType.textContent = tabLabels[pdfExportTargetTab || activeTab] || "Operational Report";
+      pdfMetaType.textContent = tabLabels[activePdfTab] || "Operational Report";
     }
   }
 
@@ -6518,6 +6592,38 @@ function updatePdfModalMetaAndPreviews() {
   if (sourceRows.length && selectedSlas.length > 0) {
     sourceRows = sourceRows.filter((r) => selectedSlas.includes(r.sla));
   }
+  if (airlineSelect?.value && airlineSelect.value !== "ALL") {
+    sourceRows = sourceRows.filter((r) => OperationsUtils.airlineCode(r) === airlineSelect.value || (r.flight || "").startsWith(airlineSelect.value));
+  }
+
+  const pdfOriginalRowCount = document.getElementById("pdfOriginalRowCount");
+  const pdfOriginalGapCount = document.getElementById("pdfOriginalGapCount");
+  const pdfEditedCoveredCount = document.getElementById("pdfEditedCoveredCount");
+  const pdfEditedContactedCount = document.getElementById("pdfEditedContactedCount");
+  const pdfEditedOpenCount = document.getElementById("pdfEditedOpenCount");
+
+  const gaps = sourceRows.filter((r) => Number(r.missing || 0) > 0);
+  const totalRecords = activePdfTab === "history" ? getScanHistory().length : (activePdfTab === "gaps" ? gaps.length : sourceRows.length);
+  const actions = getGapActions();
+
+  let coveredCount = 0;
+  let contactedCount = 0;
+  let openCount = 0;
+
+  gaps.forEach((g) => {
+    const key = OperationsUtils.rowKey(g);
+    const act = actions[key];
+    const status = act?.status || "Open";
+    if (status === "Covered") coveredCount++;
+    else if (status === "Contacted") contactedCount++;
+    else openCount++;
+  });
+
+  if (pdfOriginalRowCount) pdfOriginalRowCount.textContent = activePdfTab === "gaps" ? gaps.length : totalRecords;
+  if (pdfOriginalGapCount) pdfOriginalGapCount.textContent = gaps.length;
+  if (pdfEditedCoveredCount) pdfEditedCoveredCount.textContent = coveredCount;
+  if (pdfEditedContactedCount) pdfEditedContactedCount.textContent = contactedCount;
+  if (pdfEditedOpenCount) pdfEditedOpenCount.textContent = openCount;
 
   if (pdfMetaRecords) {
     const slaBadge = selectedSlas.length > 0 ? ` [SLA: ${selectedSlas.join(", ")}]` : "";
@@ -6526,7 +6632,7 @@ function updatePdfModalMetaAndPreviews() {
       pdfMetaRecords.textContent = `${overlapRows.length} shift collision(s) detected${slaBadge}`;
     } else if (availablePdfSlas.length && !selectedPdfSlas.length) {
       pdfMetaRecords.textContent = "0 records · Select at least one SLA";
-    } else if ((pdfExportTargetTab || activeTab) === "roster" && rosterViewMode === "staff") {
+    } else if (activePdfTab === "roster" && rosterViewMode === "staff") {
       const roster = getRosterRows();
       let visiblePeople = roster?.rows ? filterRosterPeople(roster.rows) : [];
       if (pdfExportStaffFilter !== "ALL") {
@@ -6537,7 +6643,7 @@ function updatePdfModalMetaAndPreviews() {
       pdfMetaRecords.textContent = `${visiblePeople.length} staff · ${dateCount} date${dateCount === 1 ? "" : "s"}${slaBadge}`;
     } else if (pdfExportStaffFilter === "ALL") {
       const gapsCount = sourceRows.filter((r) => Number(r.missing || 0) > 0).length;
-      const totalRecords = activeTab === "history" ? getScanHistory().length : (activeTab === "gaps" ? gapsCount : sourceRows.length);
+      const totalRecords = activePdfTab === "history" ? getScanHistory().length : (activePdfTab === "gaps" ? gapsCount : sourceRows.length);
       pdfMetaRecords.textContent = `${totalRecords} rows (All Staff)${slaBadge}`;
     } else {
       const filterTarget = parseStaffIdentity(pdfExportStaffFilter);
@@ -6732,10 +6838,14 @@ function openPdfExportModal(targetTab = activeTab) {
     airlineSelect.value = airlines.includes(curAirline) ? curAirline : "ALL";
   }
 
-  // Populate the PDF multi-SLA checklist while retaining valid prior choices.
+  // Populate the PDF multi-SLA checklist while honoring active view filter.
   availablePdfSlas = [...new Set(latestRows.map((r) => r.sla).filter(Boolean))].sort();
-  selectedPdfSlas = selectedPdfSlas.filter((sla) => availablePdfSlas.includes(sla));
-  if (!selectedPdfSlas.length) selectedPdfSlas = [...availablePdfSlas];
+  const activeSlas = getActiveSelectedSlas().filter((sla) => availablePdfSlas.includes(sla));
+  if (activeSlas.length > 0) {
+    selectedPdfSlas = [...activeSlas];
+  } else {
+    selectedPdfSlas = [...availablePdfSlas];
+  }
   renderPdfSlaOptions();
 
   setPdfExportLayoutStyle(pdfExportLayoutStyle);
@@ -6744,51 +6854,10 @@ function openPdfExportModal(targetTab = activeTab) {
   const dateStr = now.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   const timeStr = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
-  const tabLabels = {
-    gaps: "Empty Slots (Gaps)",
-    replacements: "Duty Replacements",
-    roster: rosterViewMode === "airline" ? "Flight Schedule Roster" : "Staff Duty Roster",
-    insights: "Coverage & Workload Insights",
-    history: "Scan Snapshots History",
-    overlaps: "Overlapping Shifts (Collisions)",
-  };
-
-  const reportTypeName = tabLabels[pdfExportTargetTab || activeTab] || "Operational Report";
-
-  const pdfMetaType = document.getElementById("pdfMetaType");
   const pdfMetaDate = document.getElementById("pdfMetaDate");
-  const pdfOriginalRowCount = document.getElementById("pdfOriginalRowCount");
-  const pdfOriginalGapCount = document.getElementById("pdfOriginalGapCount");
-  const pdfEditedCoveredCount = document.getElementById("pdfEditedCoveredCount");
-  const pdfEditedContactedCount = document.getElementById("pdfEditedContactedCount");
-  const pdfEditedOpenCount = document.getElementById("pdfEditedOpenCount");
-
-  const gaps = latestRows.filter((r) => Number(r.missing || 0) > 0);
-  const totalRecords = activeTab === "history" ? getScanHistory().length : (activeTab === "gaps" ? gaps.length : latestRows.length);
-  const actions = getGapActions();
-
-  let coveredCount = 0;
-  let contactedCount = 0;
-  let openCount = 0;
-
-  gaps.forEach((g) => {
-    const key = OperationsUtils.rowKey(g);
-    const act = actions[key];
-    const status = act?.status || "Open";
-    if (status === "Covered") coveredCount++;
-    else if (status === "Contacted") contactedCount++;
-    else openCount++;
-  });
-
-  if (pdfMetaType) pdfMetaType.textContent = reportTypeName;
   if (pdfMetaDate) pdfMetaDate.textContent = `${dateStr} ${timeStr}`;
 
-  if (pdfOriginalRowCount) pdfOriginalRowCount.textContent = activeTab === "gaps" ? gaps.length : totalRecords;
-  if (pdfOriginalGapCount) pdfOriginalGapCount.textContent = gaps.length;
-
-  if (pdfEditedCoveredCount) pdfEditedCoveredCount.textContent = coveredCount;
-  if (pdfEditedContactedCount) pdfEditedContactedCount.textContent = contactedCount;
-  if (pdfEditedOpenCount) pdfEditedOpenCount.textContent = openCount;
+  const actions = getGapActions();
 
   // Only show edited PDF export option if edits have actually been made in the working plan
   const hasGapEdits = Object.values(actions).some(
@@ -7069,7 +7138,7 @@ function generatePdfDocument({ mode = "original" } = {}) {
     // Filter by airline and selected SLAs if selected
     let sourceScanRows = (mode === "original" && originalRows && originalRows.length)
       ? originalRows
-      : ((filteredRows && filteredRows.length) ? filteredRows : latestRows);
+      : latestRows;
     if (selectedAirline && selectedAirline !== "ALL") {
       sourceScanRows = sourceScanRows.filter((r) => OperationsUtils.airlineCode(r) === selectedAirline || (r.flight || "").startsWith(selectedAirline));
     }
@@ -7080,7 +7149,6 @@ function generatePdfDocument({ mode = "original" } = {}) {
       sourceScanRows = sourceScanRows.filter((r) => selectedSlas.includes(r.sla));
     }
 
-    // Group / sort rows chronologically by Date first, then by Flight / Airline Number, then by Start UTC time (ONLY FOR PDF EXPORT)
     sourceScanRows = [...sourceScanRows].sort((a, b) => {
       const dateA = parseDateSortable(a.date);
       const dateB = parseDateSortable(b.date);
@@ -7093,38 +7161,51 @@ function generatePdfDocument({ mode = "original" } = {}) {
       return String(a.start_utc || "").localeCompare(String(b.start_utc || ""));
     });
 
+    const formatPdfDate = (dateStr) => {
+      if (!dateStr || dateStr === "—") return dateStr;
+      if (!incHolidays || typeof HolidayUtils === "undefined") return dateStr;
+      const year = Number(String(dateStr).slice(0, 4));
+      if (!year) return dateStr;
+      const holidays = HolidayUtils.getGermanBavarianHolidays(year);
+      const isHol = holidays.some((h) => h.date === dateStr);
+      return isHol ? `${dateStr} [HOL]` : dateStr;
+    };
+
     if (isOverlaps) {
       const overlapRows = getOverlappingShiftExportRows(sourceScanRows, latestStaffDirectory, selectedAirline, pdfExportStaffFilter, selectedSlas, incStaffName);
-      if (!incStaffName) {
-        tableHeaders = [["Date", "Staff (Initials)", "Shift A (Flight / SLA)", "Shift A Time", "Shift B (Flight / SLA)", "Shift B Time", "Collision Gap", "Status / Notes"]];
-        exportRows = overlapRows.map(([date, staff, _initials, ...shiftDetails]) => [date, staff, ...shiftDetails]);
-        columnStyles = {
-          0: { cellWidth: 22 },
-          1: { cellWidth: 22 },
-          2: { cellWidth: 42 },
-          3: { cellWidth: 28 },
-          4: { cellWidth: 42 },
-          5: { cellWidth: 28 },
-          6: { cellWidth: 28 },
-          7: { cellWidth: 36 },
-        };
+      const headers = ["Date"];
+      if (incStaffName) {
+        headers.push("Staff Member", "Initials");
       } else {
-        tableHeaders = [["Date", "Staff Member", "Initials", "Shift A (Flight / SLA)", "Shift A Time", "Shift B (Flight / SLA)", "Shift B Time", "Collision Gap", "Status / Notes"]];
-        exportRows = overlapRows;
-        columnStyles = {
-          0: { cellWidth: 22 },
-          1: { cellWidth: 36 },
-          2: { cellWidth: 16 },
-          3: { cellWidth: 42 },
-          4: { cellWidth: 28 },
-          5: { cellWidth: 42 },
-          6: { cellWidth: 28 },
-          7: { cellWidth: 28 },
-          8: { cellWidth: 32 },
-        };
+        headers.push("Staff (Initials)");
       }
+      headers.push("Shift A (Flight / SLA)", "Shift A Time", "Shift B (Flight / SLA)", "Shift B Time");
+      if (incSpan) headers.push("Collision Gap");
+      if (incNotes) headers.push("Status / Notes");
+      tableHeaders = [headers];
+
+      exportRows = overlapRows.map(([date, displayName, staffInitials, shiftA, shiftATime, shiftB, shiftBTime, overlapGap, statusText]) => {
+        const row = [formatPdfDate(date)];
+        if (incStaffName) {
+          row.push(displayName, staffInitials);
+        } else {
+          row.push(displayName);
+        }
+        row.push(shiftA, shiftATime, shiftB, shiftBTime);
+        if (incSpan) row.push(overlapGap);
+        if (incNotes) row.push(statusText);
+        return row;
+      });
     } else if (activeTab === "replacements") {
-      tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Start UTC", "Release UTC", "Duration", "Candidates", "Top Candidate / Assignment", "Status"]];
+      const headers = ["Date", "Flight"];
+      if (incRoute) headers.push("Dir", "Route");
+      if (incAircraft) headers.push("Aircraft");
+      headers.push("SLA", "Start UTC", "Release UTC");
+      if (incSpan) headers.push("Duration");
+      headers.push("Candidates");
+      if (incNotes) headers.push("Top Candidate / Assignment", "Status");
+      tableHeaders = [headers];
+
       const initials = myInitialsInput.value.trim().toUpperCase();
       const myDuties = sourceScanRows.filter((row) => row.staff && row.staff.some((s) => matchStaffMember(s, initials)));
       const maxGapMinutes = getMaxDutyGap().minutes;
@@ -7185,48 +7266,58 @@ function generatePdfDocument({ mode = "original" } = {}) {
           }
         }
 
-        return [
-          duty.date || "",
-          duty.flight || "",
-          duty.direction || "",
-          duty.route || "",
-          duty.sla || "",
-          duty.start_utc || "",
-          duty.release_utc || "",
-          duty.duration || "",
-          candidates.length,
-          matchText,
-          statusText
-        ];
+        const row = [formatPdfDate(duty.date || ""), duty.flight || ""];
+        if (incRoute) row.push(duty.direction || "", duty.route || "");
+        if (incAircraft) row.push(duty.aircraft || "—");
+        row.push(duty.sla || "", duty.start_utc || "", duty.release_utc || "");
+        if (incSpan) row.push(duty.duration || "");
+        row.push(candidates.length);
+        if (incNotes) row.push(matchText, statusText);
+
+        return row;
       });
 
     } else if (activeTab === "roster") {
       const roster = getRosterRows(mode);
       if (rosterViewMode === "airline") {
-        tableHeaders = [["Date", "Flight", "Dir", "Route", "Aircraft", "Sch. UTC", "SLA", "Start UTC", "Release UTC", "Req / Asgd", incStaffName ? "Allocated Staff" : "Allocated Staff (Initials)"]];
+        const headers = ["Date", "Flight"];
+        if (incRoute) headers.push("Dir", "Route");
+        if (incAircraft) headers.push("Aircraft");
+        headers.push("Sch. UTC", "SLA", "Start UTC", "Release UTC", "Req / Asgd", incStaffName ? "Allocated Staff" : "Allocated Staff (Initials)");
+        tableHeaders = [headers];
+
         const days = getAirlineRosterDays(roster);
         exportRows = days.flatMap((day) => day.flights
           .filter((f) => selectedAirline === "ALL" || (f.airlineCode || f.flight.slice(0, 2)) === selectedAirline)
           .flatMap((flight) => flight.duties
             .filter((duty) => selectedSlas.length === 0 || selectedSlas.includes(duty.sla))
-            .map((duty) => [
-              day.isoDate || "",
-              duty.flight || "",
-              duty.direction || "",
-              duty.route || "",
-              duty.aircraft || "",
-              duty.scheduled_utc || "",
-              duty.sla || "",
-              duty.start_utc || "",
-              duty.release_utc || "",
-              `${duty.required || 0} / ${duty.assigned || 0}`,
-              (duty.staff || []).map((s) => {
-                const id = parseStaffIdentity(s);
-                return incStaffName ? (id?.name || s) : (id?.initials || s);
-              }).join(", ") || "Unassigned"
-            ])));
+            .map((duty) => {
+              const row = [formatPdfDate(day.isoDate || ""), duty.flight || ""];
+              if (incRoute) row.push(duty.direction || "", duty.route || "");
+              if (incAircraft) row.push(duty.aircraft || "—");
+              row.push(
+                duty.scheduled_utc || "",
+                duty.sla || "",
+                duty.start_utc || "",
+                duty.release_utc || "",
+                `${duty.required || 0} / ${duty.assigned || 0}`,
+                (duty.staff || []).map((s) => {
+                  const id = parseStaffIdentity(s);
+                  return incStaffName ? (id?.name || s) : (id?.initials || s);
+                }).join(", ") || "Unassigned"
+              );
+              return row;
+            })));
       } else {
-        tableHeaders = [["Status", "Station", incStaffName ? "Staff Name" : "Staff Initials", "Date", "Flight", "Direction", "Route", "SLA", "Start UTC", "Release UTC"]];
+        const headers = [];
+        if (incNotes) headers.push("Status");
+        headers.push("Station", incStaffName ? "Staff Name" : "Staff Initials", "Date", "Flight");
+        if (incRoute) headers.push("Direction", "Route");
+        if (incAircraft) headers.push("Aircraft");
+        headers.push("SLA", "Start UTC", "Release UTC");
+        if (incSpan) headers.push("Duration");
+        tableHeaders = [headers];
+
         const visible = new Set(JSON.parse(rosterBody.dataset.visibleStaffKeys || "[]"));
         const people = (roster?.rows || []).filter((person) => visible.has(person.key));
         exportRows = people.flatMap((person) => {
@@ -7235,23 +7326,35 @@ function generatePdfDocument({ mode = "original" } = {}) {
             allocs = allocs.filter((a) => selectedSlas.includes(a.sla));
           }
           const displayName = incStaffName ? (person.name || "") : (person.initials || person.key || "");
-          return (allocs.length ? allocs : [null]).map((alloc) => [
-            person.status === "free" ? "Free" : "On duty",
-            person.station || "MUC",
-            displayName,
-            alloc?.date || "—",
-            alloc?.flight || "—",
-            alloc?.direction || "—",
-            alloc?.route || "—",
-            alloc?.sla || "—",
-            alloc?.start_utc || "—",
-            alloc?.release_utc || "—",
-          ]);
+          return (allocs.length ? allocs : [null]).map((alloc) => {
+            const row = [];
+            if (incNotes) row.push(person.status === "free" ? "Free" : "On duty");
+            row.push(
+              person.station || "MUC",
+              displayName,
+              formatPdfDate(alloc?.date || "—"),
+              alloc?.flight || "—"
+            );
+            if (incRoute) row.push(alloc?.direction || "—", alloc?.route || "—");
+            if (incAircraft) row.push(alloc?.aircraft || "—");
+            row.push(
+              alloc?.sla || "—",
+              alloc?.start_utc || "—",
+              alloc?.release_utc || "—"
+            );
+            if (incSpan) row.push(alloc?.duration || "—");
+            return row;
+          });
         });
       }
 
     } else if (activeTab === "insights") {
-      tableHeaders = [[incStaffName ? "Staff Member" : "Staff (Initials)", "Initials", "Duties", "Total Hours", "Weekday", "Saturday", "Sunday", "Holiday", "SLAs Covered", "Max Span"]];
+      const headers = [incStaffName ? "Staff Member" : "Staff (Initials)", "Initials", "Duties", "Total Hours", "Weekday", "Saturday", "Sunday"];
+      if (incHolidays) headers.push("Holiday");
+      headers.push("SLAs Covered");
+      if (incSpan) headers.push("Max Span");
+      tableHeaders = [headers];
+
       const analytics = OperationsUtils.buildAnalytics(sourceScanRows, latestStaffDirectory);
       const roster = getRosterRows(mode);
       const windows = roster?.dailyWindows || [];
@@ -7265,7 +7368,7 @@ function generatePdfDocument({ mode = "original" } = {}) {
         const totals = OperationsUtils.summarizeDutyHours(duties, windows, holidayDates);
         const displayName = incStaffName ? (person.name || "") : (person.initials || "Staff");
         const slasCovered = (person.slas || []).filter((sla) => selectedSlas.length === 0 || selectedSlas.includes(sla));
-        return [
+        const row = [
           displayName,
           person.initials || "",
           totals.dutyCount,
@@ -7273,10 +7376,11 @@ function generatePdfDocument({ mode = "original" } = {}) {
           `${formatHours(totals.weekdayMinutes)}h`,
           `${formatHours(totals.saturdayMinutes)}h`,
           `${formatHours(totals.sundayMinutes)}h`,
-          `${formatHours(totals.holidayMinutes)}h`,
-          slasCovered.join(", ") || "—",
-          `${(person.longestSpanHours || 0).toFixed(1)}h`,
         ];
+        if (incHolidays) row.push(`${formatHours(totals.holidayMinutes)}h`);
+        row.push(slasCovered.join(", ") || "—");
+        if (incSpan) row.push(`${(person.longestSpanHours || 0).toFixed(1)}h`);
+        return row;
       });
 
     } else if (activeTab === "history") {
@@ -7301,56 +7405,70 @@ function generatePdfDocument({ mode = "original" } = {}) {
 
     } else {
       // Default: Gaps / Empty Slots
+      const gapRows = sourceScanRows.filter((r) => Number(r.missing || 0) > 0);
       if (isEdited) {
-        tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Req", "Asgd", "Miss", "Start UTC", "Release UTC", "Action Status", "Notes / Replacement"]];
-        exportRows = sourceScanRows.map((r) => {
+        const headers = ["Date", "Flight"];
+        if (incRoute) headers.push("Dir", "Route");
+        if (incAircraft) headers.push("Aircraft");
+        headers.push("SLA", "Req", "Asgd", "Miss", "Start UTC", "Release UTC");
+        if (incSpan) headers.push("Duration");
+        if (incNotes) headers.push("Action Status", "Notes / Replacement");
+        tableHeaders = [headers];
+
+        exportRows = gapRows.map((r) => {
           const key = OperationsUtils.rowKey(r);
           const act = actions[key] || {};
           const status = act.status || (Number(r.missing || 0) === 0 ? "Covered" : "Open");
           let noteDetails = [];
-          if (act.assignedCandidate && incNotes) noteDetails.push(`Candidate: ${act.assignedCandidate}`);
+          if (act.assignedCandidate && incNotes) {
+            const candId = parseStaffIdentity(act.assignedCandidate);
+            const candLabel = incStaffName ? (candId?.name || act.assignedCandidate) : (candId?.initials || act.assignedCandidate);
+            noteDetails.push(`Candidate: ${candLabel}`);
+          }
           if (act.notes && incNotes) noteDetails.push(act.notes);
           const noteStr = noteDetails.join(" | ") || "—";
 
-          return [
-            r.date || "",
-            r.flight || "",
-            r.direction || "",
-            incRoute ? (r.route || "") : "—",
+          const row = [formatPdfDate(r.date || ""), r.flight || ""];
+          if (incRoute) row.push(r.direction || "", r.route || "");
+          if (incAircraft) row.push(r.aircraft || "—");
+          row.push(
             r.sla || "",
             r.required || 0,
             r.assigned || 0,
             r.missing || 0,
             r.start_utc || "",
-            r.release_utc || "",
-            status,
-            noteStr
-          ];
+            r.release_utc || ""
+          );
+          if (incSpan) row.push(r.duration || "");
+          if (incNotes) row.push(status, noteStr);
+          return row;
         });
       } else {
-        tableHeaders = [["Date", "Flight", "Dir", "Route", "SLA", "Req", "Assigned", "Missing", "Start UTC", "Release UTC", "Duration"]];
-        exportRows = sourceScanRows.map((r) => [
-          r.date || "",
-          r.flight || "",
-          r.direction || "",
-          incRoute ? (r.route || "") : "—",
-          r.sla || "",
-          r.required || 0,
-          r.assigned || 0,
-          r.missing || 0,
-          r.start_utc || "",
-          r.release_utc || "",
-          r.duration || ""
-        ]);
+        const headers = ["Date", "Flight"];
+        if (incRoute) headers.push("Dir", "Route");
+        if (incAircraft) headers.push("Aircraft");
+        headers.push("SLA", "Req", "Assigned", "Missing", "Start UTC", "Release UTC");
+        if (incSpan) headers.push("Duration");
+        tableHeaders = [headers];
+
+        exportRows = gapRows.map((r) => {
+          const row = [formatPdfDate(r.date || ""), r.flight || ""];
+          if (incRoute) row.push(r.direction || "", r.route || "");
+          if (incAircraft) row.push(r.aircraft || "—");
+          row.push(
+            r.sla || "",
+            r.required || 0,
+            r.assigned || 0,
+            r.missing || 0,
+            r.start_utc || "",
+            r.release_utc || ""
+          );
+          if (incSpan) row.push(r.duration || "");
+          return row;
+        });
       }
     }
 
-    // Ensure Gaps PDF report exclusively exports rows with actual missing capacity (missing > 0)
-    if (!isOverlaps && (activeTab === "gaps" || (!["replacements", "roster", "insights", "history"].includes(activeTab)))) {
-      exportRows = exportRows.filter((row) => Number(row[7] || 0) > 0);
-    }
-
-    // Apply staff scope filter if selected
     if (!isOverlaps && pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
       const filterTarget = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter, name: pdfExportStaffFilter };
       const targetKey = filterTarget.key;
@@ -7394,6 +7512,11 @@ function generatePdfDocument({ mode = "original" } = {}) {
         selectedSlas,
         selectedAirline,
         incStaffName,
+        incRoute,
+        incAircraft,
+        incNotes,
+        incSpan,
+        incHolidays,
         pageWidth,
         pageHeight,
         headerDividerY,
@@ -7424,6 +7547,13 @@ function generatePdfDocument({ mode = "original" } = {}) {
           fillColor: isEdited ? [240, 253, 244] : [248, 250, 252]
         },
         didParseCell: (data) => {
+          if (data.section === "head") {
+            const headerTitle = String(tableHeaders[0]?.[data.column.index] || "").trim();
+            if (headerTitle.includes("[HOL]")) {
+              data.cell.styles.fillColor = [217, 119, 6];
+            }
+            return;
+          }
           if (data.section !== "body") return;
 
           const headerTitle = String(tableHeaders[0]?.[data.column.index] || "").trim();
@@ -7482,7 +7612,6 @@ function generatePdfDocument({ mode = "original" } = {}) {
             return;
           }
 
-          // 1. SLA Column Badge Colors
           if (headerTitle === "SLA") {
             const slaStyle = getSlaColorStyle(rawVal);
             if (slaStyle && slaStyle.bg) {
@@ -7493,7 +7622,6 @@ function generatePdfDocument({ mode = "original" } = {}) {
             }
           }
 
-          // 2. Action Status / Missing Position Column
           if (headerTitle === "Action Status" || headerTitle === "Status" || headerTitle === "Miss" || headerTitle === "Missing") {
             const numMiss = Number(rawVal);
             if (rawVal === "Covered" || (headerTitle.startsWith("Miss") && numMiss === 0)) {
@@ -7514,7 +7642,6 @@ function generatePdfDocument({ mode = "original" } = {}) {
             }
           }
 
-          // 3. Flight Column Bold & Grouping Boundary Accent
           if (headerTitle === "Flight") {
             data.cell.styles.fontStyle = "bold";
             data.cell.styles.textColor = [15, 23, 42];
@@ -7539,8 +7666,6 @@ function generatePdfDocument({ mode = "original" } = {}) {
       });
     }
 
-    // autoTable does not know the final page count while each page is drawn.
-    // Repaint the footer once generation is complete so every page is accurate.
     const finalPageCount = doc.internal.getNumberOfPages();
     for (let pageNumber = 1; pageNumber <= finalPageCount; pageNumber++) {
       doc.setPage(pageNumber);
@@ -7580,19 +7705,14 @@ function getSlaColorStyle(slaRaw) {
 
   if (slaColorMap[sla]) return slaColorMap[sla];
 
-  if (sla.includes("CKIN") || sla.includes("CHECK")) return slaColorMap["CKIN"];
-  if (sla.includes("GATE")) return slaColorMap["GATE"];
-  if (sla.includes("LOFO") || sla.includes("BAG") || sla.includes("RAMP")) return slaColorMap["LOFO"];
-  if (sla.includes("SEC")) return slaColorMap["SECS"];
-  if (sla.includes("TRC") || sla.includes("TRANSIT") || sla.includes("TURN")) return slaColorMap["TRC"];
-  if (sla.includes("TKT") || sla.includes("TICKET")) return slaColorMap["TKTG"];
-  if (sla.includes("ASVC") || sla.includes("ARR") || sla.includes("DEP")) return slaColorMap["ASVC"];
-
-  return { bg: [241, 245, 249], text: [15, 23, 42], accent: [100, 116, 139] };
+  let hash = 0;
+  for (let i = 0; i < sla.length; i++) hash = (hash << 5) - hash + sla.charCodeAt(i);
+  const hue = Math.abs(hash) % 360;
+  return { bg: [248, 250, 252], text: [71, 85, 105], accent: [148, 163, 184] };
 }
 
-function extractSlaFromCellRaw(cellRaw) {
-  const str = String(cellRaw || "");
+function extractSlaFromCellRaw(str) {
+  if (!str) return "";
   const match = str.match(/\(([^)]+)\)/);
   return match ? match[1].trim() : str;
 }
@@ -7606,6 +7726,11 @@ function generatePdfStaffByDayView({
   selectedSlas = [],
   selectedAirline = "ALL",
   incStaffName = true,
+  incRoute = true,
+  incAircraft = true,
+  incNotes = true,
+  incSpan = true,
+  incHolidays = true,
   pageWidth = 297,
   pageHeight = 210,
   headerDividerY = 17,
@@ -7613,7 +7738,7 @@ function generatePdfStaffByDayView({
   const rosterData = typeof getRosterRows === "function" ? getRosterRows(mode) : null;
   let datesList = [];
   let staffList = [];
-  const includeRangeTotal = !!showRosterDutyTotals;
+  const includeRangeTotal = !!incSpan;
   const useLocal = !!rosterLocalTimeToggle?.checked;
   const zoneLabel = useLocal ? "Local" : "Z";
 
@@ -7641,8 +7766,10 @@ function generatePdfStaffByDayView({
             const start = getDisplayTime(a.date, a.start_utc, useLocal);
             const release = getDisplayTime(a.date, a.release_utc, useLocal);
             const change = isEdited ? getDutyRosterChange(a) : { changed: false };
-            const editedLabel = change.changed ? " · EDITED" : "";
-            return `${a.flight || "Duty"} (${a.sla || "SLA"})${editedLabel}\n${start || ""}-${release || ""} ${zoneLabel}`;
+            const editedLabel = (incNotes && change.changed) ? " · EDITED" : "";
+            const aircraftPart = (incAircraft && a.aircraft) ? ` · ${a.aircraft}` : "";
+            const routePart = (incRoute && a.route) ? ` · ${a.route}` : "";
+            return `${a.flight || "Duty"}${aircraftPart}${routePart} (${a.sla || "SLA"})${editedLabel}\n${start || ""}-${release || ""} ${zoneLabel}`;
           }).join("\n---\n");
       });
       let dutiesForSummary = person.overlapping || [];
@@ -7664,7 +7791,6 @@ function generatePdfStaffByDayView({
       return row;
     });
   } else {
-    // Fallback: aggregate staff assignments directly from originalRows when mode === original
     let sourceRows = (mode === "original" && originalRows && originalRows.length)
       ? originalRows
       : ((typeof filteredRows !== "undefined" && filteredRows && filteredRows.length) ? filteredRows : latestRows);
@@ -7710,7 +7836,9 @@ function generatePdfStaffByDayView({
             const parts = String(r.duration).split(":");
             if (parts.length === 2) totalMins += parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
           }
-          return `${r.flight || "Flight"} (${r.sla || "SLA"})\n${r.start_utc || ""}–${r.release_utc || ""} UTC`;
+          const aircraftPart = (incAircraft && r.aircraft) ? ` · ${r.aircraft}` : "";
+          const routePart = (incRoute && r.route) ? ` · ${r.route}` : "";
+          return `${r.flight || "Flight"}${aircraftPart}${routePart} (${r.sla || "SLA"})\n${r.start_utc || ""}–${r.release_utc || ""} UTC`;
         }).join("\n---\n");
       });
       const totalHours = totalMins > 0 ? `${(totalMins / 60).toFixed(1)}h` : "0.0h";
@@ -7725,7 +7853,6 @@ function generatePdfStaffByDayView({
     });
   }
 
-  // The fallback data path still needs the explicit export staff filter.
   let staffSuffixBadge = "";
   if (pdfExportStaffFilter && pdfExportStaffFilter !== "ALL") {
     const filterTarget = parseStaffIdentity(pdfExportStaffFilter) || { key: pdfExportStaffFilter, name: pdfExportStaffFilter, initials: pdfExportStaffFilter };
@@ -7742,13 +7869,18 @@ function generatePdfStaffByDayView({
     staffSuffixBadge = ` · Staff: ${sName}`;
   }
 
-  // Format date header strings
+  const firstYear = datesList[0] ? Number(datesList[0].slice(0, 4)) : 2026;
+  const holidayDates = (incHolidays && typeof HolidayUtils !== "undefined")
+    ? new Set(HolidayUtils.getGermanBavarianHolidays(firstYear).map((h) => h.date))
+    : new Set();
+
   const dateHeaders = datesList.map((d) => {
     try {
       const dt = new Date(`${d}T00:00:00Z`);
-      return dt.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+      const formatted = dt.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" });
+      return holidayDates.has(d) ? `${formatted} [HOL]` : formatted;
     } catch (e) {
-      return d;
+      return holidayDates.has(d) ? `${d} [HOL]` : d;
     }
   });
 
@@ -8773,6 +8905,7 @@ function deleteSnapshot(snapshot) {
 }
 
 function renderHistory() {
+  if (activeTab !== "history") return;
   const history = getScanHistory();
   const list = document.getElementById("historyList");
   const comparisonEl = document.getElementById("historyComparison");
@@ -8780,8 +8913,6 @@ function renderHistory() {
     comparisonEl.innerHTML = "";
     list.innerHTML = '<div class="empty-selection">No saved scans yet.</div>';
     resultCount.textContent = "0";
-    flightCount.textContent = "0";
-    dateCount.textContent = "0";
     updateExportButtonsState();
     return;
   }
@@ -8799,29 +8930,40 @@ function renderHistory() {
     comparisonEl.innerHTML = '<div class="empty-selection">Run another scan to see what changed.</div>';
   }
   resultCount.textContent = String(history.length);
-  flightCount.textContent = String(history[0].flights || 0);
-  dateCount.textContent = String((history[0].scannedDates || []).length);
   updateExportButtonsState();
   opsCsvBtn.disabled = !latestRows.some((row) => Number(row.missing || 0) > 0);
   renderMonthlyRostersCards("historyMonthlyRostersGrid");
 }
 
+let mergeInProgress = false;
 function updateMergeModeUI() {
-  const mode = document.querySelector('input[name="mergeModeOption"]:checked')?.value || "snapshots";
-  const snapBox = document.getElementById("mergeSnapshotsSelection");
-  const rangeBox = document.getElementById("mergeRangeSelection");
-  if (snapBox && rangeBox) {
-    if (mode === "snapshots") {
-      snapBox.style.opacity = "1";
-      snapBox.style.pointerEvents = "auto";
-      rangeBox.classList.add("is-disabled");
-    } else {
-      snapBox.style.opacity = "0.4";
-      snapBox.style.pointerEvents = "none";
-      rangeBox.classList.remove("is-disabled");
-    }
+  const snapshots = document.getElementById("mergeModeSnapshots").checked;
+  for (const [id, active] of [["mergeSnapshotsSelection", snapshots], ["mergeRangeSelection", !snapshots]]) {
+    const box = document.getElementById(id);
+    box.hidden = !active;
+    box.closest(".merge-option-group").classList.toggle("is-selected", active);
+    box.querySelectorAll("input, button").forEach(input => { input.disabled = !active || mergeInProgress; });
   }
+  const count = document.querySelectorAll('input[name="mergeSnapshotCheckbox"]:checked').length;
+  document.getElementById("mergeSelectionCount").textContent = `${count} selected`;
+  const start = document.getElementById("mergeRangeStartDate").value;
+  const end = document.getElementById("mergeRangeEndDate").value;
+  document.getElementById("executeMergeBtn").disabled = mergeInProgress || (snapshots ? !count : !start || !end || start > end);
+  document.getElementById("executeMergeBtn").querySelector("span").textContent = mergeInProgress ? "Merging…" : "Merge & load roster";
+  document.getElementById("mergeRangeEndDate").min = start;
 }
+document.getElementById("monthlyModalMergeView").addEventListener("change", () => {
+  document.getElementById("mergeResultHint").textContent = "";
+  updateMergeModeUI();
+});
+document.getElementById("mergeSelectAllBtn").addEventListener("click", () => {
+  document.querySelectorAll('input[name="mergeSnapshotCheckbox"]').forEach(input => { input.checked = true; });
+  updateMergeModeUI();
+});
+document.getElementById("mergeClearBtn").addEventListener("click", () => {
+  document.querySelectorAll('input[name="mergeSnapshotCheckbox"]').forEach(input => { input.checked = false; });
+  updateMergeModeUI();
+});
 
 // ==========================================================================
 // Monthly Master Rosters & Merge Scans Management
@@ -8877,59 +9019,148 @@ function updateMonthlyRostersUI() {
   renderMonthlyChangelog();
 }
 
+function formatMonthlyCardTitle(monthKey, meta = {}) {
+  if (meta && meta.customName) {
+    return {
+      title: meta.customName,
+      subtitle: monthKey !== meta.customName ? monthKey : "",
+      isCustom: true,
+    };
+  }
+  const match = String(monthKey || "").match(/^(\d{4})-(\d{2})$/);
+  if (match) {
+    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const mIdx = Number(match[2]) - 1;
+    const monthName = monthNames[mIdx] || match[2];
+    return {
+      title: `${monthName} ${match[1]}`,
+      subtitle: monthKey,
+      isCustom: false,
+    };
+  }
+  if (String(monthKey || "").includes("_to_")) {
+    const [start, end] = monthKey.split("_to_");
+    return {
+      title: `${start} → ${end}`,
+      subtitle: "Custom Range",
+      isCustom: true,
+    };
+  }
+  return {
+    title: monthKey || "Roster",
+    subtitle: "",
+    isCustom: false,
+  };
+}
+
 function renderMonthlyRostersCards(containerId) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
   if (savedMonthlyRosters.length === 0) {
-    container.innerHTML = '<div class="empty-monthly-rosters">No monthly rosters saved yet. Run a scan to automatically create and update monthly master rosters.</div>';
+    container.innerHTML = `
+      <div class="empty-monthly-rosters">
+        <div class="empty-roster-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+        </div>
+        <strong>No monthly rosters saved yet</strong>
+        <p>Run a scan to automatically create and update monthly master rosters, or use the "Merge Scans & Ranges" tab.</p>
+      </div>
+    `;
     return;
   }
 
   container.innerHTML = savedMonthlyRosters.map((m) => {
     const isComplete = m.scannedDaysCount >= m.totalDays;
-    const statusClass = isComplete ? "complete" : "partial";
-    const statusText = isComplete ? "100% Complete" : `${m.coveragePercent}% Scanned`;
-    const updatedStr = m.updatedAt ? new Date(m.updatedAt).toLocaleString() : "Unknown";
+    const isCustom = Boolean(m.meta?.isCustomMerge || m.meta?.customName || m.monthKey.includes("_to_") || !/^\d{4}-\d{2}$/.test(m.monthKey));
+    const { title, subtitle } = formatMonthlyCardTitle(m.monthKey, m.meta);
+    const statusClass = isCustom ? "custom" : (isComplete ? "complete" : "partial");
+    const statusText = isCustom ? "Custom Master" : (isComplete ? "100% Complete" : `${m.coveragePercent}% Scanned`);
+    const updatedStr = m.updatedAt ? new Date(m.updatedAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "Unknown";
+    const changesCount = Array.isArray(m.changes) ? m.changes.length : 0;
+    const gapsCount = Number(m.gapsCount || 0);
 
     return `
-      <div class="monthly-roster-card" data-month-key="${escapeHtml(m.monthKey)}">
+      <div class="monthly-roster-card ${isComplete ? "is-complete" : "is-partial"}" data-month-key="${escapeHtml(m.monthKey)}">
         <div class="monthly-card-head">
-          <h4 class="monthly-card-title">${escapeHtml(m.monthKey)}</h4>
+          <div class="monthly-card-title-wrap">
+            <div class="monthly-card-title-row">
+              <h4 class="monthly-card-title" title="${escapeHtml(title)}">${escapeHtml(title)}</h4>
+              ${isCustom ? `<span class="monthly-card-custom-badge" title="Custom merged master roster">Custom</span>` : ""}
+            </div>
+            ${subtitle ? `<span class="monthly-card-subtitle">${escapeHtml(subtitle)}</span>` : ""}
+          </div>
           <span class="monthly-card-status-pill ${statusClass}">${escapeHtml(statusText)}</span>
         </div>
+
         <div class="monthly-card-progress-wrap">
           <div class="monthly-card-progress-labels">
             <span>Coverage</span>
-            <span>${m.scannedDaysCount} of ${m.totalDays} days</span>
+            <span><strong>${m.scannedDaysCount}</strong> of <strong>${m.totalDays}</strong> days (${m.coveragePercent || 0}%)</span>
           </div>
           <div class="monthly-card-progress-bar">
-            <div class="monthly-card-progress-fill ${isComplete ? "" : "partial"}" style="width: ${m.coveragePercent || 0}%"></div>
+            <div class="monthly-card-progress-fill ${isComplete ? "complete" : "partial"}" style="width: ${m.coveragePercent || 0}%"></div>
           </div>
         </div>
+
         <div class="monthly-card-metrics">
-          <div class="monthly-card-metric">
-            <strong>${m.flightsCount || 0}</strong>
+          <div class="monthly-card-metric" title="Total unique flights">
+            <div class="metric-icon-num">
+              <strong>${m.flightsCount || 0}</strong>
+            </div>
             <span>Flights</span>
           </div>
-          <div class="monthly-card-metric">
-            <strong>${m.gapsCount || 0}</strong>
-            <span>Gaps</span>
+          <div class="monthly-card-metric ${gapsCount > 0 ? "has-gaps" : "no-gaps"}" title="${gapsCount} empty slot gap(s)">
+            <div class="metric-icon-num">
+              <strong>${gapsCount}</strong>
+            </div>
+            <span>${gapsCount === 1 ? "Gap" : "Gaps"}</span>
           </div>
-          <div class="monthly-card-metric">
-            <strong>${m.staffCount || (m.staffDirectory || []).length || 0}</strong>
+          <div class="monthly-card-metric" title="Allocated and directory staff count">
+            <div class="metric-icon-num">
+              <strong>${m.staffCount || (m.staffDirectory || []).length || 0}</strong>
+            </div>
             <span>Staff</span>
           </div>
+          <div class="monthly-card-metric" title="Number of scanned calendar days">
+            <div class="metric-icon-num">
+              <strong>${m.scannedDaysCount}d</strong>
+            </div>
+            <span>Scanned</span>
+          </div>
         </div>
+
         <div class="monthly-card-meta">
-          <span>Updated: ${escapeHtml(updatedStr)}</span>
+          <span class="monthly-card-updated" title="Last updated timestamp">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            ${escapeHtml(updatedStr)}
+          </span>
+          ${changesCount > 0 ? `<span class="monthly-card-changes-tag" title="${changesCount} scan update(s) recorded">⇄ ${changesCount} update${changesCount === 1 ? "" : "s"}</span>` : ""}
         </div>
+
         <div class="monthly-card-actions">
-          <button type="button" class="primary-btn" data-action="load-month">Load</button>
-          ${!isComplete ? `<button type="button" class="secondary-btn" data-action="scan-missing" title="Scan remaining missing dates">Scan Missing</button>` : ""}
-          <button type="button" class="secondary-btn" data-action="view-changes" title="View scan change history">Changes</button>
-          <button type="button" class="secondary-btn" data-action="export-month" title="Export monthly master JSON">Export</button>
-          <button type="button" class="secondary-btn danger-btn" data-action="delete-month" title="Delete this saved month">Delete</button>
+          <button type="button" class="primary-btn monthly-action-load" data-action="load-month" title="Load this roster into workspace">
+            <svg class="btn-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <span>Load</span>
+          </button>
+          ${!isComplete && !isCustom ? `
+            <button type="button" class="secondary-btn monthly-action-scan" data-action="scan-missing" title="Scan remaining missing dates for this month">
+              <svg class="btn-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+              <span>Scan Missing</span>
+            </button>
+          ` : ""}
+          <button type="button" class="secondary-btn monthly-action-changes" data-action="view-changes" title="View scan change history">
+            <svg class="btn-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><polyline points="23 20 23 14 17 14"></polyline><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path></svg>
+            <span>History</span>
+          </button>
+          <button type="button" class="secondary-btn monthly-action-export" data-action="export-month" title="Export monthly master JSON">
+            <svg class="btn-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>Export</span>
+          </button>
+          <button type="button" class="secondary-btn danger-btn monthly-action-delete" data-action="delete-month" title="Delete this saved roster">
+            <svg class="btn-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            <span>Delete</span>
+          </button>
         </div>
       </div>
     `;
@@ -9117,33 +9348,54 @@ function renderMonthlyChangelog(filterMonth = "all") {
 function renderMergeSnapshotsList() {
   const list = document.getElementById("mergeSnapshotsList");
   if (!list) return;
+  const selected = new Set(Array.from(list.querySelectorAll("input:checked"), input => input.value));
   const history = getScanHistory();
   if (history.length === 0) {
-    list.innerHTML = '<span class="muted">No scan snapshots saved in history yet.</span>';
+    list.innerHTML = `
+      <div class="empty-merge-snapshots">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+        <span>No saved scans found. Run a scan first to save snapshots for merging.</span>
+      </div>
+    `;
+    updateMergeModeUI();
     return;
   }
   list.innerHTML = history.map((snap) => {
-    const dateStr = new Date(snap.createdAt).toLocaleDateString();
+    const dateStr = snap.createdAt ? new Date(snap.createdAt).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+    const gapsCount = snap.gaps?.length || 0;
     return `
-      <label class="merge-snapshot-item">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" name="mergeSnapshotCheckbox" value="${escapeHtml(snap.id)}">
-          <strong>${escapeHtml(snap.startDate)} → ${escapeHtml(snap.endDate)}</strong>
+      <label class="merge-snapshot-item ${selected.has(String(snap.id)) ? "is-checked" : ""}">
+        <div class="merge-snapshot-left">
+          <input type="checkbox" name="mergeSnapshotCheckbox" value="${escapeHtml(snap.id)}" ${selected.has(String(snap.id)) ? "checked" : ""}>
+          <div class="merge-snapshot-range">
+            <strong>${escapeHtml(snap.startDate)} → ${escapeHtml(snap.endDate)}</strong>
+            <small>${escapeHtml(dateStr)}</small>
+          </div>
         </div>
-        <span>${snap.flights || 0} flights · ${snap.gaps?.length || 0} gaps · ${dateStr}</span>
+        <div class="merge-snapshot-chips">
+          <span class="merge-chip flights" title="${snap.flights || 0} flights">${snap.flights || 0} flights</span>
+          <span class="merge-chip ${gapsCount > 0 ? "gaps" : "clean"}" title="${gapsCount} gaps">${gapsCount} gap${gapsCount === 1 ? "" : "s"}</span>
+        </div>
       </label>
     `;
   }).join("");
+  updateMergeModeUI();
 }
 
 async function executeMergeScans() {
+  if (mergeInProgress) return;
   const mergeMode = document.querySelector('input[name="mergeModeOption"]:checked')?.value || "snapshots";
   const hintEl = document.getElementById("mergeResultHint");
+  const customName = document.getElementById("mergeCustomName")?.value?.trim() || "";
+  const saveAsMaster = document.getElementById("mergeSaveAsMaster")?.checked ?? true;
 
   try {
     if (hintEl) hintEl.textContent = "Merging scans...";
 
-    let bodyPayload = {};
+    let bodyPayload = {
+      customName,
+      saveAsMaster,
+    };
     const localHistory = getScanHistory();
     let localSelectedScans = [];
 
@@ -9155,7 +9407,8 @@ async function executeMergeScans() {
         return;
       }
       localSelectedScans = localHistory.filter((item) => selectedIds.includes(item.id));
-      bodyPayload = { scanIds: selectedIds, scans: localSelectedScans };
+      bodyPayload.scanIds = selectedIds;
+      bodyPayload.scans = localSelectedScans;
     } else {
       const start = document.getElementById("mergeRangeStartDate")?.value;
       const end = document.getElementById("mergeRangeEndDate")?.value;
@@ -9164,10 +9417,17 @@ async function executeMergeScans() {
         if (hintEl) hintEl.textContent = "";
         return;
       }
-      bodyPayload = { startDate: start, endDate: end, scans: localHistory };
+      if (start > end) throw new Error("Choose an end date on or after the start date.");
+      bodyPayload.startDate = start;
+      bodyPayload.endDate = end;
+      bodyPayload.scans = localHistory;
     }
 
+    mergeInProgress = true;
+    updateMergeModeUI();
     let merged = null;
+    let serverSavedKey = "";
+
     try {
       const res = await fetch("/api/roster/merge", {
         method: "POST",
@@ -9177,6 +9437,7 @@ async function executeMergeScans() {
       if (res.ok) {
         const json = await res.json();
         merged = json.data;
+        serverSavedKey = json.savedMonthKey || "";
       }
     } catch (netErr) {
       console.warn("Backend merge request failed, using client-side merge fallback:", netErr);
@@ -9212,15 +9473,18 @@ async function executeMergeScans() {
 
     if (!merged || !Array.isArray(merged.rows)) throw new Error("Invalid merge response received.");
 
+    if (!merged.rows.length && !merged.scannedDates?.length) throw new Error("No saved data found for this selection. Your current roster has been preserved.");
+
     latestRows = merged.rows;
     originalRows = JSON.parse(JSON.stringify(merged.rows));
     latestScannedDates = merged.scannedDates || [];
     latestStaffDirectory = merged.staffDirectory || [];
 
+    const rosterDisplayName = customName || serverSavedKey || "Merged Dataset";
     scanSourceMeta = {
       state: "loaded",
       at: new Date(),
-      detail: `Merged Dataset (${latestScannedDates.length} date${latestScannedDates.length === 1 ? "" : "s"} · ${merged.flightsCount || 0} flights)`,
+      detail: `${rosterDisplayName} (${latestScannedDates.length} date${latestScannedDates.length === 1 ? "" : "s"} · ${merged.flightsCount || 0} flights)`,
     };
     setRosterStateMode("original");
 
@@ -9238,6 +9502,10 @@ async function executeMergeScans() {
     updateRosterFilters();
     applyFilters();
 
+    if (typeof fetchMonthlyRosters === "function") {
+      fetchMonthlyRosters();
+    }
+
     closeMonthlyRostersModal();
     if (activeTab === "gaps" || activeTab === "roster") {
       applyFilters();
@@ -9245,12 +9513,16 @@ async function executeMergeScans() {
       switchTab("roster");
     }
 
-    showToast(`Successfully merged: ${latestScannedDates.length} dates, ${merged.flightsCount || 0} flights, ${merged.gapsCount || 0} gaps loaded.`, { kind: "success", duration: 6000 });
-    setMessage(`Merged scan dataset loaded into workspace.`, "success");
+    const savedSuffix = saveAsMaster ? ` and saved as master "${rosterDisplayName}"` : "";
+    showToast(`Successfully merged${savedSuffix}: ${latestScannedDates.length} dates, ${merged.flightsCount || 0} flights loaded.`, { kind: "success", duration: 6000 });
+    setMessage(`Merged roster dataset loaded into workspace.${savedSuffix}`, "success");
     if (hintEl) hintEl.textContent = "";
   } catch (err) {
     if (hintEl) hintEl.textContent = `Merge failed: ${err.message}`;
     showToast(err.message || String(err), { kind: "warn" });
+  } finally {
+    mergeInProgress = false;
+    updateMergeModeUI();
   }
 }
 
@@ -9304,6 +9576,7 @@ let historyPersonSelectedKey = "ALL";
 let historyPersonFilterType = "ALL";
 let historyPersonSlaFilter = "ALL";
 let historyPersonSearchQuery = "";
+let historyComparisonCollapsed = true;
 
 function renderHistoryComparison(history, currentId = history[0]?.id, previousId = history[1]?.id) {
   const comparisonEl = document.getElementById("historyComparison");
@@ -9360,7 +9633,7 @@ function renderHistoryComparison(history, currentId = history[0]?.id, previousId
           Person Roster Audit
         </button>
       </div>
-      <button id="historyComparisonToggle" class="secondary-btn" type="button" aria-expanded="true">Collapse details</button>
+      <button id="historyComparisonToggle" class="secondary-btn" type="button" aria-expanded="${!historyComparisonCollapsed}">${historyComparisonCollapsed ? "Show details" : "Collapse details"}</button>
     </div>
     <div class="comparison-scan-picker">
       <label>
@@ -9378,7 +9651,7 @@ function renderHistoryComparison(history, currentId = history[0]?.id, previousId
       </label>
     </div>
     ${rangesOverlap ? "" : `<div class="comparison-scope-warning"><strong>Different date ranges</strong><span>${escapeHtml(current.startDate)}–${escapeHtml(current.endDate)} does not overlap ${escapeHtml(previous.startDate)}–${escapeHtml(previous.endDate)}. Items reflect different scan scopes.</span></div>`}
-    <div id="historyComparisonBody">${bodyHtml}</div>
+    <div id="historyComparisonBody" ${historyComparisonCollapsed ? "hidden" : ""}>${bodyHtml}</div>
   `;
 
   document.getElementById("historyCompareCurrent")?.addEventListener("change", (event) => renderHistoryComparison(history, event.target.value, previous.id));
@@ -9651,7 +9924,8 @@ function bindPersonRosterAuditControls(current, previous) {
   const body = document.getElementById("historyComparisonBody");
 
   toggle?.addEventListener("click", (event) => {
-    const collapsed = body.hidden = !body.hidden;
+    historyComparisonCollapsed = !historyComparisonCollapsed;
+    const collapsed = body.hidden = historyComparisonCollapsed;
     event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details";
     event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
   });
@@ -9967,7 +10241,8 @@ function bindHistoryComparisonControls(entries) {
   const toggle = document.getElementById("historyComparisonToggle");
   if (!search || !type) {
     toggle?.addEventListener("click", (event) => {
-      const collapsed = body.hidden = !body.hidden;
+      historyComparisonCollapsed = !historyComparisonCollapsed;
+      const collapsed = body.hidden = historyComparisonCollapsed;
       event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details";
       event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
     });
@@ -10029,7 +10304,8 @@ function bindHistoryComparisonControls(entries) {
   });
 
   toggle?.addEventListener("click", (event) => {
-    const collapsed = body.hidden = !body.hidden;
+    historyComparisonCollapsed = !historyComparisonCollapsed;
+    const collapsed = body.hidden = historyComparisonCollapsed;
     event.currentTarget.textContent = collapsed ? "Show details" : "Collapse details";
     event.currentTarget.setAttribute("aria-expanded", String(!collapsed));
   });
@@ -10042,8 +10318,13 @@ function bindHistoryComparisonControls(entries) {
       } else {
         type.value = kind;
       }
+      historyComparisonCollapsed = false;
       body.hidden = false;
-      document.getElementById("historyComparisonToggle").textContent = "Collapse details";
+      const toggleBtn = document.getElementById("historyComparisonToggle");
+      if (toggleBtn) {
+        toggleBtn.textContent = "Collapse details";
+        toggleBtn.setAttribute("aria-expanded", "true");
+      }
       applyComparisonFilter();
     });
   }
@@ -11508,10 +11789,11 @@ async function triggerAutoScanCycle(isManualNow = false) {
 
   try {
     updateAutoScanStatusText("Scanning AVBIS...");
-    await runScan(autoScanSettings.bypassCache, {
+    const result = await runScan(autoScanSettings.bypassCache, {
       isAutoScan: true,
       dateRangeOverride: dateRange,
     });
+    if (!result) return;
 
     const diff = calculateScanGapDiff(previousRows, latestRows);
     const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -11687,8 +11969,9 @@ function populateAutoScanModalFields() {
   const endHourInput = document.getElementById("autoScanEndHour");
 
   if (mainToggle) mainToggle.checked = autoScanSettings.enabled;
-  if (intervalSelect) intervalSelect.value = String(autoScanSettings.intervalMinutes);
-  if (customInput) customInput.value = String(autoScanSettings.customMinutes || 20);
+  const presetInterval = Array.from(intervalSelect.options).some(option => option.value === String(autoScanSettings.intervalMinutes));
+  if (intervalSelect) intervalSelect.value = presetInterval ? String(autoScanSettings.intervalMinutes) : "custom";
+  if (customInput) customInput.value = String(presetInterval ? (autoScanSettings.customMinutes || 20) : autoScanSettings.intervalMinutes);
   if (customWrap) customWrap.hidden = intervalSelect.value !== "custom";
   if (rangeSelect) rangeSelect.value = autoScanSettings.rangeMode || "active";
   if (bypassToggle) bypassToggle.checked = autoScanSettings.bypassCache;
@@ -11697,8 +11980,8 @@ function populateAutoScanModalFields() {
   if (pauseEditingToggle) pauseEditingToggle.checked = autoScanSettings.pauseWhileEditing;
   if (activeHoursToggle) activeHoursToggle.checked = autoScanSettings.activeHoursOnly;
   if (hoursRow) hoursRow.hidden = !autoScanSettings.activeHoursOnly;
-  if (startHourInput) startHourInput.value = String(autoScanSettings.startHour || 6);
-  if (endHourInput) endHourInput.value = String(autoScanSettings.endHour || 22);
+  if (startHourInput) startHourInput.value = String(autoScanSettings.startHour ?? 6);
+  if (endHourInput) endHourInput.value = String(autoScanSettings.endHour ?? 22);
 
   syncAutoScanUI();
 }
@@ -11741,8 +12024,8 @@ function readAutoScanModalFields() {
     playSound: Boolean(soundToggle?.checked),
     pauseWhileEditing: Boolean(pauseEditingToggle?.checked),
     activeHoursOnly: Boolean(activeHoursToggle?.checked),
-    startHour: Math.min(23, Math.max(0, parseInt(startHourInput?.value, 10) || 6)),
-    endHour: Math.min(23, Math.max(0, parseInt(endHourInput?.value, 10) || 22)),
+    startHour: Math.min(23, Math.max(0, Number(startHourInput?.value ?? 6))),
+    endHour: Math.min(23, Math.max(0, Number(endHourInput?.value ?? 22))),
   };
 }
 
@@ -11776,6 +12059,14 @@ function initAutoScanner() {
   });
 
   document.getElementById("autoScanModalSaveBtn")?.addEventListener("click", () => {
+    const fields = [
+      ...(document.getElementById("autoScanIntervalSelect").value === "custom" ? [document.getElementById("autoScanCustomMinutes")] : []),
+      ...(document.getElementById("autoScanActiveHoursToggle").checked ? [document.getElementById("autoScanStartHour"), document.getElementById("autoScanEndHour")] : []),
+    ];
+    for (const field of fields) {
+      field.required = true;
+      if (!field.reportValidity()) return;
+    }
     const newSettings = readAutoScanModalFields();
     saveAutoScanSettings(newSettings);
     closeAutoScanModal();
@@ -12453,6 +12744,7 @@ function initRosterManagementFeatures() {
   fetchAbsences();
   fetchCustomRules();
   fetchScenarios();
+  fetchMonthlyRosters();
 }
 
 if (document.readyState === "loading") {
@@ -12470,3 +12762,65 @@ if (document.readyState === "loading") {
   initAutoScanner();
   initRosterManagementFeatures();
 }
+
+// Keep keyboard navigation inside standard dialogs. The unassigned-shifts
+// drawer stays interactive with the roster so drag-and-drop remains available.
+(() => {
+  const openDialogs = [];
+  const openers = new WeakMap();
+  let lastFocused = document.activeElement;
+  let previousFocused = lastFocused;
+  document.addEventListener('focusin', () => {
+    previousFocused = lastFocused;
+    lastFocused = document.activeElement;
+  });
+  const focusable = (overlay) => [...overlay.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]'
+  )].filter((element) => element.getClientRects().length && !element.closest('[hidden]'));
+
+  for (const overlay of document.querySelectorAll('.modal-overlay:not(.unassigned-modal-overlay)')) {
+    new MutationObserver(() => {
+      const index = openDialogs.indexOf(overlay);
+      if (!overlay.hidden && index === -1) {
+        openers.set(overlay, overlay.contains(document.activeElement) ? previousFocused : document.activeElement);
+        openDialogs.push(overlay);
+        if (!overlay.contains(document.activeElement)) focusable(overlay)[0]?.focus();
+      } else if (overlay.hidden && index !== -1) {
+        const wasTopmost = index === openDialogs.length - 1;
+        openDialogs.splice(index, 1);
+        if (wasTopmost) {
+          const parent = openDialogs.at(-1);
+          const opener = openers.get(overlay);
+          if (opener?.isConnected && (!parent || parent.contains(opener))) opener.focus();
+          else if (parent) focusable(parent)[0]?.focus();
+        }
+      }
+      document.body.classList.toggle('has-workspace-modal', openDialogs.length > 0);
+    }).observe(overlay, { attributes: true, attributeFilter: ['hidden'] });
+  }
+
+  document.addEventListener('keydown', (event) => {
+    const overlay = openDialogs.at(-1);
+    if (!overlay) return;
+    if (event.key === 'Escape') {
+      const close = overlay.querySelector('.modal-header .modal-close-btn, .modal-header .close-btn');
+      if (close) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close.click();
+      }
+    } else if (event.key === 'Tab') {
+      const items = focusable(overlay);
+      const first = items[0];
+      const last = items.at(-1);
+      if (!first) { event.preventDefault(); return; }
+      if (event.shiftKey && (document.activeElement === first || !overlay.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !overlay.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  }, true);
+})();
