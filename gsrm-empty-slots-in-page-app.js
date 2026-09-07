@@ -279,6 +279,80 @@
     return [...byId.entries()].map(([id, text]) => ({ id, text }));
   }
 
+  function normalizeTimeWithDate(timeStr, defaultWithDate) {
+    const cleanStr = stripSla(timeStr || "").replace(/act/gi, "").replace(/[>()]/g, "").replace(/^[-\s]+|[-\s]+$/g, "").trim();
+    if (!cleanStr) return "";
+    if (/^\d{1,2}\s+[A-Za-z]{3}\s+\d{1,2}:\d{2}$/.test(cleanStr)) return cleanStr;
+    if (/^\d{1,2}:\d{2}$/.test(cleanStr)) {
+      const prefixMatch = String(defaultWithDate || "").match(/^(\d{1,2}\s+[A-Za-z]{3})\s+/);
+      if (prefixMatch) return `${prefixMatch[1]} ${cleanStr}`;
+      return cleanStr;
+    }
+    return cleanStr;
+  }
+
+  function computeDurationMinutes(startText, releaseText, durationText, flightDate) {
+    if (durationText) {
+      const cleanDur = String(durationText).replace(/act/gi, "").replace(/[>()]/g, "").replace(/^[-\s]+|[-\s]+$/g, "").trim();
+      if (cleanDur.includes(":")) {
+        const m = cleanDur.match(/^(\d+):(\d+)$/);
+        if (m) return Number(m[1]) * 60 + Number(m[2]);
+      }
+    }
+    const s = parseSodUtc(startText, flightDate);
+    const r = parseSodUtc(releaseText, flightDate);
+    if (s && r && r > s) return Math.round((r - s) / 60000);
+    return 0;
+  }
+
+  function extractRowTiming(cells, defaultStart, defaultRelease, defaultDuration, flightDate) {
+    const groupStart = defaultStart || "";
+    const groupRelease = defaultRelease || "";
+    const groupDuration = defaultDuration || "";
+    const groupDurationMinutes = computeDurationMinutes(groupStart, groupRelease, groupDuration, flightDate);
+
+    let rawStart = cells[3] || "";
+    let rawRelease = cells[4] || "";
+    let rawDuration = cells[5] || "";
+
+    const timeCellIndices = [];
+    cells.forEach((cell, idx) => {
+      const text = stripSla(cell || "").replace(/act/gi, "").replace(/[>()]/g, "").replace(/^[-\s]+|[-\s]+$/g, "").trim();
+      if (/^(?:\d{1,2}\s+[A-Za-z]{3}\s+)?\d{1,2}:\d{2}$/.test(text)) timeCellIndices.push(idx);
+    });
+
+    if (timeCellIndices.length >= 2) {
+      rawStart = cells[timeCellIndices[0]];
+      rawRelease = cells[timeCellIndices[1]];
+      if (timeCellIndices.length >= 3) rawDuration = cells[timeCellIndices[2]];
+    }
+
+    const staffStart = normalizeTimeWithDate(rawStart, groupStart) || groupStart;
+    const staffRelease = normalizeTimeWithDate(rawRelease, groupRelease) || groupRelease;
+    const staffDuration = (rawDuration || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim() || groupDuration;
+    const staffDurationMinutes = computeDurationMinutes(staffStart, staffRelease, staffDuration, flightDate);
+
+    const groupStartDate = parseSodUtc(groupStart, flightDate);
+    const groupReleaseDate = parseSodUtc(groupRelease, flightDate);
+    const staffStartDate = parseSodUtc(staffStart, flightDate);
+    const staffReleaseDate = parseSodUtc(staffRelease, flightDate);
+
+    const isLaterStart = Boolean(groupStartDate && staffStartDate && staffStartDate.getTime() > groupStartDate.getTime());
+    const isEarlierRelease = Boolean(groupReleaseDate && staffReleaseDate && staffReleaseDate.getTime() < groupReleaseDate.getTime());
+    const isShorterDuration = Boolean(groupDurationMinutes > 0 && staffDurationMinutes > 0 && staffDurationMinutes < groupDurationMinutes);
+    const isShorter = Boolean(isLaterStart || isEarlierRelease || isShorterDuration);
+    const isCustomTiming = Boolean(isShorter || (staffStart && staffStart !== groupStart) || (staffRelease && staffRelease !== groupRelease));
+
+    return {
+      start: staffStart,
+      release: staffRelease,
+      duration: staffDuration,
+      durationMinutes: staffDurationMinutes || groupDurationMinutes,
+      isShorter,
+      isCustomTiming,
+    };
+  }
+
   function parseSodGroups(html, flightDate) {
     const doc = new DOMParser().parseFromString(html, "text/html");
     const tables = [...doc.querySelectorAll("table")];
@@ -317,31 +391,38 @@
             staff_details: [],
             flightDate,
           };
+          const staffNames = cells.filter(cell => /^[A-Z0-9]{2,10}\s+-\s+\S/i.test((cell || "").trim()));
+          if (staffNames.length) {
+            const timing = extractRowTiming(cells, current.start, current.release, current.duration, flightDate);
+            for (const staffName of [...new Set(staffNames)]) {
+              current.staff.push(staffName);
+              current.staff_details.push({
+                name: staffName,
+                start_utc: timing.start || current.start,
+                release_utc: timing.release || current.release,
+                duration: timing.duration || current.duration,
+                duration_minutes: timing.durationMinutes,
+                is_shorter: Boolean(timing.isShorter),
+                custom_timing: Boolean(timing.isCustomTiming),
+              });
+            }
+          }
         } else if (current) {
           const staffNames = cells.filter(cell => /^[A-Z0-9]{2,10}\s+-\s+\S/i.test((cell || "").trim()));
-          for (const staffName of [...new Set(staffNames)]) {
-            current.staff.push(staffName);
-            const timeCells = cells.filter(c => /^(?:\d{1,2}\s+[A-Za-z]{3}\s+)?\d{1,2}:\d{2}$/.test(stripSla(c || "").trim()));
-            let sTime = timeCells[0] ? stripSla(timeCells[0]) : current.start;
-            let rTime = timeCells[1] ? stripSla(timeCells[1]) : current.release;
-            if (/^\d{1,2}:\d{2}$/.test(sTime) && /^(\d{1,2}\s+[A-Za-z]{3})\s+/.test(current.start)) {
-              sTime = `${current.start.match(/^(\d{1,2}\s+[A-Za-z]{3})\s+/)[1]} ${sTime}`;
+          if (staffNames.length) {
+            const timing = extractRowTiming(cells, current.start, current.release, current.duration, flightDate);
+            for (const staffName of [...new Set(staffNames)]) {
+              current.staff.push(staffName);
+              current.staff_details.push({
+                name: staffName,
+                start_utc: timing.start || current.start,
+                release_utc: timing.release || current.release,
+                duration: timing.duration || current.duration,
+                duration_minutes: timing.durationMinutes,
+                is_shorter: Boolean(timing.isShorter),
+                custom_timing: Boolean(timing.isCustomTiming),
+              });
             }
-            if (/^\d{1,2}:\d{2}$/.test(rTime) && /^(\d{1,2}\s+[A-Za-z]{3})\s+/.test(current.release)) {
-              rTime = `${current.release.match(/^(\d{1,2}\s+[A-Za-z]{3})\s+/)[1]} ${rTime}`;
-            }
-            const sDate = parseSodUtc(sTime, flightDate);
-            const rDate = parseSodUtc(rTime, flightDate);
-            const gSDate = parseSodUtc(current.start, flightDate);
-            const gRDate = parseSodUtc(current.release, flightDate);
-            const isShorter = Boolean((gSDate && sDate && sDate > gSDate) || (gRDate && rDate && rDate < gRDate));
-            current.staff_details.push({
-              name: staffName,
-              start_utc: sTime,
-              release_utc: rTime,
-              duration: cells[5] || current.duration,
-              is_shorter: isShorter,
-            });
           }
         }
       }
@@ -353,19 +434,32 @@
   function finishGroup(group) {
     const staff = [...new Set(group.staff)];
     const assigned = staff.length;
-    const staff_details = staff.map(name => (group.staff_details || []).find(d => d.name === name) || {
-      name,
-      start_utc: group.start,
-      release_utc: group.release,
-      duration: group.duration,
-      is_shorter: false,
+    const staffDetailsMap = new Map();
+    for (const detail of (group.staff_details || [])) {
+      if (detail && detail.name && !staffDetailsMap.has(detail.name)) {
+        staffDetailsMap.set(detail.name, detail);
+      }
+    }
+    const staff_details = staff.map(name => {
+      if (staffDetailsMap.has(name)) return staffDetailsMap.get(name);
+      return {
+        name,
+        start_utc: group.start,
+        release_utc: group.release,
+        duration: group.duration,
+        duration_minutes: computeDurationMinutes(group.start, group.release, group.duration, group.flightDate),
+        is_shorter: false,
+        custom_timing: false,
+      };
     });
     const has_shorter_assignment = staff_details.some(d => d.is_shorter);
+    const shorter_staff_count = staff_details.filter(d => d.is_shorter).length;
     return {
       ...group,
       staff,
       staff_details,
       has_shorter_assignment,
+      shorter_staff_count,
       assigned,
       missing: Math.max(0, group.required - assigned),
       startDate: parseSodUtc(group.start, group.flightDate),
@@ -421,11 +515,34 @@
   }
 
   function parseSodUtc(value, flightDate) {
-    const year = Number(flightDate.slice(-4));
-    const m = value.match(/^(\d{2})\s+([A-Za-z]{3})\s+(\d{2}):(\d{2})$/);
-    if (!m) return null;
-    const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].findIndex((x) => x.toLowerCase() === m[2].toLowerCase());
-    return new Date(Date.UTC(year, month, Number(m[1]), Number(m[3]), Number(m[4])));
+    if (!value) return null;
+    const cleanStr = String(value).replace(/act/gi, "").replace(/[>()]/g, "").replace(/^[-\s]+|[-\s]+$/g, "").trim();
+    const matchWithDate = cleanStr.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{1,2}):(\d{2})$/);
+    if (matchWithDate) {
+      const [, day, mon, hour, minute] = matchWithDate;
+      const year = flightDate ? Number(String(flightDate).match(/\d{4}$/)?.[0] || new Date().getUTCFullYear()) : new Date().getUTCFullYear();
+      const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        .findIndex((name) => name.toLowerCase() === mon.toLowerCase());
+      if (month >= 0) {
+        return new Date(Date.UTC(year, month, Number(day), Number(hour), Number(minute)));
+      }
+    }
+    const matchTimeOnly = cleanStr.match(/^(\d{1,2}):(\d{2})$/);
+    if (matchTimeOnly && flightDate) {
+      const dMatch = String(flightDate).match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+      if (dMatch) {
+        const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          .findIndex((name) => name.toLowerCase() === dMatch[2].toLowerCase());
+        if (month >= 0) {
+          return new Date(Date.UTC(Number(dMatch[3]), month, Number(dMatch[1]), Number(matchTimeOnly[1]), Number(matchTimeOnly[2])));
+        }
+      }
+      const isoMatch = String(flightDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (isoMatch) {
+        return new Date(Date.UTC(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]), Number(matchTimeOnly[1]), Number(matchTimeOnly[2])));
+      }
+    }
+    return null;
   }
 
   function overlaps(a, b, start, end) { return a && b && a <= end && b >= start; }

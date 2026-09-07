@@ -1648,6 +1648,14 @@ function renderRows(rows) {
       ? `<span class="flight-dir">${escapeHtml(row.direction)}</span>`
       : "";
 
+    const hasShorterStaff = Boolean(row.has_shorter_assignment || (Array.isArray(row.staff_details) && row.staff_details.some(d => d.is_shorter)));
+    const shorterStaffTooltip = hasShorterStaff && Array.isArray(row.staff_details)
+      ? row.staff_details.filter(d => d.is_shorter).map(d => `${d.name} (${d.start_utc}–${d.release_utc}, ${d.duration})`).join("; ")
+      : "Agent(s) assigned for shorter time";
+    const assignedCellHtml = hasShorterStaff
+      ? `${escapeHtml(row.assigned)} <span class="staff-shorter-badge compact" title="Shorter assignment: ${escapeHtml(shorterStaffTooltip)}">⏱ shorter</span>`
+      : escapeHtml(row.assigned);
+
     tr.dataset.rowKey = OperationsUtils.rowKey(row);
     tr.innerHTML = `
       <td class="col-date">${escapeHtml(row.date)}</td>
@@ -1658,7 +1666,7 @@ function renderRows(rows) {
       <td class="col-route">${escapeHtml(row.route || "-")}</td>
       <td><span class="badge badge-${escapeHtml(row.sla).toLowerCase().replace(/[^a-z0-9]/g, "-")}">${escapeHtml(row.sla)}</span></td>
       <td class="col-num">${escapeHtml(row.required)}</td>
-      <td class="col-num">${escapeHtml(row.assigned)}</td>
+      <td class="col-num">${assignedCellHtml}</td>
       <td class="col-num">${missingBadgeHtml}</td>
       <td class="col-time">${escapeHtml(displayStart)}</td>
       <td class="col-time">${escapeHtml(displayRelease)}</td>
@@ -3148,7 +3156,7 @@ function renderRoster() {
         const useLocal = rosterLocalTimeToggle.checked;
         const assignments = displayByDay[0] || [];
         if (assignments.length) {
-          const sorted = [...assignments].sort((a, b) => getDutyStartMinutes(a, useLocal) - getDutyStartMinutes(b, useLocal));
+          const sorted = [...assignments].sort((a, b) => getDutyStartMinutes(a, useLocal, person.key) - getDutyStartMinutes(b, useLocal, person.key));
           let totalDutyMins = 0;
           let earliestStartMins = Infinity;
           let latestEndMins = -Infinity;
@@ -3156,9 +3164,8 @@ function renderRoster() {
           let latestReleaseStr = "";
 
           sorted.forEach((row) => {
-            const startMins = getDutyStartMinutes(row, useLocal);
-            const releaseDisplay = getDisplayTime(row.date, row.release_utc, useLocal);
-            const releaseMins = parseTimeToMinutes(releaseDisplay);
+            const startMins = getDutyStartMinutes(row, useLocal, person.key);
+            const releaseMins = getDutyReleaseMinutes(row, useLocal, person.key);
             let durMins = releaseMins - startMins;
             if (durMins <= 0) durMins += 1440;
             const endMins = startMins + durMins;
@@ -3174,7 +3181,7 @@ function renderRoster() {
             }
           });
 
-          const singleDayBreakMins = calculateDayBreakMinutes(assignments, useLocal);
+          const singleDayBreakMins = calculateDayBreakMinutes(assignments, useLocal, person.key);
           const spanMins = (latestEndMins > earliestStartMins && latestEndMins !== -Infinity) ? (latestEndMins - earliestStartMins) : totalDutyMins;
           const zoneLabel = useLocal ? "Local" : "Z";
           const spanStr = earliestStartStr && latestReleaseStr ? `${earliestStartStr}–${latestReleaseStr} ${zoneLabel}` : "";
@@ -3192,7 +3199,7 @@ function renderRoster() {
       }
 
       const personHasOverlap = shouldShowOverlapVisuals() && displayByDay.some((dayAssignments) =>
-        dayAssignments.length > 1 && OperationsUtils.inspectDaySchedule(dayAssignments, getPlannerOptions()).violations.includes("overlap")
+        dayAssignments.length > 1 && OperationsUtils.inspectDaySchedule(dayAssignments, { ...getPlannerOptions(), personKey: person.key }).violations.includes("overlap")
       );
       const overlapPillHtml = personHasOverlap ? ` <span class="person-overlap-pill" title="Staff member has overlapping shift assignments on one or more dates"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>Overlap</span></span>` : "";
       const contractMeta = getStaffContractMeta(plannerStaffContracts[person.key]);
@@ -3211,7 +3218,7 @@ function renderRoster() {
           ${singleDaySummaryBadgeHtml}
         </td>
         ${displayByDay.map((assignments, index) => renderRosterDayCell(assignments, roster.dailyWindows[index], showRosterDutyTotals, person, roster.dailyWindows.length === 1)).join("")}
-        ${showRosterDutyTotals ? `<td class="roster-total-cell"><span class="roster-range-total" title="Duty hours in selected range">${formatHours(OperationsUtils.summarizeDutyHours(displayByDay.flat(), roster.dailyWindows).totalMinutes)}h</span></td>` : ""}
+        ${showRosterDutyTotals ? `<td class="roster-total-cell"><span class="roster-range-total" title="Duty hours in selected range">${formatHours(OperationsUtils.summarizeDutyHours(displayByDay.flat(), roster.dailyWindows, [], { personKey: person.key }).totalMinutes)}h</span></td>` : ""}
       `;
       rosterBody.appendChild(tr);
     }
@@ -3419,7 +3426,13 @@ function renderAirlineRoster(roster) {
             const stationTag = identity?.initials && identity.initials !== displayName ? identity.initials : "";
             const hasOverlap = shouldShowOverlapVisuals() && isStaffOverlappingOnDate(identity?.key || label, duty.date);
             const overlapBadge = hasOverlap ? `<span class="overlap-badge" title="Staff member has an overlapping duty shift on this date!"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>Overlap</span></span>` : "";
-            return `<button type="button" draggable="true" class="board-staff-btn${hasOverlap ? " has-overlap" : ""}" data-staff-index="${staffIndex}" data-duty-row-key="${escapeHtml(rowKey)}" data-staff-key="${escapeHtml(identity?.key || "")}" data-staff-name="${escapeHtml(displayName)}" data-staff-initials="${escapeHtml(identity?.initials || "")}" title="${hasOverlap ? "OVERLAP WARNING: Staff member has an overlapping shift on this date! · " : ""}Drag or click to replace ${escapeHtml(displayName)}"><strong>${escapeHtml(displayName)}</strong>${stationTag ? `<small>${escapeHtml(stationTag)}</small>` : ""}${overlapBadge}<span class="board-staff-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(identity?.key || displayName)}" title="Remove staff from duty">×</span></button>`;
+            const detail = (duty.staff_details || []).find((d) => isSameStaff(d.name || d.staff, label));
+            const isShorter = Boolean(detail && detail.is_shorter);
+            const shorterBadge = isShorter
+              ? ` <span class="staff-shorter-badge compact" title="Assigned for shorter time (${detail.duration}): ${detail.start_utc}–${detail.release_utc}">⏱ ${detail.duration}</span>`
+              : "";
+            const shorterTitle = isShorter ? `Assigned for shorter period (${detail.duration}): ${detail.start_utc}–${detail.release_utc} · ` : "";
+            return `<button type="button" draggable="true" class="board-staff-btn${hasOverlap ? " has-overlap" : ""}${isShorter ? " is-shorter" : ""}" data-staff-index="${staffIndex}" data-duty-row-key="${escapeHtml(rowKey)}" data-staff-key="${escapeHtml(identity?.key || "")}" data-staff-name="${escapeHtml(displayName)}" data-staff-initials="${escapeHtml(identity?.initials || "")}" title="${hasOverlap ? "OVERLAP WARNING: Staff member has an overlapping shift on this date! · " : ""}${shorterTitle}Drag or click to replace ${escapeHtml(displayName)}"><strong>${escapeHtml(displayName)}</strong>${shorterBadge}${stationTag ? `<small>${escapeHtml(stationTag)}</small>` : ""}${overlapBadge}<span class="board-staff-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(identity?.key || displayName)}" title="Remove staff from duty">×</span></button>`;
           }).join("") : '<span class="board-unassigned">Unassigned</span>';
           const planned = currentAutoPlan?.slots.filter((slot) => slot.personKey && OperationsUtils.rowKey(slot.row) === rowKey) || [];
           const plannedStaff = planned.map((slot) => {
@@ -4184,9 +4197,18 @@ function getFilterWindowMinutes() {
   return { winStart, winEnd, winDur, startStr, endStr };
 }
 
-function getDutyStartMinutes(row, useLocal) {
-  const displayStart = getDisplayTime(row.date, row.start_utc, useLocal);
+function getDutyStartMinutes(row, useLocal, personKey = null) {
+  const time = personKey ? OperationsUtils.getPersonDutyTime(row, personKey) : null;
+  const startUtc = time?.start_utc || row.start_utc;
+  const displayStart = getDisplayTime(row.date, startUtc, useLocal);
   return parseTimeToMinutes(displayStart);
+}
+
+function getDutyReleaseMinutes(row, useLocal, personKey = null) {
+  const time = personKey ? OperationsUtils.getPersonDutyTime(row, personKey) : null;
+  const releaseUtc = time?.release_utc || row.release_utc;
+  const displayRelease = getDisplayTime(row.date, releaseUtc, useLocal);
+  return parseTimeToMinutes(displayRelease);
 }
 
 function getSingleDayRequiredWidth() {
@@ -4273,8 +4295,11 @@ function hasAssignableShiftForPersonOnDate(personKey, isoDate, personAssignments
     if (dEnd <= dStart) dEnd = new Date(dEnd.getTime() + 86400000);
 
     const conflict = personAssignments.some((a) => {
-      const aStart = parseTime(a.date, a.start_utc);
-      let aEnd = parseTime(a.date, a.release_utc);
+      const aTime = personKey ? OperationsUtils.getPersonDutyTime(a, personKey) : null;
+      const aStartStr = aTime?.start_utc || a.start_utc;
+      const aRelStr = aTime?.release_utc || a.release_utc;
+      const aStart = parseTime(a.date, aStartStr);
+      let aEnd = parseTime(a.date, aRelStr);
       if (!aStart || !aEnd) return false;
       if (aEnd <= aStart) aEnd = new Date(aEnd.getTime() + 86400000);
       return dStart < aEnd && dEnd > aStart;
@@ -4284,10 +4309,11 @@ function hasAssignableShiftForPersonOnDate(personKey, isoDate, personAssignments
   });
 }
 
-function isRowOverlappingInAssignments(targetRow, assignments) {
+function isRowOverlappingInAssignments(targetRow, assignments, personKey = null) {
   if (!assignments || assignments.length <= 1 || !targetRow) return false;
-  const targetStart = OperationsUtils.parseDutyTime(targetRow.date, targetRow.start_utc);
-  const targetEnd = OperationsUtils.parseDutyTime(targetRow.date, targetRow.release_utc);
+  const targetTime = personKey ? OperationsUtils.getPersonDutyTime(targetRow, personKey) : null;
+  const targetStart = targetTime?.start || OperationsUtils.parseDutyTime(targetRow.date, targetRow.start_utc);
+  const targetEnd = targetTime?.end || OperationsUtils.parseDutyTime(targetRow.date, targetRow.release_utc);
   if (!targetStart || !targetEnd) return false;
 
   return assignments.some((other) => {
@@ -4299,8 +4325,9 @@ function isRowOverlappingInAssignments(targetRow, assignments) {
     if (flightTarget && flightOther && flightTarget === flightOther && dateTarget && dateOther && dateTarget === dateOther) {
       return false;
     }
-    const otherStart = OperationsUtils.parseDutyTime(other.date, other.start_utc);
-    const otherEnd = OperationsUtils.parseDutyTime(other.date, other.release_utc);
+    const otherTime = personKey ? OperationsUtils.getPersonDutyTime(other, personKey) : null;
+    const otherStart = otherTime?.start || OperationsUtils.parseDutyTime(other.date, other.start_utc);
+    const otherEnd = otherTime?.end || OperationsUtils.parseDutyTime(other.date, other.release_utc);
     if (!otherStart || !otherEnd) return false;
     return targetStart < otherEnd && targetEnd > otherStart;
   });
@@ -4310,15 +4337,14 @@ function isStaffOverlappingOnDate(staffKeyOrName, date) {
   if (!staffKeyOrName || !date) return false;
   const staffDuties = latestRows.filter((r) => r.date === date && (r.staff || []).some((s) => isSameStaff(s, staffKeyOrName)));
   if (staffDuties.length <= 1) return false;
-  return OperationsUtils.inspectDaySchedule(staffDuties, getPlannerOptions()).violations.includes("overlap");
+  return OperationsUtils.inspectDaySchedule(staffDuties, { ...getPlannerOptions(), personKey: staffKeyOrName }).violations.includes("overlap");
 }
 
-function calculateDayBreakMinutes(assignments, useLocal = false) {
+function calculateDayBreakMinutes(assignments, useLocal = false, personKey = null) {
   if (!assignments || assignments.length < 2) return 0;
   const sorted = [...assignments].map((row) => {
-    const startMins = getDutyStartMinutes(row, useLocal);
-    const releaseDisplay = getDisplayTime(row.date, row.release_utc, useLocal);
-    const releaseMins = parseTimeToMinutes(releaseDisplay);
+    const startMins = getDutyStartMinutes(row, useLocal, personKey);
+    const releaseMins = getDutyReleaseMinutes(row, useLocal, personKey);
     let durMins = releaseMins - startMins;
     if (durMins <= 0) durMins += 1440;
     return { startMins, endMins: startMins + durMins };
@@ -4335,10 +4361,10 @@ function calculateDayBreakMinutes(assignments, useLocal = false) {
 function renderRosterDayCell(assignments, window, showTotal = false, person = null, isSingleDay = false) {
   const reviewOnly = rosterStateMode === "changes";
   const useLocal = rosterLocalTimeToggle.checked;
-  const dutyHours = showTotal ? formatHours(OperationsUtils.summarizeDutyHours(assignments, [window]).totalMinutes) : "";
-  const breakMins = calculateDayBreakMinutes(assignments, useLocal);
+  const dutyHours = showTotal ? formatHours(OperationsUtils.summarizeDutyHours(assignments, [window], [], { personKey: person?.key }).totalMinutes) : "";
+  const breakMins = calculateDayBreakMinutes(assignments, useLocal, person?.key);
   const breakSubtext = breakMins > 0 ? ` <small class="break-subtext" style="opacity:0.85; font-weight:normal; font-size:10px;" title="Shift break in-between: ${formatHours(breakMins)}h (${breakMins}m)">(+${formatHours(breakMins)}h break)</small>` : "";
-  const dayInsp = assignments.length > 1 ? OperationsUtils.inspectDaySchedule(assignments, getPlannerOptions()) : { violations: [] };
+  const dayInsp = assignments.length > 1 ? OperationsUtils.inspectDaySchedule(assignments, { ...getPlannerOptions(), personKey: person?.key }) : { violations: [] };
   const showVisuals = shouldShowOverlapVisuals();
   const hasDayOverlap = showVisuals && (dayInsp.violations || []).includes("overlap");
   const cellOverlapClass = hasDayOverlap ? " has-overlap" : "";
@@ -4394,13 +4420,12 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
   const { winStart, winDur } = getFilterWindowMinutes();
 
   if (isSingleDay) {
-    const sorted = [...assignments].sort((a, b) => getDutyStartMinutes(a, useLocal) - getDutyStartMinutes(b, useLocal));
+    const sorted = [...assignments].sort((a, b) => getDutyStartMinutes(a, useLocal, person?.key) - getDutyStartMinutes(b, useLocal, person?.key));
     const tracks = [];
 
     for (const row of sorted) {
-      const startMins = getDutyStartMinutes(row, useLocal);
-      const releaseDisplay = getDisplayTime(row.date, row.release_utc, useLocal);
-      const releaseMins = parseTimeToMinutes(releaseDisplay);
+      const startMins = getDutyStartMinutes(row, useLocal, person?.key);
+      const releaseMins = getDutyReleaseMinutes(row, useLocal, person?.key);
       let durMins = releaseMins - startMins;
       if (durMins <= 0) durMins += 1440;
       const endMins = startMins + durMins;
@@ -4427,7 +4452,12 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
         const change = rosterStateMode === "original" ? { changed: false, added: [], removed: [] } : getDutyRosterChange(row);
         const changeText = formatRosterChange(change);
         const rowKey = OperationsUtils.rowKey(row);
-        const isOverlap = showVisuals && isRowOverlappingInAssignments(row, assignments);
+        const isOverlap = showVisuals && isRowOverlappingInAssignments(row, assignments, person?.key);
+        const personTiming = person?.key ? OperationsUtils.getPersonDutyTime(row, person.key) : null;
+        const startUtc = personTiming?.start_utc || row.start_utc;
+        const releaseUtc = personTiming?.release_utc || row.release_utc;
+        const isShorter = Boolean(personTiming?.is_shorter);
+        const shorterBadgeHtml = isShorter ? ` <span class="staff-shorter-badge compact" title="Assigned for shorter time (${personTiming.duration}): ${startUtc}–${releaseUtc} (flight window: ${row.start_utc}–${row.release_utc})">⏱ ${personTiming.duration || formatHours(durMins) + 'h'}</span>` : "";
 
         let relStart = startMins - winStart;
         if (relStart < 0) relStart += 1440;
@@ -4471,12 +4501,13 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
         const breakTitle = breakGapMins > 0 ? ` · Break from prev duty: ${formatHours(breakGapMins)}h (${breakGapMins}m)` : "";
         const overlapTitle = isOverlap ? "OVERLAP CONFLICT: Shift overlaps with another duty assigned to this person! · " : "";
         const overlapBadgeHtml = isOverlap ? ` <span class="overlap-badge" title="Overlap Collision with another assigned shift on this day"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>OVERLAP</span></span>` : "";
+        const shorterTitle = isShorter ? `Assigned for shorter duration (${personTiming.duration}): ${startUtc}–${releaseUtc} · ` : "";
 
         elements.push(`
-        <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}${isOverlap ? " duty-overlap" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""}${styleAttr} title="${overlapTitle}${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}${breakTitle}">
+        <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}${isOverlap ? " duty-overlap" : ""}${isShorter ? " is-shorter-assignment" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""}${styleAttr} title="${overlapTitle}${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}${shorterTitle}Find a replacement · ${escapeHtml(`${row.route || ""} · ${startUtc || ""}–${releaseUtc || ""} UTC`)}${breakTitle}">
           <strong>${escapeHtml(row.flight)}</strong>
-          <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}${overlapBadgeHtml}</span>
-          <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
+          <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${shorterBadgeHtml}${getRosterCellBadge(change, person)}${overlapBadgeHtml}</span>
+          <small>${escapeHtml(getDisplayTime(row.date, startUtc, useLocal))}–${escapeHtml(getDisplayTime(row.date, releaseUtc, useLocal))} ${zoneLabel}</small>
           ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
           ${person?.key && !reviewOnly ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
           ${person?.key && !reviewOnly ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}
@@ -4494,15 +4525,21 @@ function renderRosterDayCell(assignments, window, showTotal = false, person = nu
     const change = rosterStateMode === "original" ? { changed: false, added: [], removed: [] } : getDutyRosterChange(row);
     const changeText = formatRosterChange(change);
     const rowKey = OperationsUtils.rowKey(row);
-    const isOverlap = showVisuals && isRowOverlappingInAssignments(row, assignments);
+    const isOverlap = showVisuals && isRowOverlappingInAssignments(row, assignments, person?.key);
+    const personTiming = person?.key ? OperationsUtils.getPersonDutyTime(row, person.key) : null;
+    const startUtc = personTiming?.start_utc || row.start_utc;
+    const releaseUtc = personTiming?.release_utc || row.release_utc;
+    const isShorter = Boolean(personTiming?.is_shorter);
+    const shorterBadgeHtml = isShorter ? ` <span class="staff-shorter-badge compact" title="Assigned for shorter time (${personTiming.duration}): ${startUtc}–${releaseUtc} (flight window: ${row.start_utc}–${row.release_utc})">⏱ ${personTiming.duration}</span>` : "";
     const overlapTitle = isOverlap ? "OVERLAP CONFLICT: Shift overlaps with another duty assigned to this person! · " : "";
     const overlapBadgeHtml = isOverlap ? ` <span class="overlap-badge" title="Overlap Collision with another assigned shift on this day"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg><span>OVERLAP</span></span>` : "";
+    const shorterTitle = isShorter ? `Assigned for shorter duration (${personTiming.duration}): ${startUtc}–${releaseUtc} · ` : "";
 
     return `
-    <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}${isOverlap ? " duty-overlap" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""} title="${overlapTitle}${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}Find a replacement · ${escapeHtml(`${row.route || ""} · ${row.start_utc || ""}–${row.release_utc || ""} UTC`)}">
+    <button type="button" draggable="true" class="compact-duty${change.changed ? " edited" : ""}${isOverlap ? " duty-overlap" : ""}${isShorter ? " is-shorter-assignment" : ""}" data-row-key="${escapeHtml(rowKey)}" data-sla="${escapeHtml(row.sla || "")}" ${person?.key ? `data-source-staff-key="${escapeHtml(person.key)}"` : ""} title="${overlapTitle}${change.changed ? `Edited locally: ${escapeHtml(changeText)} · ` : ""}${shorterTitle}Find a replacement · ${escapeHtml(`${row.route || ""} · ${startUtc || ""}–${releaseUtc || ""} UTC`)}">
       <strong>${escapeHtml(row.flight)}</strong>
-      <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${getRosterCellBadge(change, person)}${overlapBadgeHtml}</span>
-      <small>${escapeHtml(getDisplayTime(row.date, row.start_utc, useLocal))}–${escapeHtml(getDisplayTime(row.date, row.release_utc, useLocal))} ${zoneLabel}</small>
+      <span class="compact-sla" data-sla="${escapeHtml(row.sla || "")}">${escapeHtml(row.sla)}${shorterBadgeHtml}${getRosterCellBadge(change, person)}${overlapBadgeHtml}</span>
+      <small>${escapeHtml(getDisplayTime(row.date, startUtc, useLocal))}–${escapeHtml(getDisplayTime(row.date, releaseUtc, useLocal))} ${zoneLabel}</small>
       ${change.changed ? `<small class="compact-duty-change">${escapeHtml(changeText)}</small>` : ""}
       ${person?.key && !reviewOnly ? `<span class="compact-duty-swap-btn" data-swap-row-key="${escapeHtml(rowKey)}" data-swap-staff-key="${escapeHtml(person.key)}" title="Swap or transfer shift">⇄</span>` : ""}
       ${person?.key && !reviewOnly ? `<span class="compact-duty-delete-btn" data-delete-row-key="${escapeHtml(rowKey)}" data-delete-staff-key="${escapeHtml(person.key)}" title="Remove staff from duty">×</span>` : ""}

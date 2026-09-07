@@ -414,4 +414,36 @@ test("mergeCustomDateRange successfully merges dates and rows from scan_history 
   assert.equal(merged.gapsCount, 1);
 });
 
+test("parses SOD groups with single-digit days, ACT markers, and > prefixes", () => {
+  const html = `
+    <table><tbody>
+      <tr>
+        <td>CKIN</td><td>Agent</td><td>Required: 2</td><td>7 Sep 07:35</td><td>7 Sep 10:35</td><td>03:00</td>
+      </tr>
+      <tr>
+        <td><input type="checkbox"></td>
+        <td></td>
+        <td>MUC - Agent One</td>
+        <td>> 07:35 ACT</td>
+        <td>10:35</td>
+        <td>03:00</td>
+      </tr>
+      <tr>
+        <td><input type="checkbox"></td>
+        <td></td>
+        <td>MUC - Agent Two</td>
+        <td>7 Sep 08:35</td>
+        <td>7 Sep 10:35</td>
+        <td>02:00</td>
+      </tr>
+    </tbody></table>`;
 
+  const groups = parseSodGroups(html, "07-Sep-2026");
+  assert.equal(groups.length, 1);
+  const group = groups[0];
+  assert.equal(group.has_shorter_assignment, true);
+  assert.equal(group.shorter_staff_count, 1);
+  const shorter = group.staff_details.find((d) => d.name === "MUC - Agent Two");
+  assert.equal(shorter.is_shorter, true);
+  assert.equal(shorter.duration_minutes, 120);
+});

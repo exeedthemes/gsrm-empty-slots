@@ -34,12 +34,18 @@
   }
 
   function getPersonDutyTime(row, personKey = null) {
-    if (!row) return { start: null, end: null, start_utc: "", release_utc: "", duration: "", is_shorter: false };
+    if (!row) return { start: null, end: null, start_utc: "", release_utc: "", duration: "", is_shorter: false, duration_minutes: 0 };
     if (personKey && Array.isArray(row.staff_details)) {
-      const pKey = (StaffUtils?.parseStaffIdentity(personKey)?.key || String(personKey)).toUpperCase();
+      const pIdentity = StaffUtils?.parseStaffIdentity(personKey);
+      const pKey = (pIdentity?.key || String(personKey)).toUpperCase();
+      const pInitials = (pIdentity?.initials || "").toUpperCase();
+      const pName = (pIdentity?.name || "").toUpperCase();
       const detail = row.staff_details.find((d) => {
-        const dKey = (StaffUtils?.parseStaffIdentity(d.name || d.staff)?.key || String(d.name || d.staff || "")).toUpperCase();
-        return dKey === pKey;
+        const dIdentity = StaffUtils?.parseStaffIdentity(d.name || d.staff);
+        const dKey = (dIdentity?.key || String(d.name || d.staff || "")).toUpperCase();
+        const dInitials = (dIdentity?.initials || "").toUpperCase();
+        const dName = (dIdentity?.name || "").toUpperCase();
+        return dKey === pKey || (pInitials && dInitials === pInitials && pName && dName === pName) || (pName && dName === pName);
       });
       if (detail && (detail.start_utc || detail.release_utc)) {
         const start = parseDutyTime(row.date, detail.start_utc || row.start_utc);
@@ -52,6 +58,7 @@
             release_utc: detail.release_utc || row.release_utc,
             duration: detail.duration || row.duration,
             is_shorter: Boolean(detail.is_shorter),
+            duration_minutes: typeof detail.duration_minutes === "number" && detail.duration_minutes > 0 ? detail.duration_minutes : (end > start ? Math.round((end - start) / 60000) : 0),
           };
         }
       }
@@ -65,16 +72,23 @@
       release_utc: row.release_utc,
       duration: row.duration,
       is_shorter: false,
+      duration_minutes: start && end && end > start ? Math.round((end - start) / 60000) : 0,
     };
   }
 
   function dutyMinutes(row, personKey = null) {
     if (!row) return 0;
     if (personKey && Array.isArray(row.staff_details)) {
-      const pKey = (StaffUtils?.parseStaffIdentity(personKey)?.key || String(personKey)).toUpperCase();
+      const pIdentity = StaffUtils?.parseStaffIdentity(personKey);
+      const pKey = (pIdentity?.key || String(personKey)).toUpperCase();
+      const pInitials = (pIdentity?.initials || "").toUpperCase();
+      const pName = (pIdentity?.name || "").toUpperCase();
       const detail = row.staff_details.find((d) => {
-        const dKey = (StaffUtils?.parseStaffIdentity(d.name || d.staff)?.key || String(d.name || d.staff || "")).toUpperCase();
-        return dKey === pKey;
+        const dIdentity = StaffUtils?.parseStaffIdentity(d.name || d.staff);
+        const dKey = (dIdentity?.key || String(d.name || d.staff || "")).toUpperCase();
+        const dInitials = (dIdentity?.initials || "").toUpperCase();
+        const dName = (dIdentity?.name || "").toUpperCase();
+        return dKey === pKey || (pInitials && dInitials === pInitials && pName && dName === pName) || (pName && dName === pName);
       });
       if (detail) {
         if (typeof detail.duration_minutes === "number" && detail.duration_minutes > 0) return detail.duration_minutes;
@@ -196,7 +210,10 @@
     const person = buildPeople(simulatedRows, []).find((item) => item.key === candidateIdentity.key);
     const dayDuties = (person?.duties || [])
       .filter((row) => row.date === duty.date)
-      .map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) }))
+      .map((row) => {
+        const time = getPersonDutyTime(row, candidateIdentity.key);
+        return { row, start: time.start, end: time.end };
+      })
       .filter((item) => item.start && item.end && item.end > item.start)
       .sort((a, b) => a.start - b.start);
     const conflicts = [];
@@ -330,8 +347,9 @@
     return res;
   }
 
-  function summarizeDutyHours(rows, windows, holidayDates = []) {
+  function summarizeDutyHours(rows, windows, holidayDates = [], options = {}) {
     const holidays = holidayDates instanceof Set ? holidayDates : new Set(holidayDates);
+    const personKey = typeof options === "string" ? options : (options?.personKey || null);
     const totals = {
       dutyCount: 0,
       totalMinutes: 0,
@@ -346,8 +364,9 @@
       const key = rowKey(row);
       if (seen.has(key)) continue;
       seen.add(key);
-      const dutyStart = parseDutyTime(row.date, row.start_utc);
-      const dutyEnd = parseDutyTime(row.date, row.release_utc);
+      const time = personKey ? getPersonDutyTime(row, personKey) : { start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) };
+      const dutyStart = time.start;
+      const dutyEnd = time.end;
       if (!dutyStart || !dutyEnd || dutyEnd <= dutyStart) continue;
       let countedDuty = false;
 
@@ -711,9 +730,10 @@
       const key = rowKey(row);
       if (seen.has(key)) continue;
       seen.add(key);
-      const start = parseDutyTime(row.date, row.start_utc);
+      const time = options.personKey ? getPersonDutyTime(row, options.personKey) : { start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) };
+      const start = time.start;
       if (!start) continue;
-      const minutes = dutyMinutes(row);
+      const minutes = dutyMinutes(row, options.personKey);
       const date = start.toISOString().slice(0, 10);
       const weekKey = isoWeekKey(start);
       const monthKey = date.slice(0, 7);
@@ -735,7 +755,10 @@
     if (maxMonthlyMinutes && [...months.values()].some((month) => month.minutes > maxMonthlyMinutes)) violations.push("monthlyHours");
     const minRestMinutes = Number(restRule?.parameters?.minRestHours || 0) * 60;
     if (minRestMinutes > 0) {
-      const timed = (duties || []).map((row) => ({ row, start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) }))
+      const timed = (duties || []).map((row) => {
+        const time = options.personKey ? getPersonDutyTime(row, options.personKey) : { start: parseDutyTime(row.date, row.start_utc), end: parseDutyTime(row.date, row.release_utc) };
+        return { row, start: time.start, end: time.end };
+      })
         .filter((item) => item.start && item.end)
         .sort((a, b) => a.start - b.start);
       for (let index = 1; index < timed.length; index += 1) {
@@ -1590,7 +1613,7 @@ return {
 
       for (const date of targetDates) {
         const dayDuties = dutiesList.filter((d) => d.date === date);
-        const insp = inspectDaySchedule(dayDuties, options);
+        const insp = inspectDaySchedule(dayDuties, { ...options, personKey });
         if (!insp.valid) {
           allValid = false;
           violations.push(...(insp.violations || []).map((v) => `${date}: ${v}`));
@@ -1606,7 +1629,7 @@ return {
       }
 
       // Check period limits (weekly/monthly)
-      const periodInsp = inspectPeriodWorkload(dutiesList, options);
+      const periodInsp = inspectPeriodWorkload(dutiesList, { ...options, personKey });
       if (!periodInsp.valid) {
         allValid = false;
         violations.push(...(periodInsp.violations || []));
@@ -1764,8 +1787,9 @@ return {
     const events = [];
 
     for (const row of filteredRows) {
-      const startDt = parseDutyTime(row.date, row.start_utc);
-      const releaseDt = parseDutyTime(row.date, row.release_utc);
+      const time = staffKey ? getPersonDutyTime(row, staffKey) : null;
+      const startDt = time?.start || parseDutyTime(row.date, row.start_utc);
+      const releaseDt = time?.end || parseDutyTime(row.date, row.release_utc);
       if (!startDt || !releaseDt) continue;
 
       const uid = `duty-${rowKey(row).replace(/[^a-zA-Z0-9]/g, "_")}@gsrm.app`;

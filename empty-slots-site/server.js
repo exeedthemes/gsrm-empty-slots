@@ -1661,7 +1661,7 @@ function parseSodGroups(html, flightDate) {
 }
 
 function normalizeTimeWithDate(timeStr, defaultWithDate) {
-  const clean = stripSla(timeStr || "").replace(/act/gi, "").replace(/>/g, "").replace(/^[-\s()]+|[-\s()]+$/g, "").trim();
+  const clean = stripSla(timeStr || "").replace(/act/gi, "").replace(/[>()]/g, "").replace(/^[-\s]+|[-\s]+$/g, "").trim();
   if (!clean) return "";
   if (/^\d{1,2}\s+[A-Za-z]{3}\s+\d{1,2}:\d{2}$/.test(clean)) return clean;
   if (/^\d{1,2}:\d{2}$/.test(clean)) {
@@ -1673,9 +1673,12 @@ function normalizeTimeWithDate(timeStr, defaultWithDate) {
 }
 
 function computeDurationMinutes(startText, releaseText, durationText, flightDate) {
-  if (durationText && durationText.includes(":")) {
-    const m = durationText.trim().match(/^(\d+):(\d+)$/);
-    if (m) return Number(m[1]) * 60 + Number(m[2]);
+  if (durationText) {
+    const cleanDur = String(durationText).replace(/act/gi, "").replace(/[>()]/g, "").replace(/^[-\s]+|[-\s]+$/g, "").trim();
+    if (cleanDur.includes(":")) {
+      const m = cleanDur.match(/^(\d+):(\d+)$/);
+      if (m) return Number(m[1]) * 60 + Number(m[2]);
+    }
   }
   const s = parseSodUtc(startText, flightDate);
   const r = parseSodUtc(releaseText, flightDate);
@@ -1695,7 +1698,7 @@ function extractRowTiming(cells, defaultStart, defaultRelease, defaultDuration, 
 
   const timeCellIndices = [];
   cells.forEach((cell, idx) => {
-    const text = stripSla(cell || "").trim();
+    const text = stripSla(cell || "").replace(/act/gi, "").replace(/[>()]/g, "").replace(/^[-\s]+|[-\s]+$/g, "").trim();
     if (/^(?:\d{1,2}\s+[A-Za-z]{3}\s+)?\d{1,2}:\d{2}$/.test(text)) timeCellIndices.push(idx);
   });
 
@@ -1715,9 +1718,9 @@ function extractRowTiming(cells, defaultStart, defaultRelease, defaultDuration, 
   const staffStartDate = parseSodUtc(staffStart, flightDate);
   const staffReleaseDate = parseSodUtc(staffRelease, flightDate);
 
-  const isLaterStart = groupStartDate && staffStartDate && staffStartDate > groupStartDate;
-  const isEarlierRelease = groupReleaseDate && staffReleaseDate && staffReleaseDate < groupReleaseDate;
-  const isShorterDuration = groupDurationMinutes > 0 && staffDurationMinutes > 0 && staffDurationMinutes < groupDurationMinutes;
+  const isLaterStart = Boolean(groupStartDate && staffStartDate && staffStartDate.getTime() > groupStartDate.getTime());
+  const isEarlierRelease = Boolean(groupReleaseDate && staffReleaseDate && staffReleaseDate.getTime() < groupReleaseDate.getTime());
+  const isShorterDuration = Boolean(groupDurationMinutes > 0 && staffDurationMinutes > 0 && staffDurationMinutes < groupDurationMinutes);
   const isShorter = Boolean(isLaterStart || isEarlierRelease || isShorterDuration);
   const isCustomTiming = Boolean(isShorter || (staffStart && staffStart !== groupStart) || (staffRelease && staffRelease !== groupRelease));
 
@@ -1877,14 +1880,34 @@ function directionFromRoute(route) {
 }
 
 function parseSodUtc(value, flightDate) {
-  const year = Number(flightDate.slice(-4));
-  const match = String(value).trim().match(/^(\d{2})\s+([A-Za-z]{3})\s+(\d{2}):(\d{2})$/);
-  if (!match) return null;
-  const [, day, mon, hour, minute] = match;
-  const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    .findIndex((name) => name.toLowerCase() === mon.toLowerCase());
-  if (month < 0) return null;
-  return new Date(Date.UTC(year, month, Number(day), Number(hour), Number(minute)));
+  if (!value) return null;
+  const clean = String(value).replace(/act/gi, "").replace(/[>()]/g, "").replace(/^[-\s]+|[-\s]+$/g, "").trim();
+  const matchWithDate = clean.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{1,2}):(\d{2})$/);
+  if (matchWithDate) {
+    const [, day, mon, hour, minute] = matchWithDate;
+    const year = flightDate ? Number(String(flightDate).match(/\d{4}$/)?.[0] || new Date().getUTCFullYear()) : new Date().getUTCFullYear();
+    const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+      .findIndex((name) => name.toLowerCase() === mon.toLowerCase());
+    if (month >= 0) {
+      return new Date(Date.UTC(year, month, Number(day), Number(hour), Number(minute)));
+    }
+  }
+  const matchTimeOnly = clean.match(/^(\d{1,2}):(\d{2})$/);
+  if (matchTimeOnly && flightDate) {
+    const dMatch = String(flightDate).match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
+    if (dMatch) {
+      const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        .findIndex((name) => name.toLowerCase() === dMatch[2].toLowerCase());
+      if (month >= 0) {
+        return new Date(Date.UTC(Number(dMatch[3]), month, Number(dMatch[1]), Number(matchTimeOnly[1]), Number(matchTimeOnly[2])));
+      }
+    }
+    const isoMatch = String(flightDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoMatch) {
+      return new Date(Date.UTC(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]), Number(matchTimeOnly[1]), Number(matchTimeOnly[2])));
+    }
+  }
+  return null;
 }
 
 function overlaps(start, end, periodStart, periodEnd) {
