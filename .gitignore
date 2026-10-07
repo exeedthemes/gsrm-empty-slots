@@ -4,4 +4,7 @@ node_modules/
 *.db
 data/
 *.exe
-
+cloud-sync.config.json
+.env
+.env.*
+!.env.example

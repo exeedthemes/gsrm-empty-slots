@@ -4,6 +4,12 @@ const fs = require("fs/promises");
 const { chromium } = require("playwright");
 const { getGermanBavarianHolidays } = require("./public/holiday-utils");
 const db = require("./db");
+const { createCloudSync, readConfig: readCloudConfig } = require('./cloud-sync');
+let cloudSync;
+function getCloudSync() {
+  if (!cloudSync) cloudSync = createCloudSync({ database: db.getDb(), config: readCloudConfig() });
+  return cloudSync;
+}
 
 const PORT = Number(process.env.PORT || 4173);
 const BASE_URL = "https://gsrm.avbis.online";
@@ -92,6 +98,11 @@ const server = http.createServer(async (req, res) => {
       const session = await acquireAuthenticatedSession(String(payload.email), String(payload.password));
       releaseAuthSession(session);
       sendJson(res, 200, { connected: true, email: String(payload.email), idleMinutes: Math.round(SESSION_IDLE_MS / 60000) });
+      return;
+    }
+
+    if (req.method === 'GET' && pathname === '/api/cloud-sync') {
+      sendJson(res, 200, getCloudSync().status());
       return;
     }
 
@@ -490,6 +501,12 @@ if (require.main === module) {
     const url = `http://localhost:${PORT}`;
     console.log(`Empty Slots app running at ${url}`);
     openBrowserOnce(url);
+    const retryCloudUploads = () => {
+      try { getCloudSync().flush().catch(() => console.warn('Cloud sync retry failed.')); }
+      catch { console.warn('Cloud sync is not configured correctly. See ONLINE-DASHBOARD.md.'); }
+    };
+    retryCloudUploads();
+    setInterval(retryCloudUploads, 60000).unref();
   });
 }
 
@@ -646,6 +663,13 @@ async function extractEmptySlots(payload) {
           config,
         };
         db.saveScanItem(scanSnapshot);
+        try {
+          response.cloudSync = getCloudSync().enqueue(scanSnapshot);
+          void getCloudSync().flush().catch(() => console.warn('Cloud sync queued for retry.'));
+        } catch {
+          response.cloudSync = { queued: false, reason: 'configuration-error' };
+          console.warn('Could not queue cloud scan. Check cloud-sync.config.json.');
+        }
       } catch (err) {
         console.warn(`[${scanId}] Could not save scan snapshot to db:`, err);
       }

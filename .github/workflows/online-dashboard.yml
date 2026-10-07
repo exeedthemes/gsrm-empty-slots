@@ -1,0 +1,40 @@
+name: Publish online dashboard
+on:
+  push:
+    branches: [main]
+    paths: ['online-dashboard/site/**', '.github/workflows/online-dashboard.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: online-dashboard-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure public database connection
+        env:
+          SUPABASE_URL: ${{ vars.GSRM_SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.GSRM_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const key = process.env.SUPABASE_PUBLISHABLE_KEY || '';
+          if (key.startsWith('sb_secret_')) throw new Error('Use a publishable key, never a secret key.');
+          if (key.startsWith('eyJ') && JSON.parse(Buffer.from(key.split('.')[1], 'base64url')).role !== 'anon') throw new Error('Use an anon key, never a service-role JWT.');
+          fs.writeFileSync('online-dashboard/site/config.js', 'window.GSRM_ONLINE_CONFIG = ' + JSON.stringify({ url: process.env.SUPABASE_URL || '', publishableKey: key }) + ';\n');
+          NODE
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: online-dashboard/site
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://*.supabase.co; style-src 'self'; script-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>GSRM · Online dashboard</title>
+  <link rel="stylesheet" href="styles.css"><script src="config.js" defer></script><script src="app.js" defer></script>
+</head>
+<body>
+  <header><div><span class="eyebrow">GSRM OPERATIONS</span><h1>Online dashboard</h1><p>Flight coverage and duty roster from your latest scan.</p></div><button id="signOut" hidden>Sign out</button></header>
+  <main>
+    <p id="message" role="status" aria-live="polite">Connecting…</p>
+    <section id="loginPanel" class="card" hidden>
+      <h2>Sign in to view the roster</h2><p>Use your dashboard account. Scans run on the local GSRM app.</p>
+      <form id="loginForm"><label>Email<input id="email" type="email" autocomplete="username" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button id="loginButton">Sign in</button></form>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="toolbar card"><label>Saved scan<select id="scanSelect"></select></label><button id="refresh">Refresh scans</button><span id="syncInfo"></span></div>
+      <p id="scopeNote"></p>
+      <div class="metrics"><div class="card"><span>Flights scanned</span><strong id="flights">0</strong></div><div class="card"><span>Known staff</span><strong id="staffCount">0</strong></div><div class="card"><span>Unfilled positions</span><strong id="missing">0</strong></div><div class="card"><span>Dates scanned</span><strong id="dates">0</strong></div></div>
+      <div class="toolbar card"><label>View<select id="view"><option value="duties">Flight duties</option><option value="staff">Staff roster</option></select></label><label>Date<select id="dateFilter"><option value="">All scanned dates</option></select></label><label>SLA<select id="slaFilter"><option value="">All SLAs</option></select></label><label>Search<input id="search" type="search" placeholder="Flight, staff, route…"></label><label class="checkbox"><input id="gapsOnly" type="checkbox">Gaps only</label><button id="export">Download CSV</button></div>
+      <div class="card table-wrap"><table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table><p id="empty" hidden>No matching duties.</p></div>
+      <p class="footnote">Times are UTC. This dashboard shows scanned source data. Local planning edits are not synced. Staff availability and free time depend on the scope of the scan.</p>
+    </section>
+  </main>
+</body>
+</html>
