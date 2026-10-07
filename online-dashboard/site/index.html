@@ -3,25 +3,31 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://*.supabase.co; style-src 'self'; script-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>GSRM · Online dashboard</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src https://*.supabase.co; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>GSRM · Coverage workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css"><script src="config.js" defer></script><script src="app.js" defer></script>
 </head>
 <body>
-  <header><div><span class="eyebrow">GSRM OPERATIONS</span><h1>Online dashboard</h1><p>Flight coverage and duty roster from your latest scan.</p></div><button id="signOut" hidden>Sign out</button></header>
-  <main>
-    <p id="message" role="status" aria-live="polite">Connecting…</p>
-    <section id="loginPanel" class="card" hidden>
-      <h2>Sign in to view the roster</h2><p>Use your dashboard account. Scans run on the local GSRM app.</p>
-      <form id="loginForm"><label>Email<input id="email" type="email" autocomplete="username" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button id="loginButton">Sign in</button></form>
-    </section>
+  <main class="app-shell">
+    <header class="panel controls-panel">
+      <div class="title-row"><div><span class="app-eyebrow">GSRM · FLIGHT OPERATIONS</span><h1>Coverage workspace</h1><p>Your roster, coverage gaps, and next decisions in one place.</p><div class="connection-state"><span class="connection-dot"></span><strong id="connectionLabel">Online dashboard · awaiting sign-in</strong></div></div><div class="title-actions"><span class="mode-badge">ONLINE VIEW</span><button id="refresh" class="primary-btn" disabled>Refresh scans</button><button id="signOut" class="secondary-btn" hidden>Sign out</button></div></div>
+      <div class="workspace-navigation"><nav class="tab-switcher" aria-label="Workspace views"><button id="tabGaps" data-workspace="gaps" disabled>Empty Slots</button><button id="tabRoster" data-workspace="roster" class="active" aria-current="page" disabled>Roster</button><button id="tabInsights" data-workspace="insights" disabled>Insights</button><button id="tabHistory" data-workspace="history" disabled>History</button></nav><span class="workspace-hint">Scanned source · times in UTC</span></div>
+      <div class="scan-plan-status"><div class="scan-plan-stage"><span><i class="scan-plan-dot"></i>AVBIS SOURCE</span><strong id="sourceStatus">No scan loaded</strong><small id="sourceDetail">Scans run in your local GSRM app.</small></div><span class="scan-plan-arrow" aria-hidden="true">→</span><div class="scan-plan-stage"><span><i class="scan-plan-dot"></i>ONLINE VIEW</span><strong id="onlineStatus">Awaiting uploaded scan</strong><small id="onlineDetail">Sign in to view the saved roster.</small></div></div>
+    </header>
+    <p id="message" class="message" role="status" aria-live="polite">Connecting…</p>
+    <section id="setupPanel" class="panel setup-panel" hidden><span class="app-eyebrow">GET CONNECTED</span><h2>Your workspace is ready</h2><p>Connect Supabase to view completed scans here, even when your scanning computer is off.</p><a class="primary-btn" href="https://github.com/exeedthemes/gsrm-empty-slots/blob/main/ONLINE-DASHBOARD.md" target="_blank" rel="noopener">Open setup guide ↗</a></section>
+    <section id="loginPanel" class="panel login-panel" hidden><span class="app-eyebrow">DASHBOARD ACCESS</span><h2>Sign in to your workspace</h2><p>Use your dashboard account to open uploaded rosters.</p><form id="loginForm"><label>Email<input id="email" type="email" autocomplete="username" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button id="loginButton" class="primary-btn">Sign in</button></form></section>
     <section id="dashboard" hidden>
-      <div class="toolbar card"><label>Saved scan<select id="scanSelect"></select></label><button id="refresh">Refresh scans</button><span id="syncInfo"></span></div>
-      <p id="scopeNote"></p>
-      <div class="metrics"><div class="card"><span>Flights scanned</span><strong id="flights">0</strong></div><div class="card"><span>Known staff</span><strong id="staffCount">0</strong></div><div class="card"><span>Unfilled positions</span><strong id="missing">0</strong></div><div class="card"><span>Dates scanned</span><strong id="dates">0</strong></div></div>
-      <div class="toolbar card"><label>View<select id="view"><option value="duties">Flight duties</option><option value="staff">Staff roster</option></select></label><label>Date<select id="dateFilter"><option value="">All scanned dates</option></select></label><label>SLA<select id="slaFilter"><option value="">All SLAs</option></select></label><label>Search<input id="search" type="search" placeholder="Flight, staff, route…"></label><label class="checkbox"><input id="gapsOnly" type="checkbox">Gaps only</label><button id="export">Download CSV</button></div>
-      <div class="card table-wrap"><table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table><p id="empty" hidden>No matching duties.</p></div>
-      <p class="footnote">Times are UTC. This dashboard shows scanned source data. Local planning edits are not synced. Staff availability and free time depend on the scope of the scan.</p>
+      <div class="panel scan-picker"><label>Saved scan<select id="scanSelect"></select></label><span id="syncInfo"></span></div>
+      <div class="status-strip"><div class="context-heading"><span class="app-eyebrow">COVERAGE OVERVIEW</span><h2 id="contextTitle">Duty Roster</h2><p id="contextHint">Browse flight duties and staff assignments.</p></div><div class="metrics"><div><span>Flights scanned</span><strong id="flights">0</strong></div><div><span>Known staff</span><strong id="staffCount">0</strong></div><div><span>Unfilled positions</span><strong id="missing" class="danger-text">0</strong></div><div><span>Dates scanned</span><strong id="dates">0</strong></div></div><button id="export" class="secondary-btn">Export CSV ↓</button></div>
+      <p id="scopeNote" class="scope-note"></p>
+      <section id="filterPanel" class="panel"><div class="section-heading"><div><h3>Roster filters</h3><p>Narrow the selected scan by date, SLA, or staff.</p></div><button id="resetFilters" class="secondary-btn">Reset filters</button></div><div class="filter-grid"><label>Roster view<select id="view"><option value="duties">Flight schedule</option><option value="staff">Staff roster</option></select></label><label>Roster date<select id="dateFilter"><option value="">All scanned dates</option></select></label><label>SLA<select id="slaFilter"><option value="">All SLAs</option></select></label><label>Staff or assignment<input id="search" type="search" placeholder="Flight, staff, route…"></label><label class="checkbox"><input id="gapsOnly" type="checkbox">Gaps only</label></div></section>
+      <section id="dutiesPanel" class="panel table-panel"><div class="section-heading"><h3 id="tableTitle">Flight schedule</h3><span id="resultCount" class="count-badge">0 duties</span></div><div class="table-wrap"><table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table></div><p id="empty" class="empty-state" hidden>No matching duties.</p></section>
+      <section id="insightsPanel" class="insights-grid" hidden><div class="panel"><div class="section-heading"><h3>Coverage by date</h3><span class="workspace-hint">Current filters</span></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Required</th><th>Assigned</th><th>Missing</th><th>Uncovered hours</th></tr></thead><tbody id="dateInsights"></tbody></table></div></div><div class="panel"><div class="section-heading"><h3>Coverage by SLA</h3><span class="workspace-hint">Current filters</span></div><div id="slaInsights" class="sla-insights"></div></div></section>
+      <section id="historyPanel" class="panel" hidden><div class="section-heading"><div><h3>Scan History</h3><p>Open previously uploaded source scans.</p></div><span id="historyCount" class="count-badge"></span></div><div id="historyList" class="history-list"></div></section>
+      <p class="footnote">Times are UTC. Planning changes remain in your local app. This workspace displays uploaded source scans; availability depends on the dates and duties included in each scan.</p>
     </section>
   </main>
 </body>

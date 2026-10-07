@@ -6,7 +6,42 @@ let scans = [];
 let snapshot = null;
 let currentRecords = [];
 let loadVersion = 0;
+let workspace = 'roster';
+const workspaceLabels = {
+  gaps: ['Empty Slots', 'Review uncovered duties in the selected scan.'],
+  roster: ['Duty Roster', 'Browse flight duties and staff assignments.'],
+  insights: ['Coverage Insights', 'Coverage and uncovered staff-hours across the selected scan.'],
+  history: ['Scan History', 'Open previously uploaded source scans.'],
+};
 const text = (id, value) => { $(id).textContent = value; };
+function setAccess(connected) {
+  for (const button of document.querySelectorAll('[data-workspace]')) button.disabled = !connected;
+  $('refresh').disabled = !connected;
+  document.querySelector('.connection-state').classList.toggle('connected', connected);
+  text('connectionLabel', connected ? 'Connected to uploaded scans' : 'Online dashboard · awaiting sign-in');
+}
+function setWorkspace(value) {
+  workspace = value;
+  for (const button of document.querySelectorAll('[data-workspace]')) {
+    const active = button.dataset.workspace === value;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
+  const [title, hint] = workspaceLabels[value];
+  text('contextTitle', title); text('contextHint', hint);
+  $('dutiesPanel').hidden = !['gaps', 'roster'].includes(value);
+  $('filterPanel').hidden = value === 'history';
+  $('insightsPanel').hidden = value !== 'insights';
+  $('historyPanel').hidden = value !== 'history';
+  $('export').hidden = value === 'history';
+  $('view').disabled = value !== 'roster';
+  if (value === 'gaps') { $('gapsOnly').checked = true; $('view').value = 'duties'; }
+  if (value === 'roster' || value === 'insights') $('gapsOnly').checked = false;
+  $('gapsOnly').disabled = value === 'gaps';
+  render();
+  renderHistory();
+}
 const dateKey = value => {
   const match = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/.exec(value || '');
   if (match) {
@@ -46,6 +81,13 @@ function clearRoster() {
   currentRecords = [];
   $('tableBody').replaceChildren();
   $('scanSelect').replaceChildren();
+  for (const id of ['dateInsights', 'slaInsights', 'historyList']) $(id).replaceChildren();
+  text('historyCount', '0 saved scans');
+  $('search').value = '';
+  options('dateFilter', [], 'All scanned dates'); options('slaFilter', [], 'All SLAs');
+  document.querySelector('.scan-plan-status').classList.remove('loaded');
+  text('sourceStatus', 'No scan loaded'); text('sourceDetail', 'Scans run in your local GSRM app.');
+  text('onlineStatus', 'Awaiting uploaded scan'); text('onlineDetail', 'Sign in to view the saved roster.');
   for (const id of ['flights', 'staffCount', 'missing', 'dates']) text(id, 0);
   text('syncInfo', '');
   text('scopeNote', '');
@@ -56,6 +98,7 @@ function signOut() {
   loadVersion++;
   scans = [];
   clearRoster();
+  setAccess(false);
   $('dashboard').hidden = true;
   $('signOut').hidden = true;
   $('loginPanel').hidden = false;
@@ -90,7 +133,7 @@ async function loadScans() {
     }
     await loadSnapshot();
   } catch (error) { text('message', error.message); }
-  finally { $('refresh').disabled = false; }
+  finally { $('refresh').disabled = !session; }
 }
 async function loadSnapshot() {
   const version = ++loadVersion;
@@ -105,6 +148,11 @@ async function loadSnapshot() {
     if (!records.length) throw new Error('This scan is no longer available. Refresh the scan list.');
     snapshot = records[0].snapshot;
     const scan = scans.find(scan => scan.scan_id === id);
+    document.querySelector('.scan-plan-status').classList.add('loaded');
+    text('sourceStatus', `Scan completed ${timeLabel(snapshot.createdAt)}`);
+    text('sourceDetail', `${dateLabel(snapshot.startDate)} – ${dateLabel(snapshot.endDate)} · ${snapshot.scannedDates?.length || 0} scanned dates`);
+    text('onlineStatus', id === scans[0].scan_id ? 'Latest uploaded scan' : 'Saved source scan');
+    text('onlineDetail', `Uploaded ${timeLabel(scan.uploaded_at)} · planning stays local`);
     text('syncInfo', `Scan completed: ${timeLabel(snapshot.createdAt)} · Uploaded: ${timeLabel(scan.uploaded_at)}`);
     const scope = snapshot.scope ? ` ${snapshot.scope.allSlots ? 'All scanned duties' : 'Gap duties only'}${snapshot.scope.startTime ? ` · scan window ${snapshot.scope.startTime}–${snapshot.scope.endTime} UTC` : ''}.` : '';
     text('scopeNote', `Scanned period: ${dateLabel(snapshot.startDate)} – ${dateLabel(snapshot.endDate)}. Latest scan uploaded: ${timeLabel(scans[0].uploaded_at)}.${scope} Only the selected scan’s dates, SLAs and duties are shown.`);
@@ -115,6 +163,7 @@ async function loadSnapshot() {
     options('dateFilter', (snapshot.scannedDates || []).map(date => ({ value: dateKey(date), label: dateLabel(date) })).sort((a, b) => a.value.localeCompare(b.value)), 'All scanned dates');
     options('slaFilter', [...new Set((snapshot.rows || []).map(row => row.sla).filter(Boolean))].sort(), 'All SLAs');
     render();
+    renderHistory();
     text('message', `Showing ${id === scans[0].scan_id ? 'the latest' : 'a saved'} completed scan. Refresh to check for new uploads.`);
   } catch (error) { if (version === loadVersion) text('message', error.message); }
 }
@@ -128,6 +177,8 @@ function render() {
     (!search || [row.flight, row.route, row.sla, row.type, row.aircraft, ...(row.staff || [])].join(' ').toLowerCase().includes(search))
   ).sort((a, b) => dateKey(a.date).localeCompare(dateKey(b.date)) || String(a.start_utc).localeCompare(String(b.start_utc)));
   const staffView = $('view').value === 'staff';
+  renderInsights(rows);
+  text('tableTitle', workspace === 'gaps' ? 'Uncovered flight duties' : staffView ? 'Staff roster' : 'Flight schedule');
   const headings = staffView ? ['Staff', 'Date', 'Flight', 'SLA', 'Duty', 'Start UTC', 'End UTC', 'Duration'] : ['Date', 'Flight', 'Route', 'Aircraft', 'SLA', 'Duty', 'Start UTC', 'End UTC', 'Required', 'Assigned', 'Missing', 'Staff'];
   currentRecords = staffView ? rows.flatMap(row => (row.staff || []).filter(name => !search || `${name} ${row.flight} ${row.route} ${row.sla} ${row.type} ${row.aircraft}`.toLowerCase().includes(search)).map(name => {
     const detail = (row.staff_details || []).find(staff => staff.name === name) || row;
@@ -149,6 +200,66 @@ function render() {
   }
   $('tableBody').replaceChildren(fragment);
   $('empty').hidden = currentRecords.length > 0;
+  text('resultCount', `${currentRecords.length} ${staffView ? 'assignments' : 'duties'}`);
+}
+function uncoveredHours(row) {
+  const minutes = value => {
+    const match = /^(\d+):(\d{2})$/.exec(String(value || ''));
+    return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+  };
+  let duration = minutes(row.duration);
+  if (duration === null) {
+    const start = minutes(row.start_utc), end = minutes(row.release_utc);
+    duration = start === null || end === null ? 0 : (end - start + 1440) % 1440;
+  }
+  return duration / 60 * Number(row.missing || 0);
+}
+function renderInsights(rows) {
+  const dates = new Map(), slas = new Map();
+  for (const row of rows) {
+    for (const [groups, key] of [[dates, dateKey(row.date)], [slas, row.sla || 'Unspecified']]) {
+      const summary = groups.get(key) || { required: 0, assigned: 0, missing: 0, hours: 0 };
+      summary.required += Number(row.required || 0); summary.assigned += Number(row.assigned || 0);
+      summary.missing += Number(row.missing || 0); summary.hours += uncoveredHours(row);
+      groups.set(key, summary);
+    }
+  }
+  $('dateInsights').replaceChildren(); $('slaInsights').replaceChildren();
+  for (const [date, summary] of [...dates].sort(([a], [b]) => a.localeCompare(b))) {
+    const tr = document.createElement('tr');
+    for (const value of [dateLabel(date), summary.required, summary.assigned, summary.missing, summary.hours.toFixed(1)]) {
+      const td = document.createElement('td'); td.textContent = value; tr.append(td);
+    }
+    $('dateInsights').append(tr);
+  }
+  for (const [sla, summary] of [...slas].sort(([a], [b]) => a.localeCompare(b))) {
+    const section = document.createElement('div'); section.className = 'sla-summary';
+    const header = document.createElement('div'); header.className = 'sla-summary-header';
+    const name = document.createElement('strong'); name.textContent = sla;
+    const label = document.createElement('span');
+    const coverage = summary.required ? Math.max(0, 100 * (summary.required - summary.missing) / summary.required) : 100;
+    label.textContent = `${Math.round(coverage)}% covered · ${summary.missing} missing`;
+    header.append(name, label);
+    const meter = document.createElement('meter'); meter.min = 0; meter.max = 100; meter.value = coverage; meter.setAttribute('aria-label', `${sla} coverage`);
+    section.append(header, meter); $('slaInsights').append(section);
+  }
+  if (!rows.length) { const empty = document.createElement('p'); empty.textContent = 'No duties match these filters.'; $('slaInsights').append(empty); }
+}
+function renderHistory() {
+  $('historyList').replaceChildren(); text('historyCount', `${scans.length} saved scans`);
+  for (const [index, scan] of scans.entries()) {
+    const card = document.createElement('div'); card.className = 'history-card';
+    const summary = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = timeLabel(scan.scanned_at);
+    if (index === 0) { const badge = document.createElement('span'); badge.className = 'count-badge'; badge.textContent = 'Latest'; title.append(badge); }
+    const detail = document.createElement('p'); detail.textContent = `Uploaded ${timeLabel(scan.uploaded_at)}`;
+    summary.append(title, detail);
+    const actions = document.createElement('div'); actions.className = 'history-actions';
+    if (scan.scan_id === $('scanSelect').value) { const badge = document.createElement('span'); badge.className = 'count-badge'; badge.textContent = 'Loaded'; actions.append(badge); }
+    const open = document.createElement('button'); open.className = 'secondary-btn'; open.textContent = 'Open roster';
+    open.addEventListener('click', () => { $('scanSelect').value = scan.scan_id; setWorkspace('roster'); loadSnapshot(); });
+    actions.append(open); card.append(summary, actions); $('historyList').append(card);
+  }
 }
 $('loginForm').addEventListener('submit', async event => {
   event.preventDefault();
@@ -162,6 +273,7 @@ $('loginForm').addEventListener('submit', async event => {
     $('loginPanel').hidden = true;
     $('dashboard').hidden = false;
     $('signOut').hidden = false;
+    setAccess(true);
     await loadScans();
   } catch (error) { if (session) signOut(); text('message', error.message); }
   finally { $('loginButton').disabled = false; }
@@ -169,6 +281,10 @@ $('loginForm').addEventListener('submit', async event => {
 $('signOut').addEventListener('click', signOut);
 $('refresh').addEventListener('click', loadScans);
 $('scanSelect').addEventListener('change', loadSnapshot);
+for (const button of document.querySelectorAll('[data-workspace]')) button.addEventListener('click', () => setWorkspace(button.dataset.workspace));
+$('resetFilters').addEventListener('click', () => {
+  $('dateFilter').value = ''; $('slaFilter').value = ''; $('search').value = ''; $('gapsOnly').checked = workspace === 'gaps'; render();
+});
 for (const id of ['view', 'dateFilter', 'slaFilter', 'gapsOnly']) $(id).addEventListener('change', render);
 $('search').addEventListener('input', render);
 $('export').addEventListener('click', () => {
@@ -178,8 +294,9 @@ $('export').addEventListener('click', () => {
     if (/^[\s]*[=+@-]/.test(cell)) cell = `'${cell}`;
     return `"${cell.replace(/"/g, '""')}"`;
   };
-  const headings = [...$('tableHead').querySelectorAll('th')].map(th => th.textContent);
-  const csv = [headings, ...currentRecords].map(row => row.map(escapeCell).join(',')).join('\r\n');
+  const headings = workspace === 'insights' ? ['Date', 'Required', 'Assigned', 'Missing', 'Uncovered hours'] : [...$('tableHead').querySelectorAll('th')].map(th => th.textContent);
+  const records = workspace === 'insights' ? [...$('dateInsights').querySelectorAll('tr')].map(tr => [...tr.children].map(td => td.textContent)) : currentRecords;
+  const csv = [headings, ...records].map(row => row.map(escapeCell).join(',')).join('\r\n');
   const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a'); link.href = url; link.download = `gsrm-${$('view').value}-${dateKey(snapshot.startDate)}.csv`; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -193,5 +310,7 @@ try {
   $('loginPanel').hidden = false;
   text('message', 'Sign in to view completed scans.');
 } catch {
+  $('setupPanel').hidden = false;
+  text('connectionLabel', 'Online dashboard · database setup pending');
   text('message', 'The online dashboard is ready. Its owner still needs to connect the database before sign-in and scan viewing are available.');
 }

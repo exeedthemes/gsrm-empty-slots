@@ -1,6 +1,6 @@
 # Online dashboard setup
 
-The local app scans AVBIS. Every fully completed scan is queued in the local SQLite database and uploaded to Supabase. GitHub Pages hosts a separate dashboard for viewing flight duties, staffing gaps, staff assignments and CSV exports. The online viewer keeps working when the scanning computer is off; new scans and upload retries require the local app to be running.
+The local app scans AVBIS. Every fully completed scan is queued in the local SQLite database and uploaded to Supabase. GitHub Pages hosts an online Coverage workspace with the local dashboard's styling and Empty Slots, Roster, Insights and History views. It supports flight duties, staff assignments, coverage by date and SLA, uncovered staff-hours and CSV exports. The online viewer keeps working when the scanning computer is off; new scans and upload retries require the local app to be running.
 
 The public website contains code only. Scan data stays in Supabase behind sign-in and an approved-viewer list. AVBIS credentials, scanner configuration, local planning edits, absence rules and notes are not uploaded. This first version displays individual source scans, not a merged monthly plan. Scan history lists the newest 50 scans. A scan limited to gaps or selected SLAs will show only that scope online. Scan all slots and required SLAs for a full roster.
 
